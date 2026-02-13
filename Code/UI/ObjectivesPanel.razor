@@ -1,0 +1,87 @@
+@using Sandbox;
+@using Sandbox.UI;
+@using Hexagon.Config;
+@using Hexagon.UI;
+
+@namespace Sandbox
+@inherits PanelComponent
+@implements IHexPanel
+
+<root class="objectives-panel" style="display: @(IsOpen ? "flex" : "none"); position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 320px; height: 300px; background-color: rgba(20, 25, 30, 0.95); border: 1px solid rgba(100, 120, 140, 0.4); padding: 12px; flex-direction: column;">
+	<div style="font-size: 16px; font-weight: bold; color: white; margin-bottom: 12px;">
+		Server Objectives
+	</div>
+
+	@if ( _canEdit )
+	{
+		<textarea style="flex: 1; background-color: rgba(10, 15, 20, 0.8); color: white; border: 1px solid rgba(80, 100, 120, 0.3); padding: 8px; font-size: 13px; resize: none; font-family: monospace;"
+			value="@_objectivesText"
+			maxlength="@_maxLength"
+			oninput=@OnTextChanged>
+		</textarea>
+		<div style="display: flex; justify-content: space-between; margin-top: 8px;">
+			<div style="font-size: 11px; color: rgba(140, 150, 160, 0.6);">@_objectivesText.Length / @_maxLength</div>
+			<button style="padding: 4px 12px; background-color: rgba(40, 80, 140, 0.8); color: white; border: none; cursor: pointer; font-size: 12px;" onclick=@OnSave>Save</button>
+		</div>
+	}
+	else
+	{
+		<div style="flex: 1; background-color: rgba(10, 15, 20, 0.8); color: white; padding: 8px; font-size: 13px; overflow-y: auto; font-family: monospace; white-space: pre-wrap;">
+			@(string.IsNullOrEmpty( _objectivesText ) ? "No objectives set." : _objectivesText)
+		</div>
+	}
+
+	<button style="margin-top: 8px; padding: 4px 12px; background-color: rgba(60, 60, 60, 0.8); color: white; border: none; cursor: pointer; font-size: 12px; align-self: flex-end;" onclick=@Close>Close</button>
+</root>
+
+@code
+{
+	public string PanelName => "ObjectivesPanel";
+	public bool IsOpen { get; private set; }
+
+	private string _objectivesText = "";
+	private bool _canEdit;
+	private int _maxLength;
+
+	public void Open()
+	{
+		IsOpen = true;
+		StateHasChanged();
+	}
+
+	public void Close()
+	{
+		IsOpen = false;
+		StateHasChanged();
+	}
+
+	/// <summary>
+	/// Show objectives with optional edit capability.
+	/// </summary>
+	public void ShowObjectives( string text, bool canEdit )
+	{
+		_objectivesText = text ?? "";
+		_canEdit = canEdit;
+		_maxLength = HexConfig.Get<int>( "hl2rp.chardata.maxlength", 750 );
+		Open();
+	}
+
+	private void OnTextChanged( ChangeEvent e )
+	{
+		_objectivesText = e.Value?.ToString() ?? "";
+	}
+
+	private void OnSave()
+	{
+		if ( !_canEdit ) return;
+
+		// TODO: Send RPC to server to update objectives
+		Log.Info( $"[HL2RP] ObjectivesPanel: Saving objectives" );
+		Close();
+	}
+
+	protected override int BuildHash()
+	{
+		return HashCode.Combine( IsOpen, _objectivesText, _canEdit );
+	}
+}

@@ -1,0 +1,89 @@
+@using Sandbox;
+@using Sandbox.UI;
+@using Hexagon.Characters;
+@using Hexagon.UI;
+
+@namespace Sandbox
+@inherits PanelComponent
+@implements IHexPanel
+
+<root class="note-editor" style="display: @(IsOpen ? "flex" : "none"); position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 300px; height: 350px; background-color: rgba(30, 30, 25, 0.95); border: 1px solid rgba(140, 130, 100, 0.4); padding: 12px; flex-direction: column;">
+	<div style="font-size: 14px; font-weight: bold; color: rgba(220, 210, 180, 1); margin-bottom: 8px;">
+		Note
+	</div>
+
+	@if ( _canWrite )
+	{
+		<textarea style="flex: 1; background-color: rgba(40, 38, 32, 0.8); color: rgba(220, 210, 180, 1); border: 1px solid rgba(100, 90, 70, 0.3); padding: 8px; font-size: 13px; resize: none; font-family: 'Courier New', monospace;"
+			value="@_noteText"
+			maxlength="1000"
+			oninput=@OnTextChanged>
+		</textarea>
+		<div style="display: flex; justify-content: space-between; margin-top: 8px;">
+			<div style="font-size: 11px; color: rgba(140, 130, 100, 0.6);">@_noteText.Length / 1000</div>
+			<button style="padding: 4px 12px; background-color: rgba(100, 90, 60, 0.8); color: rgba(220, 210, 180, 1); border: none; cursor: pointer; font-size: 12px;" onclick=@OnSave>Save</button>
+		</div>
+	}
+	else
+	{
+		<div style="flex: 1; background-color: rgba(40, 38, 32, 0.8); color: rgba(220, 210, 180, 1); padding: 8px; font-size: 13px; overflow-y: auto; font-family: 'Courier New', monospace; white-space: pre-wrap;">
+			@(string.IsNullOrEmpty( _noteText ) ? "(blank)" : _noteText)
+		</div>
+	}
+
+	<button style="margin-top: 8px; padding: 4px 12px; background-color: rgba(60, 58, 50, 0.8); color: rgba(220, 210, 180, 1); border: none; cursor: pointer; font-size: 12px; align-self: flex-end;" onclick=@Close>Close</button>
+</root>
+
+@code
+{
+	public string PanelName => "NoteEditor";
+	public bool IsOpen { get; private set; }
+
+	private string _noteText = "";
+	private bool _canWrite;
+	private string _itemInstanceId;
+	private Action<string> _onSaveCallback;
+
+	public void Open()
+	{
+		IsOpen = true;
+		StateHasChanged();
+	}
+
+	public void Close()
+	{
+		IsOpen = false;
+		StateHasChanged();
+	}
+
+	/// <summary>
+	/// Open the note editor for a specific note item.
+	/// </summary>
+	public void ShowNote( string text, bool canWrite, string itemInstanceId, Action<string> onSave = null )
+	{
+		_noteText = text ?? "";
+		_canWrite = canWrite;
+		_itemInstanceId = itemInstanceId;
+		_onSaveCallback = onSave;
+		Open();
+	}
+
+	private void OnTextChanged( ChangeEvent e )
+	{
+		_noteText = e.Value?.ToString() ?? "";
+	}
+
+	private void OnSave()
+	{
+		if ( !_canWrite ) return;
+
+		_onSaveCallback?.Invoke( _noteText );
+		Log.Info( $"[HL2RP] Note saved ({_noteText.Length} chars)" );
+		Close();
+	}
+
+	protected override int BuildHash()
+	{
+		return HashCode.Combine( IsOpen, _noteText, _canWrite );
+	}
+}

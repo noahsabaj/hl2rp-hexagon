@@ -1,3 +1,16 @@
 global using Sandbox;
+global using Hexagon.Core;
+global using Hexagon.Characters;
+global using Hexagon.Factions;
+global using Hexagon.Items;
+global using Hexagon.Inventory;
+global using Hexagon.Permissions;
+global using Hexagon.Currency;
+global using Hexagon.Chat;
+global using Hexagon.Commands;
+global using Hexagon.Attributes;
+global using Hexagon.Doors;
+global using Hexagon.Vendors;
+global using System;
 global using System.Collections.Generic;
 global using System.Linq;

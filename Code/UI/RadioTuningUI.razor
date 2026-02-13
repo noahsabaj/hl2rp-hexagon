@@ -1,0 +1,113 @@
+@using Sandbox;
+@using Sandbox.UI;
+@using Hexagon.Characters;
+@using Hexagon.UI;
+
+@namespace Sandbox
+@inherits PanelComponent
+@implements IHexPanel
+
+<root class="radio-tuning" style="display: @(IsOpen ? "flex" : "none"); position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 240px; background-color: rgba(20, 25, 30, 0.95); border: 1px solid rgba(100, 120, 140, 0.4); padding: 16px; flex-direction: column; align-items: center;">
+	<div style="font-size: 14px; font-weight: bold; color: white; margin-bottom: 12px;">
+		Radio Frequency
+	</div>
+
+	<div style="display: flex; align-items: center; gap: 4px; margin-bottom: 16px;">
+		@for ( int i = 0; i < _digits.Length; i++ )
+		{
+			var idx = i;
+			<div style="display: flex; flex-direction: column; align-items: center;">
+				<button style="width: 28px; height: 20px; background-color: rgba(60, 80, 100, 0.8); color: white; border: none; cursor: pointer; font-size: 10px;" onclick="@(() => AdjustDigit( idx, 1 ))">+</button>
+				<div style="font-size: 24px; color: rgba(0, 200, 255, 1); font-family: monospace; margin: 4px 0;">@_digits[idx]</div>
+				<button style="width: 28px; height: 20px; background-color: rgba(60, 80, 100, 0.8); color: white; border: none; cursor: pointer; font-size: 10px;" onclick="@(() => AdjustDigit( idx, -1 ))">-</button>
+			</div>
+
+			@if ( idx == 2 )
+			{
+				<div style="font-size: 24px; color: rgba(0, 200, 255, 1); margin: 0 2px;">.</div>
+			}
+		}
+	</div>
+
+	<div style="display: flex; gap: 8px;">
+		<button style="padding: 6px 16px; background-color: rgba(40, 80, 140, 0.8); color: white; border: none; cursor: pointer; font-size: 12px;" onclick=@OnConfirm>Set</button>
+		<button style="padding: 6px 16px; background-color: rgba(60, 60, 60, 0.8); color: white; border: none; cursor: pointer; font-size: 12px;" onclick=@Close>Cancel</button>
+	</div>
+</root>
+
+@code
+{
+	public string PanelName => "RadioTuning";
+	public bool IsOpen { get; private set; }
+
+	/// <summary>
+	/// Digits array: [0]=hundreds, [1]=tens, [2]=ones, [3]=decimal
+	/// Represents frequency XXX.X
+	/// </summary>
+	private int[] _digits = new int[] { 1, 0, 0, 0 };
+
+	private string _itemInstanceId;
+	private Action<string> _onConfirmCallback;
+
+	public void Open()
+	{
+		IsOpen = true;
+		StateHasChanged();
+	}
+
+	public void Close()
+	{
+		IsOpen = false;
+		StateHasChanged();
+	}
+
+	/// <summary>
+	/// Open the tuning UI for a specific radio item.
+	/// </summary>
+	public void ShowTuning( string currentFrequency, string itemInstanceId, Action<string> onConfirm = null )
+	{
+		_itemInstanceId = itemInstanceId;
+		_onConfirmCallback = onConfirm;
+		ParseFrequency( currentFrequency );
+		Open();
+	}
+
+	private void ParseFrequency( string freq )
+	{
+		if ( string.IsNullOrEmpty( freq ) )
+			freq = "100.0";
+
+		var parts = freq.Split( '.' );
+		var whole = parts[0].PadLeft( 3, '0' );
+		var dec = parts.Length > 1 ? parts[1] : "0";
+
+		_digits[0] = Math.Clamp( whole[0] - '0', 0, 9 );
+		_digits[1] = Math.Clamp( whole[1] - '0', 0, 9 );
+		_digits[2] = Math.Clamp( whole[2] - '0', 0, 9 );
+		_digits[3] = Math.Clamp( dec[0] - '0', 0, 9 );
+	}
+
+	private string GetFrequencyString()
+	{
+		return $"{_digits[0]}{_digits[1]}{_digits[2]}.{_digits[3]}";
+	}
+
+	private void AdjustDigit( int index, int delta )
+	{
+		_digits[index] = (_digits[index] + delta + 10) % 10;
+		StateHasChanged();
+	}
+
+	private void OnConfirm()
+	{
+		var freq = GetFrequencyString();
+		_onConfirmCallback?.Invoke( freq );
+		Log.Info( $"[HL2RP] Radio tuned to {freq}" );
+		Close();
+	}
+
+	protected override int BuildHash()
+	{
+		return HashCode.Combine( IsOpen, _digits[0], _digits[1], _digits[2], _digits[3] );
+	}
+}

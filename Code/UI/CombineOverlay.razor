@@ -1,0 +1,30 @@
+@using Sandbox;
+@using Sandbox.UI;
+@using Hexagon.Characters;
+@using Hexagon.UI;
+
+@namespace Sandbox
+@inherits PanelComponent
+
+<root class="combine-overlay" style="display: @(ShouldShow ? "flex" : "none"); pointer-events: none;">
+	<div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(10, 20, 60, 0.12); pointer-events: none;"></div>
+</root>
+
+@code
+{
+	private HexPlayerComponent LocalPlayer => HexUIManager.GetLocalPlayer();
+
+	private bool ShouldShow
+	{
+		get
+		{
+			if ( LocalPlayer?.Character == null ) return false;
+			return CombineUtils.IsCombine( LocalPlayer.Character );
+		}
+	}
+
+	protected override int BuildHash()
+	{
+		return HashCode.Combine( ShouldShow );
+	}
+}

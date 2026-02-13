@@ -1,0 +1,100 @@
+@using Sandbox;
+@using Sandbox.UI;
+@using Hexagon.Characters;
+@using Hexagon.UI;
+
+@namespace Sandbox
+@inherits PanelComponent
+
+<root class="dispatch-panel" style="display: @(ShouldShow ? "flex" : "none"); position: absolute; top: 16px; right: 16px; width: 320px; max-height: 300px; overflow: hidden; pointer-events: none;">
+	@foreach ( var msg in _messages )
+	{
+		<div class="dispatch-message" style="color: @msg.Color; font-size: 13px; margin-bottom: 4px; opacity: @msg.Opacity; font-family: monospace;">
+			@msg.Text
+		</div>
+	}
+</root>
+
+@code
+{
+	private class DispatchMessage
+	{
+		public string Text { get; set; }
+		public string Color { get; set; }
+		public float Opacity { get; set; } = 1f;
+		public DateTime CreatedAt { get; set; }
+	}
+
+	private List<DispatchMessage> _messages = new();
+	private const int MaxMessages = 8;
+	private const float FadeDuration = 10f;
+
+	private HexPlayerComponent LocalPlayer => HexUIManager.GetLocalPlayer();
+
+	private bool ShouldShow
+	{
+		get
+		{
+			if ( LocalPlayer?.Character == null ) return false;
+			return CombineUtils.IsCombine( LocalPlayer.Character );
+		}
+	}
+
+	/// <summary>
+	/// Add a dispatch message. Called from chat hooks.
+	/// </summary>
+	public static void AddMessage( string text, string color = "rgba(192, 57, 43, 1)" )
+	{
+		// This would be called via a static reference or event system
+		// For now, the implementation is provided as a pattern
+	}
+
+	public void PushMessage( string text, string color )
+	{
+		_messages.Add( new DispatchMessage
+		{
+			Text = text,
+			Color = color,
+			CreatedAt = DateTime.UtcNow
+		} );
+
+		if ( _messages.Count > MaxMessages )
+			_messages.RemoveAt( 0 );
+
+		StateHasChanged();
+	}
+
+	protected override void OnFixedUpdate()
+	{
+		var now = DateTime.UtcNow;
+		var changed = false;
+
+		for ( int i = _messages.Count - 1; i >= 0; i-- )
+		{
+			var age = (float)(now - _messages[i].CreatedAt).TotalSeconds;
+
+			if ( age > FadeDuration )
+			{
+				_messages.RemoveAt( i );
+				changed = true;
+			}
+			else if ( age > FadeDuration - 2f )
+			{
+				var newOpacity = 1f - ((age - (FadeDuration - 2f)) / 2f);
+				if ( Math.Abs( _messages[i].Opacity - newOpacity ) > 0.01f )
+				{
+					_messages[i].Opacity = newOpacity;
+					changed = true;
+				}
+			}
+		}
+
+		if ( changed )
+			StateHasChanged();
+	}
+
+	protected override int BuildHash()
+	{
+		return HashCode.Combine( ShouldShow, _messages.Count, _messages.LastOrDefault()?.Text );
+	}
+}

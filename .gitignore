@@ -27,3 +27,8 @@ code/Properties/*
 
 # Exported / standalone games
 Exports/
+
+# Symlinked libraries (managed separately)
+Libraries/
+
+nul
