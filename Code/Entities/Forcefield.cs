@@ -77,7 +77,7 @@ public class Forcefield : Component, Component.IPressable, Component.ICollisionL
 		if ( !IsActive ) return;
 
 		// Allow combine through, block everyone else
-		var player = collision.Other.GetComponentInParent<HexPlayerComponent>();
+		var player = collision.Other.GameObject.GetComponentInParent<HexPlayerComponent>();
 		if ( player?.Character != null && CombineUtils.IsCombine( player.Character ) )
 		{
 			// Let them pass — disable collision for this pair temporarily

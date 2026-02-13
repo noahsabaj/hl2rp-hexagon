@@ -32,6 +32,7 @@ public class NoteItem : ItemDefinition
 					var text = item.GetData<string>( "text", "" );
 					// TODO: Open note UI (Phase 7)
 					Log.Info( $"[Note] {text}" );
+					return true;
 				}
 			},
 			["Write"] = new ItemAction
@@ -47,6 +48,7 @@ public class NoteItem : ItemDefinition
 					// TODO: Open note editor UI (Phase 7)
 					if ( string.IsNullOrEmpty( item.GetData<string>( "owner", "" ) ) )
 						item.SetData( "owner", player.Character.Id );
+					return true;
 				}
 			}
 		};

@@ -22,7 +22,7 @@ public class RationItem : ItemDefinition
 				OnRun = ( player, item ) =>
 				{
 					var inventories = InventoryManager.LoadForCharacter( player.Character.Id );
-					if ( inventories.Count == 0 ) return;
+					if ( inventories.Count == 0 ) return false;
 
 					var water = ItemManager.CreateInstance( "water", player.Character.Id );
 					var supplement = ItemManager.CreateInstance( "supplement", player.Character.Id );
@@ -40,6 +40,7 @@ public class RationItem : ItemDefinition
 							break;
 						}
 					}
+					return true;
 				}
 			}
 		};

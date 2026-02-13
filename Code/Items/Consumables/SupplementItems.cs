@@ -30,6 +30,7 @@ public class SupplementItem : ItemDefinition
 							break;
 						}
 					}
+					return true;
 				}
 			}
 		};
@@ -67,6 +68,7 @@ public class LargeSupplementItem : ItemDefinition
 							break;
 						}
 					}
+					return true;
 				}
 			}
 		};

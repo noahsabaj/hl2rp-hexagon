@@ -32,6 +32,7 @@ public class RadioItem : ItemDefinition
 					// TODO: Open radio tuning UI (Phase 7)
 					var freq = item.GetData<string>( "frequency", "100.0" );
 					Log.Info( $"[Radio] Current frequency: {freq}" );
+					return true;
 				}
 			}
 		};
@@ -92,6 +93,7 @@ public class StaticRadioItem : ItemDefinition
 				{
 					var freq = item.GetData<string>( "frequency", "100.0" );
 					Log.Info( $"[Static Radio] Current frequency: {freq}" );
+					return true;
 				}
 			}
 		};

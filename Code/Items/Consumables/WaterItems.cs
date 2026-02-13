@@ -22,6 +22,7 @@ public class WaterItem : ItemDefinition
 				OnRun = ( player, item ) =>
 				{
 					ConsumeItem( player, item );
+					return true;
 				}
 			}
 		};

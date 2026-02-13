@@ -38,6 +38,7 @@ public class FlashlightItem : ItemDefinition
 					var isOn = item.GetData<bool>( "on", false );
 					item.SetData( "on", !isOn );
 					item.MarkDirty();
+					return true;
 				}
 			}
 		};

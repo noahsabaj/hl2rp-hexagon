@@ -31,6 +31,7 @@ public class HealthVialItem : ItemDefinition
 							break;
 						}
 					}
+					return true;
 				}
 			}
 		};

@@ -27,6 +27,7 @@ public class ZipTieItem : ItemDefinition
 				{
 					// Restraint logic handled by TyingPlugin (Phase 6)
 					Log.Info( "[HL2RP] Zip tie used — TyingPlugin handles restraint." );
+					return true;
 				}
 			}
 		};

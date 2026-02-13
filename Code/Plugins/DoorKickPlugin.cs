@@ -56,7 +56,7 @@ public class DoorKickPlugin : IHexPlugin
 		var eyePos = player.WorldPosition + Vector3.Up * 64f;
 		var eyeDir = player.WorldRotation.Forward;
 
-		var trace = Scene.Trace
+		var trace = Game.ActiveScene.Trace
 			.Ray( eyePos, eyePos + eyeDir * KickRange )
 			.Run();
 
