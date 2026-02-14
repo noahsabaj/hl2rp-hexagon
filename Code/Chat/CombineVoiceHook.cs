@@ -1,10 +1,13 @@
 
 /// <summary>
 /// Plays radio beep sounds when combine players speak in IC or Yell chat.
-/// Attach this Component to the same GameObject as HexagonFramework.
+/// "On" beep plays immediately, "off" beep plays after a delay proportional
+/// to message length. Attach this Component to the same GameObject as HexagonFramework.
 /// </summary>
 public class CombineVoiceHook : Component, IChatMessageListener
 {
+	private readonly List<(HexPlayerComponent Player, float PlayAt)> _pendingOffBeeps = new();
+
 	public void OnChatMessage( HexPlayerComponent sender, IChatClass chatClass, string rawMessage, string formattedMessage )
 	{
 		if ( sender?.Character == null )
@@ -17,12 +20,31 @@ public class CombineVoiceHook : Component, IChatMessageListener
 		if ( chatName != "In-Character" && chatName != "Yell" )
 			return;
 
+		// Play "on" beep immediately
 		PlayRadioBeep( sender, true );
-		PlayRadioBeep( sender, false );
+
+		// Schedule "off" beep after a delay based on message length (0.5s–3s)
+		var delay = Math.Min( 0.5f + rawMessage.Length * 0.02f, 3f );
+		_pendingOffBeeps.Add( (sender, Time.Now + delay) );
+	}
+
+	protected override void OnFixedUpdate()
+	{
+		for ( int i = _pendingOffBeeps.Count - 1; i >= 0; i-- )
+		{
+			if ( Time.Now >= _pendingOffBeeps[i].PlayAt )
+			{
+				PlayRadioBeep( _pendingOffBeeps[i].Player, false );
+				_pendingOffBeeps.RemoveAt( i );
+			}
+		}
 	}
 
 	private void PlayRadioBeep( HexPlayerComponent player, bool isOn )
 	{
+		if ( player?.Character == null )
+			return;
+
 		var isCP = CombineUtils.IsCP( player.Character );
 		var configKey = (isOn, isCP) switch
 		{

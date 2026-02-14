@@ -2,25 +2,31 @@
 /// <summary>
 /// Ration dispenser world entity. Citizens insert CID to receive rations.
 /// Place in scene via editor. CP can toggle disabled state.
-/// States: Idle, Checking, Arming, Dispensing, Error, Disabled.
+/// Dispensing takes 2 seconds before items are given, making the state visible.
 /// </summary>
 public class RationDispenser : PersistableEntity<DispenserSaveData>, Component.IPressable
 {
 	public enum DispenserState
 	{
 		Idle,
-		Checking,
-		Arming,
 		Dispensing,
 		Error,
 		Disabled
 	}
 
+	private const float DispenseDelay = 2f;
+	private const float ErrorDuration = 3f;
+
 	[Sync] public DispenserState State { get; set; } = DispenserState.Idle;
 	[Sync] public bool IsDisabled { get; set; }
 
 	private Dictionary<int, DateTime> _cooldowns = new();
-	private DateTime _errorTime;
+	private TimeSince _stateTimer;
+
+	// Pending dispense data (stored while in Dispensing state)
+	private HexPlayerComponent _pendingPlayer;
+	private int _pendingCidNumber;
+	private bool _pendingPriority;
 
 	protected override string CollectionName => "hl2rp_dispensers";
 
@@ -39,10 +45,14 @@ public class RationDispenser : PersistableEntity<DispenserSaveData>, Component.I
 	{
 		if ( IsProxy ) return;
 
-		// Auto-reset error state after 3 seconds
-		if ( State == DispenserState.Error && (DateTime.UtcNow - _errorTime).TotalSeconds > 3.0 )
+		if ( State == DispenserState.Error && _stateTimer > ErrorDuration )
 		{
 			State = DispenserState.Idle;
+		}
+
+		if ( State == DispenserState.Dispensing && _stateTimer > DispenseDelay )
+		{
+			CompleteDispensing();
 		}
 	}
 
@@ -94,25 +104,14 @@ public class RationDispenser : PersistableEntity<DispenserSaveData>, Component.I
 			}
 		}
 
-		// Dispense
+		// Begin dispensing — items are given after DispenseDelay
 		State = DispenserState.Dispensing;
+		_stateTimer = 0;
+		_pendingPlayer = player;
+		_pendingCidNumber = cidNumber;
+		_pendingPriority = cidItem.GetData<bool>( "cwu", false );
 
-		var isPriority = cidItem.GetData<bool>( "cwu", false );
-		var rationCount = isPriority ? 2 : 1;
-
-		var inventories = InventoryManager.LoadForCharacter( player.Character.Id );
-		for ( int i = 0; i < rationCount; i++ )
-		{
-			var ration = ItemManager.CreateInstance( "ration", player.Character.Id );
-			if ( inventories.Count > 0 )
-				inventories[0].Add( ration );
-		}
-
-		_cooldowns[cidNumber] = DateTime.UtcNow;
-		State = DispenserState.Idle;
-		SaveState();
-
-		Log.Info( $"[HL2RP] Dispenser: Gave {rationCount} ration(s) to CID #{cidNumber}" );
+		Log.Info( $"[HL2RP] Dispenser {PersistenceId}: Dispensing for CID #{cidNumber}..." );
 		return true;
 	}
 
@@ -122,8 +121,9 @@ public class RationDispenser : PersistableEntity<DispenserSaveData>, Component.I
 		{
 			DispenserState.Disabled => "Disabled",
 			DispenserState.Error => "Error",
+			DispenserState.Dispensing => "Dispensing...",
 			DispenserState.Idle => "Insert CID to receive rations",
-			_ => "Processing..."
+			_ => ""
 		};
 
 		return new Component.IPressable.Tooltip( "Ration Dispenser", "local_shipping", desc );
@@ -132,7 +132,33 @@ public class RationDispenser : PersistableEntity<DispenserSaveData>, Component.I
 	private void SetError()
 	{
 		State = DispenserState.Error;
-		_errorTime = DateTime.UtcNow;
+		_stateTimer = 0;
+	}
+
+	private void CompleteDispensing()
+	{
+		if ( _pendingPlayer?.Character == null )
+		{
+			State = DispenserState.Idle;
+			_pendingPlayer = null;
+			return;
+		}
+
+		var rationCount = _pendingPriority ? 2 : 1;
+		var inventories = InventoryManager.LoadForCharacter( _pendingPlayer.Character.Id );
+		for ( int i = 0; i < rationCount; i++ )
+		{
+			var ration = ItemManager.CreateInstance( "ration", _pendingPlayer.Character.Id );
+			if ( inventories.Count > 0 )
+				inventories[0].Add( ration );
+		}
+
+		_cooldowns[_pendingCidNumber] = DateTime.UtcNow;
+		_pendingPlayer = null;
+		State = DispenserState.Idle;
+		SaveState();
+
+		Log.Info( $"[HL2RP] Dispenser: Gave {rationCount} ration(s) to CID #{_pendingCidNumber}" );
 	}
 }
 

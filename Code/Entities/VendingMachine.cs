@@ -1,7 +1,8 @@
 
 /// <summary>
 /// Vending machine world entity. Citizens buy water variants for tokens.
-/// CP can refill or toggle active state. Place in scene via editor.
+/// CP can toggle active state (crouch+use) or refill stock (use while active).
+/// Place in scene via editor.
 /// </summary>
 public class VendingMachine : PersistableEntity<VendingSaveData>, Component.IPressable
 {
@@ -73,14 +74,19 @@ public class VendingMachine : PersistableEntity<VendingSaveData>, Component.IPre
 
 	private bool HandleCombineUse( HexPlayerComponent player )
 	{
-		if ( !IsActive )
+		// Crouch+use toggles active state
+		if ( Input.Down( "duck" ) )
 		{
-			IsActive = true;
+			IsActive = !IsActive;
 			SaveState();
-			Log.Info( $"[HL2RP] Vending machine activated by {player.CharacterName}" );
+			Log.Info( $"[HL2RP] Vending machine {(IsActive ? "activated" : "deactivated")} by {player.CharacterName}" );
 			return true;
 		}
 
+		if ( !IsActive )
+			return false;
+
+		// Normal use while active = refill
 		var refillCost = 25;
 		var data = (HL2RPCharacter)player.Character.Data;
 		if ( data.Money >= refillCost )

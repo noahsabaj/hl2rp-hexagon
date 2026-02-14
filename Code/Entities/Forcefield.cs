@@ -2,16 +2,25 @@
 /// <summary>
 /// Forcefield world entity. Blocks citizens but allows combine through.
 /// Toggle active state via admin or combine interaction.
-/// Place in scene via editor — add a collider to the same GameObject.
+/// Place in scene via editor — assign a trigger collider to BlockCollider.
+///
+/// Uses a trigger collider for selective filtering: combine players pass through
+/// freely, all other objects are pushed away continuously while inside.
 /// </summary>
 public class Forcefield : PersistableEntity<ForcefieldSaveData>, Component.IPressable, Component.ICollisionListener
 {
 	[Sync] public bool IsActive { get; set; } = true;
 
 	/// <summary>
-	/// The collider used to block players. Assign in editor.
+	/// The trigger collider used to detect and push back unauthorized players.
+	/// Must be set as a trigger (IsTrigger = true) in the editor.
 	/// </summary>
 	[Property] public Collider BlockCollider { get; set; }
+
+	/// <summary>
+	/// Force applied to push back non-combine objects per frame.
+	/// </summary>
+	[Property] public float PushForce { get; set; } = 300f;
 
 	protected override string CollectionName => "hl2rp_forcefields";
 
@@ -66,20 +75,38 @@ public class Forcefield : PersistableEntity<ForcefieldSaveData>, Component.IPres
 
 	public void OnCollisionStart( Collision collision )
 	{
-		if ( !IsActive ) return;
-
-		// Allow combine through, block everyone else
-		var player = collision.Other.GameObject.GetComponentInParent<HexPlayerComponent>();
-		if ( player?.Character != null && CombineUtils.IsCombine( player.Character ) )
-		{
-			// Let them pass — disable collision for this pair temporarily
-			// In practice, this would use collision tags or layers
-			return;
-		}
+		PushBackIfUnauthorized( collision );
 	}
 
-	public void OnCollisionUpdate( Collision collision ) { }
+	public void OnCollisionUpdate( Collision collision )
+	{
+		PushBackIfUnauthorized( collision );
+	}
+
 	public void OnCollisionStop( CollisionStop collision ) { }
+
+	/// <summary>
+	/// Check if the colliding object is authorized. Combine players pass through;
+	/// everything else gets pushed away from the forcefield center.
+	/// </summary>
+	private void PushBackIfUnauthorized( Collision collision )
+	{
+		if ( !IsActive ) return;
+
+		var go = collision.Other.GameObject;
+		var player = go.GetComponentInParent<HexPlayerComponent>();
+
+		// Combine players pass through freely
+		if ( player?.Character != null && CombineUtils.IsCombine( player.Character ) )
+			return;
+
+		// Push non-authorized objects away from the forcefield
+		var pushDir = (go.WorldPosition - WorldPosition).WithZ( 0 ).Normal;
+		if ( pushDir.LengthSquared < 0.01f )
+			pushDir = WorldRotation.Forward;
+
+		go.WorldPosition += pushDir * PushForce * Time.Delta;
+	}
 
 	// --- Internal ---
 
