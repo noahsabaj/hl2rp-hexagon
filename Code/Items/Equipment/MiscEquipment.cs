@@ -33,13 +33,7 @@ public class FlashlightItem : ItemDefinition
 			["Toggle"] = new ItemAction
 			{
 				Name = "Toggle",
-				OnRun = ( player, item ) =>
-				{
-					var isOn = item.GetData<bool>( "on", false );
-					item.SetData( "on", !isOn );
-					item.MarkDirty();
-					return true;
-				}
+				OnRun = ( player, item ) => FlashlightPlugin.ToggleFlashlight( player )
 			}
 		};
 	}

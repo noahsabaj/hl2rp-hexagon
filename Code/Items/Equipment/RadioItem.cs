@@ -1,27 +1,34 @@
 
-public class RadioItem : ItemDefinition
+/// <summary>
+/// Base item for frequency-tuned radio devices (radio, pager, static radio).
+/// Handles shared frequency initialization and optional tuning action.
+/// </summary>
+public class FrequencyDeviceItem : ItemDefinition
 {
-	public RadioItem()
+	private readonly bool _tunable;
+
+	public FrequencyDeviceItem( string id, string name, string description, bool tunable = false, int width = 1, int height = 1 )
 	{
-		UniqueId = "radio";
-		DisplayName = "Radio";
-		Description = "A handheld frequency-tuned radio for long-range communication.";
-		Width = 1;
-		Height = 1;
+		UniqueId = id;
+		DisplayName = name;
+		Description = description;
+		Width = width;
+		Height = height;
 		MaxStack = 1;
 		Category = "Equipment";
+		_tunable = tunable;
 	}
 
 	public override void OnInstanced( ItemInstance item )
 	{
 		if ( !item.Data.ContainsKey( "frequency" ) )
-		{
 			item.SetData( "frequency", "100.0" );
-		}
 	}
 
 	public override Dictionary<string, ItemAction> GetActions()
 	{
+		if ( !_tunable ) return base.GetActions();
+
 		return new Dictionary<string, ItemAction>
 		{
 			["Tune"] = new ItemAction
@@ -31,68 +38,7 @@ public class RadioItem : ItemDefinition
 				{
 					// TODO: Open radio tuning UI (Phase 7)
 					var freq = item.GetData<string>( "frequency", "100.0" );
-					Log.Info( $"[Radio] Current frequency: {freq}" );
-					return true;
-				}
-			}
-		};
-	}
-}
-
-public class PagerItem : ItemDefinition
-{
-	public PagerItem()
-	{
-		UniqueId = "pager";
-		DisplayName = "Pager";
-		Description = "A small pager that receives radio transmissions.";
-		Width = 1;
-		Height = 1;
-		MaxStack = 1;
-		Category = "Equipment";
-	}
-
-	public override void OnInstanced( ItemInstance item )
-	{
-		if ( !item.Data.ContainsKey( "frequency" ) )
-		{
-			item.SetData( "frequency", "100.0" );
-		}
-	}
-}
-
-public class StaticRadioItem : ItemDefinition
-{
-	public StaticRadioItem()
-	{
-		UniqueId = "static_radio";
-		DisplayName = "Static Radio";
-		Description = "A stationary radio with unlimited transmission range.";
-		Width = 2;
-		Height = 1;
-		MaxStack = 1;
-		Category = "Equipment";
-	}
-
-	public override void OnInstanced( ItemInstance item )
-	{
-		if ( !item.Data.ContainsKey( "frequency" ) )
-		{
-			item.SetData( "frequency", "100.0" );
-		}
-	}
-
-	public override Dictionary<string, ItemAction> GetActions()
-	{
-		return new Dictionary<string, ItemAction>
-		{
-			["Tune"] = new ItemAction
-			{
-				Name = "Tune",
-				OnRun = ( player, item ) =>
-				{
-					var freq = item.GetData<string>( "frequency", "100.0" );
-					Log.Info( $"[Static Radio] Current frequency: {freq}" );
+					Log.Info( $"[{DisplayName}] Current frequency: {freq}" );
 					return true;
 				}
 			}

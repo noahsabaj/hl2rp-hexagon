@@ -1,4 +1,3 @@
-using Hexagon.Config;
 
 public class DispatchChatClass : IChatClass
 {
@@ -17,10 +16,7 @@ public class DispatchChatClass : IChatClass
 
 	public bool CanHear( HexPlayerComponent speaker, HexPlayerComponent listener )
 	{
-		if ( !listener.HasActiveCharacter || listener.Character == null )
-			return false;
-
-		return CombineUtils.IsCombine( listener.Character );
+		return CombineUtils.IsCombineListener( listener );
 	}
 
 	public string Format( HexPlayerComponent speaker, string message )

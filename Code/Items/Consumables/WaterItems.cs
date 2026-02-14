@@ -1,45 +1,19 @@
 
-public class WaterItem : ConsumableItemDef
+/// <summary>
+/// Simple consumable with no special behavior. Used for water, supplements,
+/// and other items that only differ by name/description.
+/// </summary>
+public class SimpleConsumable : ConsumableItemDef
 {
-	public WaterItem()
+	public SimpleConsumable( string id, string name, string description, string verb )
 	{
-		UniqueId = "water";
-		DisplayName = "Water";
-		Description = "A bottle of clean drinking water.";
+		UniqueId = id;
+		DisplayName = name;
+		Description = description;
 		Width = 1;
 		Height = 1;
 		MaxStack = 1;
 		Category = "Consumables";
-		ConsumeVerb = "Drinking";
-	}
-}
-
-public class SparklingWaterItem : ConsumableItemDef
-{
-	public SparklingWaterItem()
-	{
-		UniqueId = "water_sparkling";
-		DisplayName = "Sparkling Water";
-		Description = "A bottle of sparkling mineral water.";
-		Width = 1;
-		Height = 1;
-		MaxStack = 1;
-		Category = "Consumables";
-		ConsumeVerb = "Drinking";
-	}
-}
-
-public class SpecialWaterItem : ConsumableItemDef
-{
-	public SpecialWaterItem()
-	{
-		UniqueId = "water_special";
-		DisplayName = "Special Water";
-		Description = "A bottle of premium purified water.";
-		Width = 1;
-		Height = 1;
-		MaxStack = 1;
-		Category = "Consumables";
-		ConsumeVerb = "Drinking";
+		ConsumeVerb = verb;
 	}
 }

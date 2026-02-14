@@ -24,14 +24,7 @@ public class FlashlightPlugin : IHexPlugin
 		if ( player?.Character == null )
 			return false;
 
-		var inventories = InventoryManager.LoadForCharacter( player.Character.Id );
-		foreach ( var inv in inventories )
-		{
-			if ( inv.HasItem( "flashlight" ) )
-				return true;
-		}
-
-		return false;
+		return player.Character.HasItem( "flashlight" );
 	}
 
 	/// <summary>
@@ -43,18 +36,13 @@ public class FlashlightPlugin : IHexPlugin
 		if ( player?.Character == null )
 			return false;
 
-		var inventories = InventoryManager.LoadForCharacter( player.Character.Id );
-		foreach ( var inv in inventories )
-		{
-			var item = inv.FindItem( "flashlight" );
-			if ( item != null )
-			{
-				var isOn = item.GetData<bool>( "on", false );
-				item.SetData( "on", !isOn );
-				return true;
-			}
-		}
+		var item = player.Character.FindItem( "flashlight" );
+		if ( item == null )
+			return false;
 
-		return false;
+		var isOn = item.GetData<bool>( "on", false );
+		item.SetData( "on", !isOn );
+		item.MarkDirty();
+		return true;
 	}
 }

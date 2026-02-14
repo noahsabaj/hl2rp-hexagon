@@ -45,31 +45,18 @@ public static class CIDSystem
 
 	public static bool SetPriority( HexCharacter character, bool priority )
 	{
-		var inventories = InventoryManager.LoadForCharacter( character.Id );
-		foreach ( var inv in inventories )
-		{
-			var cidItem = inv.FindItem( "cid_card" );
-			if ( cidItem != null )
-			{
-				cidItem.SetData( "cwu", priority );
-				cidItem.MarkDirty();
-				return true;
-			}
-		}
-		return false;
+		var cidItem = character.FindItem( "cid_card" );
+		if ( cidItem == null )
+			return false;
+
+		cidItem.SetData( "cwu", priority );
+		cidItem.MarkDirty();
+		return true;
 	}
 
 	public static bool HasPriority( HexCharacter character )
 	{
-		var inventories = InventoryManager.LoadForCharacter( character.Id );
-		foreach ( var inv in inventories )
-		{
-			var cidItem = inv.FindItem( "cid_card" );
-			if ( cidItem != null )
-			{
-				return cidItem.GetData<bool>( "cwu", false );
-			}
-		}
-		return false;
+		var cidItem = character.FindItem( "cid_card" );
+		return cidItem?.GetData<bool>( "cwu", false ) ?? false;
 	}
 }

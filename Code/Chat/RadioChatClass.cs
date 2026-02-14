@@ -1,4 +1,3 @@
-using Hexagon.Config;
 
 public class RadioChatClass : IChatClass
 {
@@ -7,12 +6,14 @@ public class RadioChatClass : IChatClass
 	public float Range => 0f;
 	public Color Color => HexConfig.Get<Color>( "hl2rp.chat.radioColor", new Color( 0.3f, 0.5f, 0.9f ) );
 
+	private static readonly string[] RadioItems = { "radio", "static_radio", "pager" };
+
 	public bool CanSay( HexPlayerComponent speaker, string message )
 	{
 		if ( !speaker.HasActiveCharacter )
 			return false;
 
-		return HasRadioItem( speaker.Character );
+		return speaker.Character.HasAnyItem( RadioItems );
 	}
 
 	public bool CanHear( HexPlayerComponent speaker, HexPlayerComponent listener )
@@ -20,7 +21,7 @@ public class RadioChatClass : IChatClass
 		if ( !listener.HasActiveCharacter )
 			return false;
 
-		if ( !HasRadioItem( listener.Character ) )
+		if ( !listener.Character.HasAnyItem( RadioItems ) )
 			return false;
 
 		var speakerFreq = GetFrequency( speaker.Character );
@@ -44,26 +45,9 @@ public class RadioChatClass : IChatClass
 		return $"[FREQ {freq}] {speaker.CharacterName} says \"{message}\"";
 	}
 
-	private bool HasRadioItem( HexCharacter character )
-	{
-		var inventories = InventoryManager.LoadForCharacter( character.Id );
-		foreach ( var inv in inventories )
-		{
-			if ( inv.HasItem( "radio" ) || inv.HasItem( "static_radio" ) || inv.HasItem( "pager" ) )
-				return true;
-		}
-		return false;
-	}
-
 	private string GetFrequency( HexCharacter character )
 	{
-		var inventories = InventoryManager.LoadForCharacter( character.Id );
-		foreach ( var inv in inventories )
-		{
-			var radio = inv.FindItem( "radio" ) ?? inv.FindItem( "static_radio" ) ?? inv.FindItem( "pager" );
-			if ( radio != null )
-				return radio.GetData<string>( "frequency", "100.0" );
-		}
-		return "100.0";
+		var radio = character.FindAnyItem( RadioItems );
+		return radio?.GetData<string>( "frequency", "100.0" ) ?? "100.0";
 	}
 }

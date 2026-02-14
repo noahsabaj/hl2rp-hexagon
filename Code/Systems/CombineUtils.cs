@@ -1,10 +1,14 @@
-using Hexagon.Config;
+
+public record CombineNameParts( string Prefix, string Rank, string Digits );
 
 public static class CombineUtils
 {
-	private static readonly string[] EliteRanks = { "EpU", "DvL", "SeC", "SCN", "CLAW.SCN" };
-	private static readonly string[] CPRanks = { "RCT", "05", "04", "03", "02", "01", "OfC", "EpU", "DvL", "SeC", "SCN", "CLAW.SCN" };
-	private static readonly string[] OWRanks = { "OWS", "OWE", "OPG", "SGS", "SPG" };
+	public static readonly string[] EliteRanks = { "EpU", "DvL", "SeC", "SCN", "CLAW.SCN" };
+	public static readonly string[] CPRanks = { "RCT", "05", "04", "03", "02", "01", "OfC", "EpU", "DvL", "SeC", "SCN", "CLAW.SCN" };
+	public static readonly string[] OWRanks = { "OWS", "OWE", "OPG", "SGS", "SPG" };
+
+	public static string CpPrefix => HexConfig.Get<string>( "hl2rp.combine.cpPrefix", "CP-" );
+	public static string OwPrefix => HexConfig.Get<string>( "hl2rp.combine.owPrefix", "OT-" );
 
 	public static bool IsCombineFaction( string factionId )
 	{
@@ -26,19 +30,26 @@ public static class CombineUtils
 		return character.Faction == "ota";
 	}
 
-	public static string GetCombineRank( HexCharacter character )
+	/// <summary>
+	/// Check if a player has an active character that belongs to a combine faction.
+	/// Used by chat classes for CanHear checks.
+	/// </summary>
+	public static bool IsCombineListener( HexPlayerComponent player )
 	{
-		if ( character?.Data == null )
-			return null;
+		return player.HasActiveCharacter && player.Character != null && IsCombine( player.Character );
+	}
 
-		var data = (HL2RPCharacter)character.Data;
-		var name = data.Name;
-
+	/// <summary>
+	/// Parse a combine name (e.g. "CP-RCT.12345") into its components.
+	/// Uses LastIndexOf to correctly handle ranks with dots (e.g. "CLAW.SCN").
+	/// </summary>
+	public static CombineNameParts ParseCombineName( string name )
+	{
 		if ( string.IsNullOrEmpty( name ) )
 			return null;
 
-		var cpPrefix = HexConfig.Get<string>( "hl2rp.combine.cpPrefix", "CP-" );
-		var owPrefix = HexConfig.Get<string>( "hl2rp.combine.owPrefix", "OT-" );
+		var cpPrefix = CpPrefix;
+		var owPrefix = OwPrefix;
 
 		string prefix = null;
 		if ( name.StartsWith( cpPrefix ) )
@@ -50,46 +61,40 @@ public static class CombineUtils
 			return null;
 
 		var remainder = name.Substring( prefix.Length );
-		var dotIndex = remainder.IndexOf( '.' );
-		if ( dotIndex <= 0 )
+		var lastDot = remainder.LastIndexOf( '.' );
+		if ( lastDot <= 0 || lastDot >= remainder.Length - 1 )
 			return null;
 
-		return remainder.Substring( 0, dotIndex );
+		var rank = remainder.Substring( 0, lastDot );
+		var digits = remainder.Substring( lastDot + 1 );
+
+		return new CombineNameParts( prefix, rank, digits );
+	}
+
+	public static string GetCombineRank( HexCharacter character )
+	{
+		var data = (HL2RPCharacter)character?.Data;
+		if ( data == null ) return null;
+
+		return ParseCombineName( data.Name )?.Rank;
 	}
 
 	public static string GetDigits( HexCharacter character )
 	{
-		if ( character?.Data == null )
-			return null;
+		var data = (HL2RPCharacter)character?.Data;
+		if ( data == null ) return null;
 
-		var data = (HL2RPCharacter)character.Data;
-		var name = data.Name;
-
-		if ( string.IsNullOrEmpty( name ) )
-			return null;
-
-		var dotIndex = name.LastIndexOf( '.' );
-		if ( dotIndex < 0 || dotIndex >= name.Length - 1 )
-			return null;
-
-		return name.Substring( dotIndex + 1 );
+		return ParseCombineName( data.Name )?.Digits;
 	}
 
 	public static bool IsEliteRank( string rank )
 	{
-		if ( string.IsNullOrEmpty( rank ) )
-			return false;
-
-		return EliteRanks.Contains( rank );
+		return !string.IsNullOrEmpty( rank ) && EliteRanks.Contains( rank );
 	}
 
 	public static bool IsDispatch( HexCharacter character )
 	{
-		if ( !IsCombine( character ) )
-			return false;
-
-		var rank = GetCombineRank( character );
-		return IsEliteRank( rank );
+		return IsCombine( character ) && IsEliteRank( GetCombineRank( character ) );
 	}
 
 	public static bool IsValidCPRank( string rank )

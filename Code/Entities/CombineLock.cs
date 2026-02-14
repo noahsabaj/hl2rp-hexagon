@@ -1,11 +1,10 @@
-using Hexagon.Persistence;
 
 /// <summary>
 /// Combine lock world entity. Attaches to a door to restrict access.
 /// CP/OW can toggle lock state. CP can detonate (crouch+use, 10s).
 /// Non-combine are blocked when locked. Place in scene via editor.
 /// </summary>
-public class CombineLock : Component, Component.IPressable
+public class CombineLock : PersistableEntity<CombineLockSaveData>, Component.IPressable
 {
 	public enum LockState
 	{
@@ -15,40 +14,36 @@ public class CombineLock : Component, Component.IPressable
 		Detonating
 	}
 
-	[Property] public string PersistenceId { get; set; } = "";
-
 	/// <summary>
 	/// Reference to the door this lock is attached to. Set in the editor.
 	/// </summary>
 	[Property] public DoorComponent Door { get; set; }
 
 	[Sync] public LockState State { get; set; } = LockState.Locked;
-
-	/// <summary>
-	/// Detonation countdown remaining in seconds.
-	/// </summary>
 	[Sync] public float DetonationTimer { get; set; }
 
 	private string _detonatingPlayerId;
 
-	protected override void OnEnabled()
+	protected override string CollectionName => "hl2rp_locks";
+
+	protected override void OnLoadState( CombineLockSaveData data )
 	{
-		if ( IsProxy ) return;
+		State = data.IsLocked ? LockState.Locked : LockState.Unlocked;
+	}
 
-		if ( string.IsNullOrEmpty( PersistenceId ) )
-			PersistenceId = DatabaseManager.NewId();
-
-		LoadState();
-
-		// Apply lock state to door
+	protected override void OnStateLoaded()
+	{
 		if ( Door != null )
 			Door.SetLocked( State == LockState.Locked );
 	}
 
-	protected override void OnDisabled()
+	protected override CombineLockSaveData CreateSaveData()
 	{
-		if ( IsProxy ) return;
-		SaveState();
+		return new CombineLockSaveData
+		{
+			IsLocked = State == LockState.Locked,
+			DoorId = Door?.DoorId ?? ""
+		};
 	}
 
 	protected override void OnFixedUpdate()
@@ -68,20 +63,15 @@ public class CombineLock : Component, Component.IPressable
 
 	// --- IPressable ---
 
-	private HexPlayerComponent GetPlayer( Component.IPressable.Event e )
-	{
-		return e.Source?.GetComponentInParent<HexPlayerComponent>();
-	}
-
 	public bool CanPress( Component.IPressable.Event e )
 	{
-		var player = GetPlayer( e );
+		var player = e.GetPlayer();
 		return player?.Character != null;
 	}
 
 	public bool Press( Component.IPressable.Event e )
 	{
-		var player = GetPlayer( e );
+		var player = e.GetPlayer();
 		if ( player?.Character == null ) return false;
 
 		// Non-combine cannot interact
@@ -90,7 +80,6 @@ public class CombineLock : Component, Component.IPressable
 			if ( State == LockState.Locked )
 				return false;
 
-			// Unlocked — allow door use
 			return true;
 		}
 
@@ -173,7 +162,6 @@ public class CombineLock : Component, Component.IPressable
 			Door.SetLocked( false );
 			Door.IsOpen = true;
 
-			// Apply blast force to door if it has a rigidbody
 			var rb = Door.Components.Get<Rigidbody>();
 			if ( rb != null )
 			{
@@ -184,26 +172,6 @@ public class CombineLock : Component, Component.IPressable
 
 		SaveState();
 		Log.Info( $"[HL2RP] Combine lock {PersistenceId}: Detonated" );
-	}
-
-	// --- Persistence ---
-
-	private void SaveState()
-	{
-		DatabaseManager.Save( "hl2rp_locks", PersistenceId, new CombineLockSaveData
-		{
-			IsLocked = State == LockState.Locked,
-			DoorId = Door?.DoorId ?? ""
-		} );
-	}
-
-	private void LoadState()
-	{
-		var saved = DatabaseManager.Load<CombineLockSaveData>( "hl2rp_locks", PersistenceId );
-		if ( saved != null )
-		{
-			State = saved.IsLocked ? LockState.Locked : LockState.Unlocked;
-		}
 	}
 }
 

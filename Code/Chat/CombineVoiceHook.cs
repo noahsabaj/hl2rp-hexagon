@@ -1,4 +1,3 @@
-using Hexagon.Config;
 
 /// <summary>
 /// Plays radio beep sounds when combine players speak in IC or Yell chat.
@@ -25,12 +24,13 @@ public class CombineVoiceHook : Component, IChatMessageListener
 	private void PlayRadioBeep( HexPlayerComponent player, bool isOn )
 	{
 		var isCP = CombineUtils.IsCP( player.Character );
-		string configKey;
-
-		if ( isOn )
-			configKey = isCP ? "hl2rp.sound.radioOn.cp" : "hl2rp.sound.radioOn.ow";
-		else
-			configKey = isCP ? "hl2rp.sound.radioOff.cp" : "hl2rp.sound.radioOff.ow";
+		var configKey = (isOn, isCP) switch
+		{
+			(true, true) => "hl2rp.sound.radioOn.cp",
+			(true, false) => "hl2rp.sound.radioOn.ow",
+			(false, true) => "hl2rp.sound.radioOff.cp",
+			(false, false) => "hl2rp.sound.radioOff.ow"
+		};
 
 		var soundPath = HexConfig.Get<string>( configKey, "" );
 		if ( string.IsNullOrEmpty( soundPath ) )

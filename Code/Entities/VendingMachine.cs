@@ -1,34 +1,15 @@
-using Hexagon.Persistence;
 
 /// <summary>
 /// Vending machine world entity. Citizens buy water variants for tokens.
 /// CP can refill or toggle active state. Place in scene via editor.
 /// </summary>
-public class VendingMachine : Component, Component.IPressable
+public class VendingMachine : PersistableEntity<VendingSaveData>, Component.IPressable
 {
-	[Property] public string PersistenceId { get; set; } = "";
-
-	/// <summary>
-	/// Stock level for button 1 (Water, 5 tokens).
-	/// </summary>
 	[Sync] public int StockButton1 { get; set; } = 10;
-
-	/// <summary>
-	/// Stock level for button 2 (Sparkling Water, 15 tokens).
-	/// </summary>
 	[Sync] public int StockButton2 { get; set; } = 5;
-
-	/// <summary>
-	/// Stock level for button 3 (Special Water, 20 tokens).
-	/// </summary>
 	[Sync] public int StockButton3 { get; set; } = 5;
-
 	[Sync] public bool IsActive { get; set; } = true;
 
-	/// <summary>
-	/// Which button was last selected by a citizen (0 = none). Used for two-press buy.
-	/// Key = character ID, Value = selected button (1-3).
-	/// </summary>
 	private Dictionary<string, int> _selectedButton = new();
 
 	private static readonly (string ItemId, int Price)[] Buttons = new[]
@@ -38,45 +19,42 @@ public class VendingMachine : Component, Component.IPressable
 		("water_special", 20)
 	};
 
-	protected override void OnEnabled()
+	protected override string CollectionName => "hl2rp_vending";
+
+	protected override void OnLoadState( VendingSaveData data )
 	{
-		if ( IsProxy ) return;
-
-		if ( string.IsNullOrEmpty( PersistenceId ) )
-			PersistenceId = DatabaseManager.NewId();
-
-		LoadState();
+		IsActive = data.IsActive;
+		StockButton1 = data.Stock1;
+		StockButton2 = data.Stock2;
+		StockButton3 = data.Stock3;
 	}
 
-	protected override void OnDisabled()
+	protected override VendingSaveData CreateSaveData()
 	{
-		if ( IsProxy ) return;
-		SaveState();
+		return new VendingSaveData
+		{
+			IsActive = IsActive,
+			Stock1 = StockButton1,
+			Stock2 = StockButton2,
+			Stock3 = StockButton3
+		};
 	}
 
 	// --- IPressable ---
 
-	private HexPlayerComponent GetPlayer( Component.IPressable.Event e )
-	{
-		return e.Source?.GetComponentInParent<HexPlayerComponent>();
-	}
-
 	public bool CanPress( Component.IPressable.Event e )
 	{
-		var player = GetPlayer( e );
+		var player = e.GetPlayer();
 		return player?.Character != null;
 	}
 
 	public bool Press( Component.IPressable.Event e )
 	{
-		var player = GetPlayer( e );
+		var player = e.GetPlayer();
 		if ( player?.Character == null ) return false;
 
-		// CP/OW: refill or toggle
 		if ( CombineUtils.IsCombine( player.Character ) )
-		{
 			return HandleCombineUse( player );
-		}
 
 		if ( !IsActive )
 			return false;
@@ -103,7 +81,6 @@ public class VendingMachine : Component, Component.IPressable
 			return true;
 		}
 
-		// Refill stock for 25 tokens
 		var refillCost = 25;
 		var data = (HL2RPCharacter)player.Character.Data;
 		if ( data.Money >= refillCost )
@@ -124,11 +101,9 @@ public class VendingMachine : Component, Component.IPressable
 	{
 		var charId = player.Character.Id;
 
-		// Simple sequential buy: cycle through buttons 1->2->3->buy
 		if ( !_selectedButton.TryGetValue( charId, out var selected ) )
 			selected = 0;
 
-		// Cycle to next button
 		selected = (selected % 3) + 1;
 		_selectedButton[charId] = selected;
 
@@ -148,7 +123,6 @@ public class VendingMachine : Component, Component.IPressable
 			return false;
 		}
 
-		// Dispense
 		CurrencyManager.TakeMoney( player.Character, price, "vending_purchase" );
 		SetStock( selected, stock - 1 );
 
@@ -184,29 +158,6 @@ public class VendingMachine : Component, Component.IPressable
 			case 1: StockButton1 = value; break;
 			case 2: StockButton2 = value; break;
 			case 3: StockButton3 = value; break;
-		}
-	}
-
-	private void SaveState()
-	{
-		DatabaseManager.Save( "hl2rp_vending", PersistenceId, new VendingSaveData
-		{
-			IsActive = IsActive,
-			Stock1 = StockButton1,
-			Stock2 = StockButton2,
-			Stock3 = StockButton3
-		} );
-	}
-
-	private void LoadState()
-	{
-		var saved = DatabaseManager.Load<VendingSaveData>( "hl2rp_vending", PersistenceId );
-		if ( saved != null )
-		{
-			IsActive = saved.IsActive;
-			StockButton1 = saved.Stock1;
-			StockButton2 = saved.Stock2;
-			StockButton3 = saved.Stock3;
 		}
 	}
 }

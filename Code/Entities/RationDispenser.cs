@@ -1,12 +1,10 @@
-using Hexagon.Config;
-using Hexagon.Persistence;
 
 /// <summary>
 /// Ration dispenser world entity. Citizens insert CID to receive rations.
 /// Place in scene via editor. CP can toggle disabled state.
 /// States: Idle, Checking, Arming, Dispensing, Error, Disabled.
 /// </summary>
-public class RationDispenser : Component, Component.IPressable
+public class RationDispenser : PersistableEntity<DispenserSaveData>, Component.IPressable
 {
 	public enum DispenserState
 	{
@@ -21,32 +19,20 @@ public class RationDispenser : Component, Component.IPressable
 	[Sync] public DispenserState State { get; set; } = DispenserState.Idle;
 	[Sync] public bool IsDisabled { get; set; }
 
-	[Property] public string PersistenceId { get; set; } = "";
-
-	/// <summary>
-	/// Tracks cooldowns per CID number. Key = CID number, Value = last dispense time.
-	/// </summary>
 	private Dictionary<int, DateTime> _cooldowns = new();
-
-	/// <summary>
-	/// Time when an error state was entered, for auto-reset.
-	/// </summary>
 	private DateTime _errorTime;
 
-	protected override void OnEnabled()
+	protected override string CollectionName => "hl2rp_dispensers";
+
+	protected override void OnLoadState( DispenserSaveData data )
 	{
-		if ( IsProxy ) return;
-
-		if ( string.IsNullOrEmpty( PersistenceId ) )
-			PersistenceId = DatabaseManager.NewId();
-
-		LoadState();
+		IsDisabled = data.IsDisabled;
+		State = IsDisabled ? DispenserState.Disabled : DispenserState.Idle;
 	}
 
-	protected override void OnDisabled()
+	protected override DispenserSaveData CreateSaveData()
 	{
-		if ( IsProxy ) return;
-		SaveState();
+		return new DispenserSaveData { IsDisabled = IsDisabled };
 	}
 
 	protected override void OnFixedUpdate()
@@ -62,20 +48,15 @@ public class RationDispenser : Component, Component.IPressable
 
 	// --- IPressable ---
 
-	private HexPlayerComponent GetPlayer( Component.IPressable.Event e )
-	{
-		return e.Source?.GetComponentInParent<HexPlayerComponent>();
-	}
-
 	public bool CanPress( Component.IPressable.Event e )
 	{
-		var player = GetPlayer( e );
+		var player = e.GetPlayer();
 		return player?.Character != null;
 	}
 
 	public bool Press( Component.IPressable.Event e )
 	{
-		var player = GetPlayer( e );
+		var player = e.GetPlayer();
 		if ( player?.Character == null ) return false;
 
 		// CP/OW can toggle disabled state
@@ -92,13 +73,7 @@ public class RationDispenser : Component, Component.IPressable
 			return false;
 
 		// Check for CID in inventory
-		var inventories = InventoryManager.LoadForCharacter( player.Character.Id );
-		ItemInstance cidItem = null;
-		foreach ( var inv in inventories )
-		{
-			cidItem = inv.FindItem( "cid_card" );
-			if ( cidItem != null ) break;
-		}
+		var cidItem = player.Character.FindItem( "cid_card" );
 
 		if ( cidItem == null )
 		{
@@ -125,6 +100,7 @@ public class RationDispenser : Component, Component.IPressable
 		var isPriority = cidItem.GetData<bool>( "cwu", false );
 		var rationCount = isPriority ? 2 : 1;
 
+		var inventories = InventoryManager.LoadForCharacter( player.Character.Id );
 		for ( int i = 0; i < rationCount; i++ )
 		{
 			var ration = ItemManager.CreateInstance( "ration", player.Character.Id );
@@ -157,24 +133,6 @@ public class RationDispenser : Component, Component.IPressable
 	{
 		State = DispenserState.Error;
 		_errorTime = DateTime.UtcNow;
-	}
-
-	private void SaveState()
-	{
-		DatabaseManager.Save( "hl2rp_dispensers", PersistenceId, new DispenserSaveData
-		{
-			IsDisabled = IsDisabled
-		} );
-	}
-
-	private void LoadState()
-	{
-		var saved = DatabaseManager.Load<DispenserSaveData>( "hl2rp_dispensers", PersistenceId );
-		if ( saved != null )
-		{
-			IsDisabled = saved.IsDisabled;
-			State = IsDisabled ? DispenserState.Disabled : DispenserState.Idle;
-		}
 	}
 }
 

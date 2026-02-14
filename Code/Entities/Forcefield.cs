@@ -1,14 +1,11 @@
-using Hexagon.Persistence;
 
 /// <summary>
 /// Forcefield world entity. Blocks citizens but allows combine through.
 /// Toggle active state via admin or combine interaction.
 /// Place in scene via editor — add a collider to the same GameObject.
 /// </summary>
-public class Forcefield : Component, Component.IPressable, Component.ICollisionListener
+public class Forcefield : PersistableEntity<ForcefieldSaveData>, Component.IPressable, Component.ICollisionListener
 {
-	[Property] public string PersistenceId { get; set; } = "";
-
 	[Sync] public bool IsActive { get; set; } = true;
 
 	/// <summary>
@@ -16,42 +13,36 @@ public class Forcefield : Component, Component.IPressable, Component.ICollisionL
 	/// </summary>
 	[Property] public Collider BlockCollider { get; set; }
 
-	protected override void OnEnabled()
+	protected override string CollectionName => "hl2rp_forcefields";
+
+	protected override void OnLoadState( ForcefieldSaveData data )
 	{
-		if ( IsProxy ) return;
+		IsActive = data.IsActive;
+	}
 
-		if ( string.IsNullOrEmpty( PersistenceId ) )
-			PersistenceId = DatabaseManager.NewId();
-
-		LoadState();
+	protected override void OnStateLoaded()
+	{
 		UpdateCollider();
 	}
 
-	protected override void OnDisabled()
+	protected override ForcefieldSaveData CreateSaveData()
 	{
-		if ( IsProxy ) return;
-		SaveState();
+		return new ForcefieldSaveData { IsActive = IsActive };
 	}
 
 	// --- IPressable ---
 
-	private HexPlayerComponent GetPlayer( Component.IPressable.Event e )
-	{
-		return e.Source?.GetComponentInParent<HexPlayerComponent>();
-	}
-
 	public bool CanPress( Component.IPressable.Event e )
 	{
-		var player = GetPlayer( e );
+		var player = e.GetPlayer();
 		if ( player?.Character == null ) return false;
 
-		// Only combine or admins can toggle
 		return CombineUtils.IsCombine( player.Character ) || player.Character.HasFlag( 'a' );
 	}
 
 	public bool Press( Component.IPressable.Event e )
 	{
-		var player = GetPlayer( e );
+		var player = e.GetPlayer();
 		if ( player?.Character == null ) return false;
 
 		if ( !CombineUtils.IsCombine( player.Character ) && !player.Character.HasFlag( 'a' ) )
@@ -96,25 +87,6 @@ public class Forcefield : Component, Component.IPressable, Component.ICollisionL
 	{
 		if ( BlockCollider != null )
 			BlockCollider.Enabled = IsActive;
-	}
-
-	// --- Persistence ---
-
-	private void SaveState()
-	{
-		DatabaseManager.Save( "hl2rp_forcefields", PersistenceId, new ForcefieldSaveData
-		{
-			IsActive = IsActive
-		} );
-	}
-
-	private void LoadState()
-	{
-		var saved = DatabaseManager.Load<ForcefieldSaveData>( "hl2rp_forcefields", PersistenceId );
-		if ( saved != null )
-		{
-			IsActive = saved.IsActive;
-		}
 	}
 }
 

@@ -66,18 +66,3 @@ public class BleachItem : ConsumableItemDef
 		return true;
 	}
 }
-
-public class VegetableOilItem : ConsumableItemDef
-{
-	public VegetableOilItem()
-	{
-		UniqueId = "vegetable_oil";
-		DisplayName = "Vegetable Oil";
-		Description = "A bottle of cooking oil.";
-		Width = 1;
-		Height = 1;
-		MaxStack = 1;
-		Category = "Consumables";
-		ConsumeVerb = "Drinking";
-	}
-}

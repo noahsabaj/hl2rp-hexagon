@@ -36,28 +36,8 @@ public class PermitPlugin : IHexPlugin
 			return false;
 
 		if ( !CategoryToPermit.TryGetValue( itemCategory, out var requiredPermitType ) )
-			return true; // No permit needed for this category
+			return true;
 
-		return HasPermit( player, requiredPermitType );
-	}
-
-	/// <summary>
-	/// Check if a player has a specific permit type in their inventory.
-	/// </summary>
-	public static bool HasPermit( HexPlayerComponent player, string permitType )
-	{
-		if ( player?.Character == null )
-			return false;
-
-		var permitItemId = $"permit_{permitType}";
-		var inventories = InventoryManager.LoadForCharacter( player.Character.Id );
-
-		foreach ( var inv in inventories )
-		{
-			if ( inv.HasItem( permitItemId ) )
-				return true;
-		}
-
-		return false;
+		return player.Character.HasItem( $"permit_{requiredPermitType}" );
 	}
 }

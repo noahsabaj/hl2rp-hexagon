@@ -1,5 +1,3 @@
-using Hexagon.Config;
-
 public static class HL2RPConfig
 {
 	public static void Register()

@@ -1,4 +1,3 @@
-using Hexagon.Config;
 
 /// <summary>
 /// Schema-specific armor assignment. Item loadouts are now handled by the framework's
@@ -12,22 +11,14 @@ public static class LoadoutSystem
 	public static void ApplyArmor( HexPlayerComponent player, HexCharacter character )
 	{
 		var data = (HL2RPCharacter)character.Data;
-		var factionId = character.Faction;
 
-		switch ( factionId )
+		data.Armor = character.Faction switch
 		{
-			case "cca":
-				data.Armor = HexConfig.Get<int>( "hl2rp.combine.cpArmor", 50 );
-				character.MarkDirty( "Armor" );
-				break;
-			case "ota":
-				data.Armor = HexConfig.Get<int>( "hl2rp.combine.owArmor", 100 );
-				character.MarkDirty( "Armor" );
-				break;
-			default:
-				data.Armor = 0;
-				character.MarkDirty( "Armor" );
-				break;
-		}
+			"cca" => HexConfig.Get<int>( "hl2rp.combine.cpArmor", 50 ),
+			"ota" => HexConfig.Get<int>( "hl2rp.combine.owArmor", 100 ),
+			_ => 0
+		};
+
+		character.MarkDirty( "Armor" );
 	}
 }

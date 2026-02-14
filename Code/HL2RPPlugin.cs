@@ -35,20 +35,20 @@ public class HL2RPPlugin : IHexPlugin
 
 		// Consumables
 		ItemManager.Register( new RationItem() );
-		ItemManager.Register( new WaterItem() );
-		ItemManager.Register( new SparklingWaterItem() );
-		ItemManager.Register( new SpecialWaterItem() );
-		ItemManager.Register( new SupplementItem() );
-		ItemManager.Register( new LargeSupplementItem() );
+		ItemManager.Register( new SimpleConsumable( "water", "Water", "A bottle of clean drinking water.", "Drinking" ) );
+		ItemManager.Register( new SimpleConsumable( "water_sparkling", "Sparkling Water", "A bottle of sparkling mineral water.", "Drinking" ) );
+		ItemManager.Register( new SimpleConsumable( "water_special", "Special Water", "A bottle of premium purified water.", "Drinking" ) );
+		ItemManager.Register( new SimpleConsumable( "supplement", "Supplement", "A standard nutritional supplement.", "Eating" ) );
+		ItemManager.Register( new SimpleConsumable( "supplement_large", "Large Supplement", "A larger nutritional supplement with extra calories.", "Eating" ) );
+		ItemManager.Register( new SimpleConsumable( "vegetable_oil", "Vegetable Oil", "A bottle of cooking oil.", "Drinking" ) );
 		ItemManager.Register( new HealthVialItem() );
 		ItemManager.Register( new HealthKitItem() );
 		ItemManager.Register( new BleachItem() );
-		ItemManager.Register( new VegetableOilItem() );
 
 		// Equipment
-		ItemManager.Register( new RadioItem() );
-		ItemManager.Register( new PagerItem() );
-		ItemManager.Register( new StaticRadioItem() );
+		ItemManager.Register( new FrequencyDeviceItem( "radio", "Radio", "A handheld frequency-tuned radio for long-range communication.", tunable: true ) );
+		ItemManager.Register( new FrequencyDeviceItem( "pager", "Pager", "A small pager that receives radio transmissions." ) );
+		ItemManager.Register( new FrequencyDeviceItem( "static_radio", "Static Radio", "A stationary radio with unlimited transmission range.", tunable: true, width: 2 ) );
 		ItemManager.Register( new RequestDeviceItem() );
 		ItemManager.Register( new FlashlightItem() );
 		ItemManager.Register( new SpraycanItem() );
@@ -70,24 +70,24 @@ public class HL2RPPlugin : IHexPlugin
 		ItemManager.Register( new ZipTieItem() );
 
 		// Ammo
-		ItemManager.Register( new PistolAmmoItem() );
-		ItemManager.Register( new SMGAmmoItem() );
-		ItemManager.Register( new ShotgunAmmoItem() );
-		ItemManager.Register( new MagnumAmmoItem() );
-		ItemManager.Register( new AR2AmmoItem() );
-		ItemManager.Register( new CrossbowAmmoItem() );
-		ItemManager.Register( new RocketAmmoItem() );
+		ItemManager.Register( new AmmoItem( "ammo_pistol", "Pistol Ammo", "A box of 9mm pistol rounds.", "pistol", 18 ) );
+		ItemManager.Register( new AmmoItem( "ammo_smg", "SMG Ammo", "A box of submachine gun rounds.", "smg", 45 ) );
+		ItemManager.Register( new AmmoItem( "ammo_shotgun", "Shotgun Shells", "A box of 12-gauge shotgun shells.", "shotgun", 8 ) );
+		ItemManager.Register( new AmmoItem( "ammo_357", ".357 Ammo", "A box of .357 magnum rounds.", "357", 6 ) );
+		ItemManager.Register( new AmmoItem( "ammo_ar2", "AR2 Pulse Rounds", "A magazine of Combine pulse rifle ammunition.", "ar2", 30 ) );
+		ItemManager.Register( new AmmoItem( "ammo_crossbow", "Crossbow Bolts", "A bundle of heated rebar crossbow bolts.", "crossbow", 6 ) );
+		ItemManager.Register( new AmmoItem( "ammo_rocket", "Rocket", "A single RPG rocket.", "rocket", 1 ) );
 
 		// Weapons
-		ItemManager.Register( new CrowbarWeapon() );
-		ItemManager.Register( new StunstickWeapon() );
-		ItemManager.Register( new PistolWeapon() );
-		ItemManager.Register( new MagnumWeapon() );
-		ItemManager.Register( new SMGWeapon() );
-		ItemManager.Register( new ShotgunWeapon() );
-		ItemManager.Register( new CrossbowWeapon() );
-		ItemManager.Register( new AR2Weapon() );
-		ItemManager.Register( new RPGWeapon() );
+		ItemManager.Register( new WeaponItem( "weapon_crowbar", "Crowbar", "A standard crowbar. Useful for prying things open.", height: 2 ) );
+		ItemManager.Register( new WeaponItem( "weapon_stunstick", "Stunstick", "A Civil Protection-issued stun baton.", height: 2 ) );
+		ItemManager.Register( new WeaponItem( "weapon_pistol", "Pistol", "A standard 9mm pistol.", "pistol", 18 ) );
+		ItemManager.Register( new WeaponItem( "weapon_357", ".357 Magnum", "A powerful .357 revolver.", "357", 6 ) );
+		ItemManager.Register( new WeaponItem( "weapon_smg", "SMG", "A Heckler & Koch MP7 submachine gun.", "smg", 45, width: 2, twoHanded: true ) );
+		ItemManager.Register( new WeaponItem( "weapon_shotgun", "Shotgun", "A SPAS-12 pump-action shotgun.", "shotgun", 8, width: 2, twoHanded: true ) );
+		ItemManager.Register( new WeaponItem( "weapon_crossbow", "Crossbow", "A modified crossbow that fires heated rebar.", "crossbow", 1, width: 2, twoHanded: true ) );
+		ItemManager.Register( new WeaponItem( "weapon_ar2", "Pulse Rifle", "A Combine Overwatch Standard Issue Pulse Rifle.", "ar2", 30, width: 2, twoHanded: true ) );
+		ItemManager.Register( new WeaponItem( "weapon_rpg", "RPG", "A rocket-propelled grenade launcher.", "rocket", 1, width: 2, height: 2, twoHanded: true ) );
 
 		// Armor
 		ItemManager.Register( new RebelArmorItem() );
@@ -96,201 +96,92 @@ public class HL2RPPlugin : IHexPlugin
 
 	private void RegisterFactions()
 	{
-		var citizen = new FactionDefinition();
-		citizen.UniqueId = "citizen";
-		citizen.Name = "Citizen";
-		citizen.Description = "Residents of City 17, living under Combine rule.";
-		citizen.IsDefault = true;
-		citizen.MaxPlayers = 0;
-		citizen.Color = new Color( 0.4f, 0.75f, 0.4f );
-		citizen.StartingMoney = 0;
-		citizen.Order = 1;
-		FactionManager.Register( citizen );
+		RegFaction( "citizen", "Citizen", "Residents of City 17, living under Combine rule.",
+			new Color( 0.4f, 0.75f, 0.4f ), 1, isDefault: true );
 
-		var cca = new FactionDefinition();
-		cca.UniqueId = "cca";
-		cca.Name = "Civil Protection";
-		cca.Description = "The Combine Civil Authority, tasked with maintaining order in the city.";
-		cca.IsDefault = false;
-		cca.MaxPlayers = 0;
-		cca.Color = new Color( 0.2f, 0.4f, 0.85f );
-		cca.StartingMoney = 0;
-		cca.IsGloballyRecognized = true;
-		cca.Order = 2;
-		FactionManager.Register( cca );
+		RegFaction( "cca", "Civil Protection", "The Combine Civil Authority, tasked with maintaining order in the city.",
+			new Color( 0.2f, 0.4f, 0.85f ), 2, globallyRecognized: true );
 
-		var ota = new FactionDefinition();
-		ota.UniqueId = "ota";
-		ota.Name = "Overwatch Transhuman Arm";
-		ota.Description = "The Combine's elite military force, deployed for high-threat operations.";
-		ota.IsDefault = false;
-		ota.MaxPlayers = 0;
-		ota.Color = new Color( 0.85f, 0.2f, 0.2f );
-		ota.StartingMoney = 0;
-		ota.IsGloballyRecognized = true;
-		ota.Order = 3;
-		FactionManager.Register( ota );
+		RegFaction( "ota", "Overwatch Transhuman Arm", "The Combine's elite military force, deployed for high-threat operations.",
+			new Color( 0.85f, 0.2f, 0.2f ), 3, globallyRecognized: true );
 
-		var admin = new FactionDefinition();
-		admin.UniqueId = "cityadmin";
-		admin.Name = "City Administration";
-		admin.Description = "The governing body of City 17, appointed by the Combine.";
-		admin.IsDefault = false;
-		admin.MaxPlayers = 1;
-		admin.Color = new Color( 0.85f, 0.75f, 0.2f );
-		admin.StartingMoney = 5000;
-		admin.Order = 4;
-		FactionManager.Register( admin );
+		RegFaction( "cityadmin", "City Administration", "The governing body of City 17, appointed by the Combine.",
+			new Color( 0.85f, 0.75f, 0.2f ), 4, maxPlayers: 1, startMoney: 5000 );
 
-		var vort = new FactionDefinition();
-		vort.UniqueId = "vortigaunt";
-		vort.Name = "Vortigaunt";
-		vort.Description = "Alien beings from the border world Xen, now residing alongside humanity.";
-		vort.IsDefault = false;
-		vort.MaxPlayers = 0;
-		vort.Color = new Color( 0.5f, 0.85f, 0.5f );
-		vort.StartingMoney = 0;
-		vort.Order = 5;
-		FactionManager.Register( vort );
+		RegFaction( "vortigaunt", "Vortigaunt", "Alien beings from the border world Xen, now residing alongside humanity.",
+			new Color( 0.5f, 0.85f, 0.5f ), 5 );
 	}
 
 	private void RegisterClasses()
 	{
+		var cpLoadout = new List<LoadoutEntry>
+		{
+			new LoadoutEntry { ItemDefinitionId = "weapon_stunstick", Count = 1 },
+			new LoadoutEntry { ItemDefinitionId = "radio", Count = 1 }
+		};
+
+		var otaLoadout = new List<LoadoutEntry>
+		{
+			new LoadoutEntry { ItemDefinitionId = "radio", Count = 1 }
+		};
+
 		// Citizen
-		var citizenClass = new ClassDefinition();
-		citizenClass.UniqueId = "citizen";
-		citizenClass.Name = "Citizen";
-		citizenClass.Description = "An ordinary citizen of City 17.";
-		citizenClass.FactionId = "citizen";
-		citizenClass.MaxPlayers = 0;
-		citizenClass.Order = 1;
-		FactionManager.RegisterClass( citizenClass );
+		RegClass( "citizen", "Citizen", "An ordinary citizen of City 17.", "citizen", 1 );
 
 		// Civil Protection
-		var rct = new ClassDefinition();
-		rct.UniqueId = "cca_rct";
-		rct.Name = "Recruit";
-		rct.Description = "A newly inducted Civil Protection recruit.";
-		rct.FactionId = "cca";
-		rct.MaxPlayers = 0;
-		rct.Order = 1;
-		rct.Loadout = new List<LoadoutEntry>
-		{
-			new LoadoutEntry { ItemDefinitionId = "weapon_stunstick", Count = 1 },
-			new LoadoutEntry { ItemDefinitionId = "radio", Count = 1 }
-		};
-		FactionManager.RegisterClass( rct );
-
-		var unit = new ClassDefinition();
-		unit.UniqueId = "cca_unit";
-		unit.Name = "Unit";
-		unit.Description = "A standard Civil Protection unit.";
-		unit.FactionId = "cca";
-		unit.MaxPlayers = 0;
-		unit.Order = 2;
-		unit.Loadout = new List<LoadoutEntry>
-		{
-			new LoadoutEntry { ItemDefinitionId = "weapon_stunstick", Count = 1 },
-			new LoadoutEntry { ItemDefinitionId = "radio", Count = 1 }
-		};
-		FactionManager.RegisterClass( unit );
-
-		var epu = new ClassDefinition();
-		epu.UniqueId = "cca_epu";
-		epu.Name = "Elite Protection Unit";
-		epu.Description = "An elite Civil Protection operative.";
-		epu.FactionId = "cca";
-		epu.MaxPlayers = 0;
-		epu.Order = 3;
-		epu.Loadout = new List<LoadoutEntry>
-		{
-			new LoadoutEntry { ItemDefinitionId = "weapon_stunstick", Count = 1 },
-			new LoadoutEntry { ItemDefinitionId = "radio", Count = 1 }
-		};
-		FactionManager.RegisterClass( epu );
-
-		var cmd = new ClassDefinition();
-		cmd.UniqueId = "cca_cmd";
-		cmd.Name = "Commander";
-		cmd.Description = "A commanding officer of Civil Protection.";
-		cmd.FactionId = "cca";
-		cmd.MaxPlayers = 2;
-		cmd.Order = 4;
-		cmd.Loadout = new List<LoadoutEntry>
-		{
-			new LoadoutEntry { ItemDefinitionId = "weapon_stunstick", Count = 1 },
-			new LoadoutEntry { ItemDefinitionId = "radio", Count = 1 }
-		};
-		FactionManager.RegisterClass( cmd );
-
-		var sec = new ClassDefinition();
-		sec.UniqueId = "cca_sec";
-		sec.Name = "Sectoral Commander";
-		sec.Description = "The highest ranking Civil Protection officer in the sector.";
-		sec.FactionId = "cca";
-		sec.MaxPlayers = 1;
-		sec.Order = 5;
-		sec.Loadout = new List<LoadoutEntry>
-		{
-			new LoadoutEntry { ItemDefinitionId = "weapon_stunstick", Count = 1 },
-			new LoadoutEntry { ItemDefinitionId = "radio", Count = 1 }
-		};
-		FactionManager.RegisterClass( sec );
+		RegClass( "cca_rct", "Recruit", "A newly inducted Civil Protection recruit.", "cca", 1, loadout: cpLoadout );
+		RegClass( "cca_unit", "Unit", "A standard Civil Protection unit.", "cca", 2, loadout: cpLoadout );
+		RegClass( "cca_epu", "Elite Protection Unit", "An elite Civil Protection operative.", "cca", 3, loadout: cpLoadout );
+		RegClass( "cca_cmd", "Commander", "A commanding officer of Civil Protection.", "cca", 4, maxPlayers: 2, loadout: cpLoadout );
+		RegClass( "cca_sec", "Sectoral Commander", "The highest ranking Civil Protection officer in the sector.", "cca", 5, maxPlayers: 1, loadout: cpLoadout );
 
 		// Overwatch Transhuman Arm
-		var ows = new ClassDefinition();
-		ows.UniqueId = "ota_ows";
-		ows.Name = "Overwatch Soldier";
-		ows.Description = "A standard transhuman Overwatch soldier.";
-		ows.FactionId = "ota";
-		ows.MaxPlayers = 0;
-		ows.Order = 1;
-		ows.Loadout = new List<LoadoutEntry>
-		{
-			new LoadoutEntry { ItemDefinitionId = "radio", Count = 1 }
-		};
-		FactionManager.RegisterClass( ows );
-
-		var owe = new ClassDefinition();
-		owe.UniqueId = "ota_owe";
-		owe.Name = "Overwatch Elite";
-		owe.Description = "An elite transhuman Overwatch operative.";
-		owe.FactionId = "ota";
-		owe.MaxPlayers = 0;
-		owe.Order = 2;
-		owe.Loadout = new List<LoadoutEntry>
-		{
-			new LoadoutEntry { ItemDefinitionId = "radio", Count = 1 }
-		};
-		FactionManager.RegisterClass( owe );
+		RegClass( "ota_ows", "Overwatch Soldier", "A standard transhuman Overwatch soldier.", "ota", 1, loadout: otaLoadout );
+		RegClass( "ota_owe", "Overwatch Elite", "An elite transhuman Overwatch operative.", "ota", 2, loadout: otaLoadout );
 
 		// City Administration
-		var cityAdmin = new ClassDefinition();
-		cityAdmin.UniqueId = "city_administrator";
-		cityAdmin.Name = "City Administrator";
-		cityAdmin.Description = "The appointed administrator of City 17.";
-		cityAdmin.FactionId = "cityadmin";
-		cityAdmin.MaxPlayers = 1;
-		cityAdmin.Order = 1;
-		FactionManager.RegisterClass( cityAdmin );
+		RegClass( "city_administrator", "City Administrator", "The appointed administrator of City 17.", "cityadmin", 1, maxPlayers: 1 );
 
 		// Vortigaunt
-		var freeVort = new ClassDefinition();
-		freeVort.UniqueId = "vort_free";
-		freeVort.Name = "Free Vortigaunt";
-		freeVort.Description = "A Vortigaunt freed from Combine servitude.";
-		freeVort.FactionId = "vortigaunt";
-		freeVort.MaxPlayers = 0;
-		freeVort.Order = 1;
-		FactionManager.RegisterClass( freeVort );
+		RegClass( "vort_free", "Free Vortigaunt", "A Vortigaunt freed from Combine servitude.", "vortigaunt", 1 );
+		RegClass( "vort_enslaved", "Enslaved Vortigaunt", "A Vortigaunt still under Combine control.", "vortigaunt", 2 );
+	}
 
-		var enslaved = new ClassDefinition();
-		enslaved.UniqueId = "vort_enslaved";
-		enslaved.Name = "Enslaved Vortigaunt";
-		enslaved.Description = "A Vortigaunt still under Combine control.";
-		enslaved.FactionId = "vortigaunt";
-		enslaved.MaxPlayers = 0;
-		enslaved.Order = 2;
-		FactionManager.RegisterClass( enslaved );
+	// --- Registration Helpers ---
+
+	private static void RegFaction( string id, string name, string desc, Color color, int order,
+		bool isDefault = false, int maxPlayers = 0, int startMoney = 0, bool globallyRecognized = false )
+	{
+		FactionManager.Register( new FactionDefinition
+		{
+			UniqueId = id,
+			Name = name,
+			Description = desc,
+			Color = color,
+			IsDefault = isDefault,
+			MaxPlayers = maxPlayers,
+			StartingMoney = startMoney,
+			IsGloballyRecognized = globallyRecognized,
+			Order = order
+		} );
+	}
+
+	private static void RegClass( string id, string name, string desc, string factionId, int order,
+		int maxPlayers = 0, List<LoadoutEntry> loadout = null )
+	{
+		var cls = new ClassDefinition
+		{
+			UniqueId = id,
+			Name = name,
+			Description = desc,
+			FactionId = factionId,
+			MaxPlayers = maxPlayers,
+			Order = order
+		};
+
+		if ( loadout != null )
+			cls.Loadout = loadout;
+
+		FactionManager.RegisterClass( cls );
 	}
 }

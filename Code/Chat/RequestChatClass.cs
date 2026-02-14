@@ -1,4 +1,3 @@
-using Hexagon.Config;
 
 public class RequestChatClass : IChatClass
 {
@@ -14,18 +13,7 @@ public class RequestChatClass : IChatClass
 		if ( !speaker.HasActiveCharacter || speaker.Character == null )
 			return false;
 
-		var inventories = InventoryManager.LoadForCharacter( speaker.Character.Id );
-		bool hasDevice = false;
-		foreach ( var inv in inventories )
-		{
-			if ( inv.HasItem( "request_device" ) )
-			{
-				hasDevice = true;
-				break;
-			}
-		}
-
-		if ( !hasDevice )
+		if ( !speaker.Character.HasItem( "request_device" ) )
 			return false;
 
 		var charId = speaker.Character.Id;
@@ -42,10 +30,7 @@ public class RequestChatClass : IChatClass
 
 	public bool CanHear( HexPlayerComponent speaker, HexPlayerComponent listener )
 	{
-		if ( !listener.HasActiveCharacter || listener.Character == null )
-			return false;
-
-		return CombineUtils.IsCombine( listener.Character );
+		return CombineUtils.IsCombineListener( listener );
 	}
 
 	public string Format( HexPlayerComponent speaker, string message )
