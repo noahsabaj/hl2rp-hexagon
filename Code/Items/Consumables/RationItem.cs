@@ -32,14 +32,6 @@ public class RationItem : ItemDefinition
 					var tokens = new Random().Next( 10, 16 );
 					CurrencyManager.GiveMoney( player.Character, tokens, "ration" );
 
-					foreach ( var inv in inventories )
-					{
-						if ( inv.Remove( item.Id ) )
-						{
-							ItemManager.DestroyInstance( item.Id );
-							break;
-						}
-					}
 					return true;
 				}
 			}

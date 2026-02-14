@@ -51,9 +51,12 @@ public static class HL2RPExtensions
 		var inventories = InventoryManager.LoadForCharacter( character.Id );
 		foreach ( var inv in inventories )
 		{
-			var item = inv.FindItem( itemId );
-			if ( item != null )
-				return item;
+			foreach ( var instanceId in inv.ItemIds )
+			{
+				var instance = ItemManager.GetInstance( instanceId );
+				if ( instance?.DefinitionId == itemId )
+					return instance;
+			}
 		}
 		return null;
 	}
@@ -66,11 +69,11 @@ public static class HL2RPExtensions
 		var inventories = InventoryManager.LoadForCharacter( character.Id );
 		foreach ( var inv in inventories )
 		{
-			foreach ( var itemId in itemIds )
+			foreach ( var instanceId in inv.ItemIds )
 			{
-				var item = inv.FindItem( itemId );
-				if ( item != null )
-					return item;
+				var instance = ItemManager.GetInstance( instanceId );
+				if ( instance != null && itemIds.Contains( instance.DefinitionId ) )
+					return instance;
 			}
 		}
 		return null;

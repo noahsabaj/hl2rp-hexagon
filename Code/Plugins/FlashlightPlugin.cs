@@ -15,6 +15,8 @@ public class FlashlightPlugin : IHexPlugin
 		Log.Info( "[HL2RP] FlashlightPlugin loaded." );
 	}
 
+	public void OnPluginUnloaded() { }
+
 	/// <summary>
 	/// Check if a player has a flashlight item in their inventory.
 	/// Called by input handling to gate flashlight activation.

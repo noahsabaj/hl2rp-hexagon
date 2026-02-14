@@ -28,7 +28,7 @@ public class CIDCardItem : ItemDefinition
 					var cwu = item.GetData<bool>( "cwu", false );
 					var priority = cwu ? " [CWU PRIORITY]" : "";
 					Log.Info( $"[CID] Name: {name} | ID: #{id}{priority}" );
-					return true;
+					return false;
 				}
 			}
 		};

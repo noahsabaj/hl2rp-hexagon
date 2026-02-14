@@ -26,6 +26,8 @@ public class PermitPlugin : IHexPlugin
 		Log.Info( "[HL2RP] PermitPlugin loaded." );
 	}
 
+	public void OnPluginUnloaded() { }
+
 	/// <summary>
 	/// Check if a player has the required permit to sell an item of the given category.
 	/// Returns true if no permit is required or the player has the correct permit.

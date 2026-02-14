@@ -20,6 +20,14 @@ public class HL2RPPlugin : IHexPlugin
 
 		RegisterItems();
 
+		// Attach hook components to framework GameObject for Scene.GetAll<T>() discovery
+		var framework = HexagonFramework.Instance;
+		if ( framework != null )
+		{
+			framework.GameObject.GetOrAddComponent<HL2RPHooks>();
+			framework.GameObject.GetOrAddComponent<CombineVoiceHook>();
+		}
+
 		Log.Info( "[HL2RP] Schema loaded — all phases initialized." );
 	}
 
@@ -152,36 +160,31 @@ public class HL2RPPlugin : IHexPlugin
 	private static void RegFaction( string id, string name, string desc, Color color, int order,
 		bool isDefault = false, int maxPlayers = 0, int startMoney = 0, bool globallyRecognized = false )
 	{
-		FactionManager.Register( new FactionDefinition
-		{
-			UniqueId = id,
-			Name = name,
-			Description = desc,
-			Color = color,
-			IsDefault = isDefault,
-			MaxPlayers = maxPlayers,
-			StartingMoney = startMoney,
-			IsGloballyRecognized = globallyRecognized,
-			Order = order
-		} );
+		var f = TypeLibrary.Create<FactionDefinition>();
+		f.UniqueId = id;
+		f.Name = name;
+		f.Description = desc;
+		f.Color = color;
+		f.IsDefault = isDefault;
+		f.MaxPlayers = maxPlayers;
+		f.StartingMoney = startMoney;
+		f.IsGloballyRecognized = globallyRecognized;
+		f.Order = order;
+		FactionManager.Register( f );
 	}
 
 	private static void RegClass( string id, string name, string desc, string factionId, int order,
 		int maxPlayers = 0, List<LoadoutEntry> loadout = null )
 	{
-		var cls = new ClassDefinition
-		{
-			UniqueId = id,
-			Name = name,
-			Description = desc,
-			FactionId = factionId,
-			MaxPlayers = maxPlayers,
-			Order = order
-		};
-
+		var c = TypeLibrary.Create<ClassDefinition>();
+		c.UniqueId = id;
+		c.Name = name;
+		c.Description = desc;
+		c.FactionId = factionId;
+		c.MaxPlayers = maxPlayers;
+		c.Order = order;
 		if ( loadout != null )
-			cls.Loadout = loadout;
-
-		FactionManager.RegisterClass( cls );
+			c.Loadout = loadout;
+		FactionManager.RegisterClass( c );
 	}
 }

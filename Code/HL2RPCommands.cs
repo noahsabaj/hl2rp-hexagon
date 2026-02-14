@@ -18,7 +18,7 @@ public static class HL2RPCommands
 			Arguments = new[]
 			{
 				Arg.Player( "target" ),
-				Arg.Optional( Arg.String( "text", remainder: true ) )
+				Arg.Optional( Arg.String( "text", remainder: true ), null )
 			},
 			PermissionFunc = ( caller ) =>
 			{
@@ -63,7 +63,7 @@ public static class HL2RPCommands
 			Description = "View or edit server objectives.",
 			Arguments = new[]
 			{
-				Arg.Optional( Arg.String( "text", remainder: true ) )
+				Arg.Optional( Arg.String( "text", remainder: true ), null )
 			},
 			OnRun = ( caller, ctx ) =>
 			{

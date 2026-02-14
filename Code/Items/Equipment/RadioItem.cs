@@ -39,7 +39,7 @@ public class FrequencyDeviceItem : ItemDefinition
 					// TODO: Open radio tuning UI (Phase 7)
 					var freq = item.GetData<string>( "frequency", "100.0" );
 					Log.Info( $"[{DisplayName}] Current frequency: {freq}" );
-					return true;
+					return false;
 				}
 			}
 		};

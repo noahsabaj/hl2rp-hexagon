@@ -26,7 +26,7 @@ public class BookItem : ItemDefinition
 				{
 					// TODO: Open book reader UI (Phase 7)
 					Log.Info( $"[Book] {BookContent}" );
-					return true;
+					return false;
 				}
 			}
 		};
