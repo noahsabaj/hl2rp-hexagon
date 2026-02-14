@@ -1,3 +1,4 @@
+using Hexagon.Persistence;
 
 /// <summary>
 /// Combine lock world entity. Attaches to a door to restrict access.

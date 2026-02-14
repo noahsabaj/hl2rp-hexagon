@@ -115,6 +115,7 @@ public class HL2RPPlugin : IHexPlugin
 		cca.MaxPlayers = 0;
 		cca.Color = new Color( 0.2f, 0.4f, 0.85f );
 		cca.StartingMoney = 0;
+		cca.IsGloballyRecognized = true;
 		cca.Order = 2;
 		FactionManager.Register( cca );
 
@@ -126,6 +127,7 @@ public class HL2RPPlugin : IHexPlugin
 		ota.MaxPlayers = 0;
 		ota.Color = new Color( 0.85f, 0.2f, 0.2f );
 		ota.StartingMoney = 0;
+		ota.IsGloballyRecognized = true;
 		ota.Order = 3;
 		FactionManager.Register( ota );
 
@@ -172,6 +174,11 @@ public class HL2RPPlugin : IHexPlugin
 		rct.FactionId = "cca";
 		rct.MaxPlayers = 0;
 		rct.Order = 1;
+		rct.Loadout = new List<LoadoutEntry>
+		{
+			new LoadoutEntry { ItemDefinitionId = "weapon_stunstick", Count = 1 },
+			new LoadoutEntry { ItemDefinitionId = "radio", Count = 1 }
+		};
 		FactionManager.RegisterClass( rct );
 
 		var unit = new ClassDefinition();
@@ -181,6 +188,11 @@ public class HL2RPPlugin : IHexPlugin
 		unit.FactionId = "cca";
 		unit.MaxPlayers = 0;
 		unit.Order = 2;
+		unit.Loadout = new List<LoadoutEntry>
+		{
+			new LoadoutEntry { ItemDefinitionId = "weapon_stunstick", Count = 1 },
+			new LoadoutEntry { ItemDefinitionId = "radio", Count = 1 }
+		};
 		FactionManager.RegisterClass( unit );
 
 		var epu = new ClassDefinition();
@@ -190,6 +202,11 @@ public class HL2RPPlugin : IHexPlugin
 		epu.FactionId = "cca";
 		epu.MaxPlayers = 0;
 		epu.Order = 3;
+		epu.Loadout = new List<LoadoutEntry>
+		{
+			new LoadoutEntry { ItemDefinitionId = "weapon_stunstick", Count = 1 },
+			new LoadoutEntry { ItemDefinitionId = "radio", Count = 1 }
+		};
 		FactionManager.RegisterClass( epu );
 
 		var cmd = new ClassDefinition();
@@ -199,6 +216,11 @@ public class HL2RPPlugin : IHexPlugin
 		cmd.FactionId = "cca";
 		cmd.MaxPlayers = 2;
 		cmd.Order = 4;
+		cmd.Loadout = new List<LoadoutEntry>
+		{
+			new LoadoutEntry { ItemDefinitionId = "weapon_stunstick", Count = 1 },
+			new LoadoutEntry { ItemDefinitionId = "radio", Count = 1 }
+		};
 		FactionManager.RegisterClass( cmd );
 
 		var sec = new ClassDefinition();
@@ -208,6 +230,11 @@ public class HL2RPPlugin : IHexPlugin
 		sec.FactionId = "cca";
 		sec.MaxPlayers = 1;
 		sec.Order = 5;
+		sec.Loadout = new List<LoadoutEntry>
+		{
+			new LoadoutEntry { ItemDefinitionId = "weapon_stunstick", Count = 1 },
+			new LoadoutEntry { ItemDefinitionId = "radio", Count = 1 }
+		};
 		FactionManager.RegisterClass( sec );
 
 		// Overwatch Transhuman Arm
@@ -218,6 +245,10 @@ public class HL2RPPlugin : IHexPlugin
 		ows.FactionId = "ota";
 		ows.MaxPlayers = 0;
 		ows.Order = 1;
+		ows.Loadout = new List<LoadoutEntry>
+		{
+			new LoadoutEntry { ItemDefinitionId = "radio", Count = 1 }
+		};
 		FactionManager.RegisterClass( ows );
 
 		var owe = new ClassDefinition();
@@ -227,6 +258,10 @@ public class HL2RPPlugin : IHexPlugin
 		owe.FactionId = "ota";
 		owe.MaxPlayers = 0;
 		owe.Order = 2;
+		owe.Loadout = new List<LoadoutEntry>
+		{
+			new LoadoutEntry { ItemDefinitionId = "radio", Count = 1 }
+		};
 		FactionManager.RegisterClass( owe );
 
 		// City Administration

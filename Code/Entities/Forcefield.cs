@@ -1,3 +1,4 @@
+using Hexagon.Persistence;
 
 /// <summary>
 /// Forcefield world entity. Blocks citizens but allows combine through.

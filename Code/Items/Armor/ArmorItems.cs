@@ -1,3 +1,4 @@
+using Hexagon.Items.Bases;
 
 public class RebelArmorItem : OutfitItemDef
 {

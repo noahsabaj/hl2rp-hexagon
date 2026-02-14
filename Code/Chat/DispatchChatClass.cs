@@ -1,3 +1,4 @@
+using Hexagon.Config;
 
 public class DispatchChatClass : IChatClass
 {

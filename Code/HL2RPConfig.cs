@@ -1,3 +1,4 @@
+using Hexagon.Config;
 
 public static class HL2RPConfig
 {

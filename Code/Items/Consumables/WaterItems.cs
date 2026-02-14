@@ -1,5 +1,5 @@
 
-public class WaterItem : ItemDefinition
+public class WaterItem : ConsumableItemDef
 {
 	public WaterItem()
 	{
@@ -10,39 +10,11 @@ public class WaterItem : ItemDefinition
 		Height = 1;
 		MaxStack = 1;
 		Category = "Consumables";
-	}
-
-	public override Dictionary<string, ItemAction> GetActions()
-	{
-		return new Dictionary<string, ItemAction>
-		{
-			["Drink"] = new ItemAction
-			{
-				Name = "Drink",
-				OnRun = ( player, item ) =>
-				{
-					ConsumeItem( player, item );
-					return true;
-				}
-			}
-		};
-	}
-
-	protected void ConsumeItem( HexPlayerComponent player, ItemInstance item )
-	{
-		var inventories = InventoryManager.LoadForCharacter( player.Character.Id );
-		foreach ( var inv in inventories )
-		{
-			if ( inv.Remove( item.Id ) )
-			{
-				ItemManager.DestroyInstance( item.Id );
-				break;
-			}
-		}
+		ConsumeVerb = "Drinking";
 	}
 }
 
-public class SparklingWaterItem : ItemDefinition
+public class SparklingWaterItem : ConsumableItemDef
 {
 	public SparklingWaterItem()
 	{
@@ -53,33 +25,11 @@ public class SparklingWaterItem : ItemDefinition
 		Height = 1;
 		MaxStack = 1;
 		Category = "Consumables";
-	}
-
-	public override Dictionary<string, ItemAction> GetActions()
-	{
-		return new Dictionary<string, ItemAction>
-		{
-			["Drink"] = new ItemAction
-			{
-				Name = "Drink",
-				OnRun = ( player, item ) =>
-				{
-					var inventories = InventoryManager.LoadForCharacter( player.Character.Id );
-					foreach ( var inv in inventories )
-					{
-						if ( inv.Remove( item.Id ) )
-						{
-							ItemManager.DestroyInstance( item.Id );
-							break;
-						}
-					}
-				}
-			}
-		};
+		ConsumeVerb = "Drinking";
 	}
 }
 
-public class SpecialWaterItem : ItemDefinition
+public class SpecialWaterItem : ConsumableItemDef
 {
 	public SpecialWaterItem()
 	{
@@ -90,28 +40,6 @@ public class SpecialWaterItem : ItemDefinition
 		Height = 1;
 		MaxStack = 1;
 		Category = "Consumables";
-	}
-
-	public override Dictionary<string, ItemAction> GetActions()
-	{
-		return new Dictionary<string, ItemAction>
-		{
-			["Drink"] = new ItemAction
-			{
-				Name = "Drink",
-				OnRun = ( player, item ) =>
-				{
-					var inventories = InventoryManager.LoadForCharacter( player.Character.Id );
-					foreach ( var inv in inventories )
-					{
-						if ( inv.Remove( item.Id ) )
-						{
-							ItemManager.DestroyInstance( item.Id );
-							break;
-						}
-					}
-				}
-			}
-		};
+		ConsumeVerb = "Drinking";
 	}
 }

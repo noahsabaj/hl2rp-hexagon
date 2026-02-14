@@ -1,3 +1,4 @@
+using Hexagon.Persistence;
 
 /// <summary>
 /// Vending machine world entity. Citizens buy water variants for tokens.

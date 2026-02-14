@@ -1,5 +1,5 @@
 
-public class HealthVialItem : ItemDefinition
+public class HealthVialItem : ConsumableItemDef
 {
 	public HealthVialItem()
 	{
@@ -10,35 +10,17 @@ public class HealthVialItem : ItemDefinition
 		Height = 1;
 		MaxStack = 3;
 		Category = "Consumables";
+		ConsumeVerb = "Applying";
 	}
 
-	public override Dictionary<string, ItemAction> GetActions()
+	public override bool OnConsume( HexPlayerComponent player, ItemInstance item )
 	{
-		return new Dictionary<string, ItemAction>
-		{
-			["Use"] = new ItemAction
-			{
-				Name = "Use",
-				OnRun = ( player, item ) =>
-				{
-					// TODO: Apply healing when health system is wired
-					var inventories = InventoryManager.LoadForCharacter( player.Character.Id );
-					foreach ( var inv in inventories )
-					{
-						if ( inv.Remove( item.Id ) )
-						{
-							ItemManager.DestroyInstance( item.Id );
-							break;
-						}
-					}
-					return true;
-				}
-			}
-		};
+		// TODO: Apply healing when health system is wired
+		return true;
 	}
 }
 
-public class HealthKitItem : ItemDefinition
+public class HealthKitItem : ConsumableItemDef
 {
 	public HealthKitItem()
 	{
@@ -49,38 +31,22 @@ public class HealthKitItem : ItemDefinition
 		Height = 1;
 		MaxStack = 1;
 		Category = "Consumables";
+		ConsumeVerb = "Applying";
 	}
 
-	public override Dictionary<string, ItemAction> GetActions()
+	public override bool OnCanUse( HexPlayerComponent player, ItemInstance item )
 	{
-		return new Dictionary<string, ItemAction>
-		{
-			["Use"] = new ItemAction
-			{
-				Name = "Use",
-				OnCanRun = ( player, item ) =>
-				{
-					return player.Character != null && CombineUtils.IsCombine( player.Character );
-				},
-				OnRun = ( player, item ) =>
-				{
-					// TODO: Apply +50 HP when health system is wired
-					var inventories = InventoryManager.LoadForCharacter( player.Character.Id );
-					foreach ( var inv in inventories )
-					{
-						if ( inv.Remove( item.Id ) )
-						{
-							ItemManager.DestroyInstance( item.Id );
-							break;
-						}
-					}
-				}
-			}
-		};
+		return player.Character != null && CombineUtils.IsCombine( player.Character );
+	}
+
+	public override bool OnConsume( HexPlayerComponent player, ItemInstance item )
+	{
+		// TODO: Apply +50 HP when health system is wired
+		return true;
 	}
 }
 
-public class BleachItem : ItemDefinition
+public class BleachItem : ConsumableItemDef
 {
 	public BleachItem()
 	{
@@ -91,34 +57,17 @@ public class BleachItem : ItemDefinition
 		Height = 1;
 		MaxStack = 1;
 		Category = "Consumables";
+		ConsumeVerb = "Drinking";
 	}
 
-	public override Dictionary<string, ItemAction> GetActions()
+	public override bool OnConsume( HexPlayerComponent player, ItemInstance item )
 	{
-		return new Dictionary<string, ItemAction>
-		{
-			["Use"] = new ItemAction
-			{
-				Name = "Use",
-				OnRun = ( player, item ) =>
-				{
-					// TODO: Apply damage/poison when health system is wired
-					var inventories = InventoryManager.LoadForCharacter( player.Character.Id );
-					foreach ( var inv in inventories )
-					{
-						if ( inv.Remove( item.Id ) )
-						{
-							ItemManager.DestroyInstance( item.Id );
-							break;
-						}
-					}
-				}
-			}
-		};
+		// TODO: Apply damage/poison when health system is wired
+		return true;
 	}
 }
 
-public class VegetableOilItem : ItemDefinition
+public class VegetableOilItem : ConsumableItemDef
 {
 	public VegetableOilItem()
 	{
@@ -129,28 +78,6 @@ public class VegetableOilItem : ItemDefinition
 		Height = 1;
 		MaxStack = 1;
 		Category = "Consumables";
-	}
-
-	public override Dictionary<string, ItemAction> GetActions()
-	{
-		return new Dictionary<string, ItemAction>
-		{
-			["Use"] = new ItemAction
-			{
-				Name = "Use",
-				OnRun = ( player, item ) =>
-				{
-					var inventories = InventoryManager.LoadForCharacter( player.Character.Id );
-					foreach ( var inv in inventories )
-					{
-						if ( inv.Remove( item.Id ) )
-						{
-							ItemManager.DestroyInstance( item.Id );
-							break;
-						}
-					}
-				}
-			}
-		};
+		ConsumeVerb = "Drinking";
 	}
 }

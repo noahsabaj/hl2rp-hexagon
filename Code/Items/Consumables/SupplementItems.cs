@@ -1,5 +1,5 @@
 
-public class SupplementItem : ItemDefinition
+public class SupplementItem : ConsumableItemDef
 {
 	public SupplementItem()
 	{
@@ -10,34 +10,11 @@ public class SupplementItem : ItemDefinition
 		Height = 1;
 		MaxStack = 1;
 		Category = "Consumables";
-	}
-
-	public override Dictionary<string, ItemAction> GetActions()
-	{
-		return new Dictionary<string, ItemAction>
-		{
-			["Eat"] = new ItemAction
-			{
-				Name = "Eat",
-				OnRun = ( player, item ) =>
-				{
-					var inventories = InventoryManager.LoadForCharacter( player.Character.Id );
-					foreach ( var inv in inventories )
-					{
-						if ( inv.Remove( item.Id ) )
-						{
-							ItemManager.DestroyInstance( item.Id );
-							break;
-						}
-					}
-					return true;
-				}
-			}
-		};
+		ConsumeVerb = "Eating";
 	}
 }
 
-public class LargeSupplementItem : ItemDefinition
+public class LargeSupplementItem : ConsumableItemDef
 {
 	public LargeSupplementItem()
 	{
@@ -48,29 +25,6 @@ public class LargeSupplementItem : ItemDefinition
 		Height = 1;
 		MaxStack = 1;
 		Category = "Consumables";
-	}
-
-	public override Dictionary<string, ItemAction> GetActions()
-	{
-		return new Dictionary<string, ItemAction>
-		{
-			["Eat"] = new ItemAction
-			{
-				Name = "Eat",
-				OnRun = ( player, item ) =>
-				{
-					var inventories = InventoryManager.LoadForCharacter( player.Character.Id );
-					foreach ( var inv in inventories )
-					{
-						if ( inv.Remove( item.Id ) )
-						{
-							ItemManager.DestroyInstance( item.Id );
-							break;
-						}
-					}
-					return true;
-				}
-			}
-		};
+		ConsumeVerb = "Eating";
 	}
 }

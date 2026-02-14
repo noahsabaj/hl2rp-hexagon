@@ -1,3 +1,5 @@
+using Hexagon.Config;
+using Hexagon.Persistence;
 
 /// <summary>
 /// Ration dispenser world entity. Citizens insert CID to receive rations.

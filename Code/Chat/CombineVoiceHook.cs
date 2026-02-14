@@ -1,3 +1,4 @@
+using Hexagon.Config;
 
 /// <summary>
 /// Plays radio beep sounds when combine players speak in IC or Yell chat.

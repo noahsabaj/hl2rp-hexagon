@@ -1,3 +1,5 @@
+using Hexagon.Config;
+using Hexagon.Persistence;
 
 public static class HL2RPCommands
 {

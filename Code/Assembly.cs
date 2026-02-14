@@ -3,6 +3,7 @@ global using Hexagon.Core;
 global using Hexagon.Characters;
 global using Hexagon.Factions;
 global using Hexagon.Items;
+global using Hexagon.Items.Bases;
 global using Hexagon.Inventory;
 global using Hexagon.Permissions;
 global using Hexagon.Currency;
