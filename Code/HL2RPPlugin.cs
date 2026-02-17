@@ -20,13 +20,10 @@ public class HL2RPPlugin : IHexPlugin
 
 		RegisterItems();
 
-		// Attach hook components to framework GameObject for Scene.GetAll<T>() discovery
-		var framework = HexagonFramework.Instance;
-		if ( framework != null )
-		{
-			framework.GameObject.GetOrAddComponent<HL2RPHooks>();
-			framework.GameObject.GetOrAddComponent<CombineVoiceHook>();
-		}
+		// Create hook components — ISceneEvent discovers them scene-wide
+		var hooksGo = new GameObject( true, "HL2RP Hooks" );
+		hooksGo.GetOrAddComponent<HL2RPHooks>();
+		hooksGo.GetOrAddComponent<CombineVoiceHook>();
 
 		Log.Info( "[HL2RP] Schema loaded — all phases initialized." );
 	}

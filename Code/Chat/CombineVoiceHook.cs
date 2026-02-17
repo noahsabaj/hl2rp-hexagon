@@ -2,13 +2,13 @@
 /// <summary>
 /// Plays radio beep sounds when combine players speak in IC or Yell chat.
 /// "On" beep plays immediately, "off" beep plays after a delay proportional
-/// to message length. Attach this Component to the same GameObject as HexagonFramework.
+/// to message length. Attach this Component to any GameObject in the scene.
 /// </summary>
-public class CombineVoiceHook : Component, IChatMessageListener
+public class CombineVoiceHook : Component, IHexChatEvent
 {
 	private readonly List<(HexPlayerComponent Player, float PlayAt)> _pendingOffBeeps = new();
 
-	public void OnChatMessage( HexPlayerComponent sender, IChatClass chatClass, string rawMessage, string formattedMessage )
+	void IHexChatEvent.OnChatMessage( HexPlayerComponent sender, IChatClass chatClass, string rawMessage, string formattedMessage )
 	{
 		if ( sender?.Character == null )
 			return;

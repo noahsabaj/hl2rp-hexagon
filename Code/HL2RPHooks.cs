@@ -1,17 +1,13 @@
 
 /// <summary>
-/// Core HL2RP lifecycle hooks. Attach this Component to a GameObject in the scene
-/// alongside HexagonFramework. Handles character creation, loading, unloading,
-/// and door breach permission checks.
+/// Core HL2RP lifecycle hooks. Attach this Component to any GameObject in the scene.
+/// Handles character creation, loading, unloading, and door breach permission checks.
 /// </summary>
 public class HL2RPHooks : Component,
-	ICharacterCreatedListener,
-	ICharacterLoadedListener,
-	ICharacterUnloadedListener,
-	ICanKickDoorListener,
-	IDoorBreachedListener
+	IHexCharacterEvent,
+	IHexDoorEvent
 {
-	public void OnCharacterCreated( HexPlayerComponent player, HexCharacter character )
+	void IHexCharacterEvent.OnCharacterCreated( HexPlayerComponent player, HexCharacter character )
 	{
 		var data = (HL2RPCharacter)character.Data;
 		var factionId = character.Faction;
@@ -38,7 +34,7 @@ public class HL2RPHooks : Component,
 		Log.Info( $"[HL2RP] Character created: {data.Name} ({factionId})" );
 	}
 
-	public void OnCharacterLoaded( HexPlayerComponent player, HexCharacter character )
+	void IHexCharacterEvent.OnCharacterLoaded( HexPlayerComponent player, HexCharacter character )
 	{
 		// Apply rank-based model for combine
 		if ( CombineUtils.IsCombine( character ) )
@@ -53,7 +49,7 @@ public class HL2RPHooks : Component,
 		Log.Info( $"[HL2RP] Character loaded: {data.Name} (faction: {character.Faction})" );
 	}
 
-	public void OnCharacterUnloaded( HexPlayerComponent player, HexCharacter character )
+	void IHexCharacterEvent.OnCharacterUnloaded( HexPlayerComponent player, HexCharacter character )
 	{
 		var data = (HL2RPCharacter)character.Data;
 		Log.Info( $"[HL2RP] Character unloaded: {data.Name}" );
@@ -64,7 +60,7 @@ public class HL2RPHooks : Component,
 	/// <summary>
 	/// Only Civil Protection can kick doors.
 	/// </summary>
-	public bool CanKickDoor( HexPlayerComponent player, DoorComponent door )
+	bool IHexDoorEvent.CanKickDoor( HexPlayerComponent player, DoorComponent door )
 	{
 		if ( player?.Character == null )
 			return false;
@@ -76,7 +72,7 @@ public class HL2RPHooks : Component,
 	/// Prevent combine-locked doors from being breached. If a door with a CombineLock
 	/// is breached (shot open), immediately repair it.
 	/// </summary>
-	public void OnDoorBreached( HexPlayerComponent attacker, DoorComponent door )
+	void IHexDoorEvent.OnDoorBreached( HexPlayerComponent attacker, DoorComponent door )
 	{
 		var combineLock = door.Components.Get<CombineLock>();
 		if ( combineLock != null )
