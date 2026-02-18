@@ -25,13 +25,13 @@ public class FrequencyDeviceItem : ItemDefinition
 			item.SetData( "frequency", "100.0" );
 	}
 
-	public override Dictionary<string, ItemAction> GetActions()
+	public override List<ItemAction> GetActions()
 	{
 		if ( !_tunable ) return base.GetActions();
 
-		return new Dictionary<string, ItemAction>
+		return new List<ItemAction>
 		{
-			["Tune"] = new ItemAction
+			new ItemAction
 			{
 				Name = "Tune",
 				OnRun = ( player, item ) =>

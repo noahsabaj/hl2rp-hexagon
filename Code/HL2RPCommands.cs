@@ -69,7 +69,7 @@ public static class HL2RPCommands
 			{
 				if ( ctx.Has( "text" ) )
 				{
-					if ( !caller.Character.HasFlag( 'a' ) && !caller.Character.HasFlag( 's' ) )
+					if ( !caller.Character.HasFlag( "a" ) && !caller.Character.HasFlag( "s" ) )
 						return "You do not have permission to edit objectives.";
 
 					var text = ctx.Get<string>( "text" );

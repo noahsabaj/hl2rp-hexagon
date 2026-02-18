@@ -15,11 +15,11 @@ public class BookItem : ItemDefinition
 		BookContent = content;
 	}
 
-	public override Dictionary<string, ItemAction> GetActions()
+	public override List<ItemAction> GetActions()
 	{
-		return new Dictionary<string, ItemAction>
+		return new List<ItemAction>
 		{
-			["Read"] = new ItemAction
+			new ItemAction
 			{
 				Name = "Read",
 				OnRun = ( player, item ) =>

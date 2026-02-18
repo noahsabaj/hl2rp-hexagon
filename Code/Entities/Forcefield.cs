@@ -46,7 +46,7 @@ public class Forcefield : PersistableEntity<ForcefieldSaveData>, Component.IPres
 		var player = e.GetPlayer();
 		if ( player?.Character == null ) return false;
 
-		return CombineUtils.IsCombine( player.Character ) || player.Character.HasFlag( 'a' );
+		return CombineUtils.IsCombine( player.Character ) || player.Character.HasFlag( "a" );
 	}
 
 	public bool Press( Component.IPressable.Event e )
@@ -54,7 +54,7 @@ public class Forcefield : PersistableEntity<ForcefieldSaveData>, Component.IPres
 		var player = e.GetPlayer();
 		if ( player?.Character == null ) return false;
 
-		if ( !CombineUtils.IsCombine( player.Character ) && !player.Character.HasFlag( 'a' ) )
+		if ( !CombineUtils.IsCombine( player.Character ) && !player.Character.HasFlag( "a" ) )
 			return false;
 
 		IsActive = !IsActive;

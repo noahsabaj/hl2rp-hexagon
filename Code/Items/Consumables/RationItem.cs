@@ -12,11 +12,11 @@ public class RationItem : ItemDefinition
 		Category = "Consumables";
 	}
 
-	public override Dictionary<string, ItemAction> GetActions()
+	public override List<ItemAction> GetActions()
 	{
-		return new Dictionary<string, ItemAction>
+		return new List<ItemAction>
 		{
-			["Open"] = new ItemAction
+			new ItemAction
 			{
 				Name = "Open",
 				OnRun = ( player, item ) =>

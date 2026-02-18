@@ -20,11 +20,11 @@ public class NoteItem : ItemDefinition
 			item.SetData( "owner", "" );
 	}
 
-	public override Dictionary<string, ItemAction> GetActions()
+	public override List<ItemAction> GetActions()
 	{
-		return new Dictionary<string, ItemAction>
+		return new List<ItemAction>
 		{
-			["Read"] = new ItemAction
+			new ItemAction
 			{
 				Name = "Read",
 				OnRun = ( player, item ) =>
@@ -35,7 +35,7 @@ public class NoteItem : ItemDefinition
 					return false;
 				}
 			},
-			["Write"] = new ItemAction
+			new ItemAction
 			{
 				Name = "Write",
 				OnCanRun = ( player, item ) =>

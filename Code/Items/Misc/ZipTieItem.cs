@@ -12,11 +12,11 @@ public class ZipTieItem : ItemDefinition
 		Category = "Equipment";
 	}
 
-	public override Dictionary<string, ItemAction> GetActions()
+	public override List<ItemAction> GetActions()
 	{
-		return new Dictionary<string, ItemAction>
+		return new List<ItemAction>
 		{
-			["Use"] = new ItemAction
+			new ItemAction
 			{
 				Name = "Tie",
 				OnCanRun = ( player, item ) =>

@@ -13,11 +13,11 @@ public class CIDCardItem : ItemDefinition
 		Category = "Identification";
 	}
 
-	public override Dictionary<string, ItemAction> GetActions()
+	public override List<ItemAction> GetActions()
 	{
-		return new Dictionary<string, ItemAction>
+		return new List<ItemAction>
 		{
-			["Show"] = new ItemAction
+			new ItemAction
 			{
 				Name = "Show",
 				OnCanRun = ( player, item ) => true,
