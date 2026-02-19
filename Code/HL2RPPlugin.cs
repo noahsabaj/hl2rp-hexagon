@@ -157,7 +157,7 @@ public class HL2RPPlugin : IHexPlugin
 	private static void RegFaction( string id, string name, string desc, Color color, int order,
 		bool isDefault = false, int maxPlayers = 0, int startMoney = 0, bool globallyRecognized = false )
 	{
-		var f = TypeLibrary.Create<FactionDefinition>();
+		var f = new FactionDefinition();
 		f.UniqueId = id;
 		f.Name = name;
 		f.Description = desc;
@@ -173,7 +173,7 @@ public class HL2RPPlugin : IHexPlugin
 	private static void RegClass( string id, string name, string desc, string factionId, int order,
 		int maxPlayers = 0, List<LoadoutEntry> loadout = null )
 	{
-		var c = TypeLibrary.Create<ClassDefinition>();
+		var c = new ClassDefinition();
 		c.UniqueId = id;
 		c.Name = name;
 		c.Description = desc;
