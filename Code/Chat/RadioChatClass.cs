@@ -48,6 +48,6 @@ public class RadioChatClass : IChatClass
 	private string GetFrequency( HexCharacter character )
 	{
 		var radio = character.FindAnyItem( RadioItems );
-		return radio?.GetData<string>( "frequency", "100.0" ) ?? "100.0";
+		return radio?.TryGetTrait<RadioTrait>( out var trait ) == true ? trait.Frequency : "100.0";
 	}
 }

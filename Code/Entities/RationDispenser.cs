@@ -91,7 +91,8 @@ public class RationDispenser : PersistableEntity<DispenserSaveData>, Component.I
 			return false;
 		}
 
-		var cidNumber = cidItem.GetData<int>( "id", 0 );
+		var trait = cidItem.GetTrait<CIDTrait>();
+		var cidNumber = trait.Id;
 		var cooldown = HexConfig.Get<float>( "hl2rp.dispenser.cooldown", 300f );
 
 		// Check cooldown
@@ -109,7 +110,7 @@ public class RationDispenser : PersistableEntity<DispenserSaveData>, Component.I
 		_stateTimer = 0;
 		_pendingPlayer = player;
 		_pendingCidNumber = cidNumber;
-		_pendingPriority = cidItem.GetData<bool>( "cwu", false );
+		_pendingPriority = trait.CWU;
 
 		Log.Info( $"[HL2RP] Dispenser {PersistenceId}: Dispensing for CID #{cidNumber}..." );
 		return true;

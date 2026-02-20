@@ -1,3 +1,9 @@
+using Hexagon.Items;
+
+public class FlashlightTrait : ItemDataTrait
+{
+	public bool IsOn { get; set; } = false;
+}
 
 /// <summary>
 /// Restricts flashlight usage to players who have a flashlight item in their inventory.
@@ -42,8 +48,8 @@ public class FlashlightPlugin : IHexPlugin
 		if ( item == null )
 			return false;
 
-		var isOn = item.GetData<bool>( "on", false );
-		item.SetData( "on", !isOn );
+		var trait = item.GetTrait<FlashlightTrait>();
+		trait.IsOn = !trait.IsOn;
 		item.MarkDirty();
 		return true;
 	}

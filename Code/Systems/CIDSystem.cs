@@ -15,11 +15,9 @@ public static class CIDSystem
 		data.CIDNumber = cidNumber;
 		character.MarkDirty( "CIDNumber" );
 
-		var cidItem = ItemManager.CreateInstance( "cid_card", character.Id, new Dictionary<string, object>
+		var cidItem = ItemManager.CreateInstance( "cid_card", character.Id, new Dictionary<string, Hexagon.Items.ItemDataTrait>
 		{
-			{ "name", data.Name },
-			{ "id", cidNumber },
-			{ "cwu", false }
+			{ nameof(CIDTrait), new CIDTrait { Name = data.Name, Id = cidNumber, CWU = false } }
 		} );
 
 		var inventories = InventoryManager.LoadForCharacter( character.Id );
@@ -49,14 +47,14 @@ public static class CIDSystem
 		if ( cidItem == null )
 			return false;
 
-		cidItem.SetData( "cwu", priority );
-		cidItem.MarkDirty();
+		var trait = cidItem.GetTrait<CIDTrait>();
+		trait.CWU = priority;
 		return true;
 	}
 
 	public static bool HasPriority( HexCharacter character )
 	{
 		var cidItem = character.FindItem( "cid_card" );
-		return cidItem?.GetData<bool>( "cwu", false ) ?? false;
+		return cidItem?.TryGetTrait<CIDTrait>( out var trait ) == true && trait.CWU;
 	}
 }

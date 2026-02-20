@@ -1,3 +1,9 @@
+using Hexagon.Items;
+
+public class RadioTrait : ItemDataTrait
+{
+	public string Frequency { get; set; } = "100.0";
+}
 
 /// <summary>
 /// Base item for frequency-tuned radio devices (radio, pager, static radio).
@@ -21,8 +27,7 @@ public class FrequencyDeviceItem : ItemDefinition
 
 	public override void OnInstanced( ItemInstance item )
 	{
-		if ( !item.Data.ContainsKey( "frequency" ) )
-			item.SetData( "frequency", "100.0" );
+		item.GetTrait<RadioTrait>();
 	}
 
 	public override List<ItemAction> GetActions()
@@ -37,7 +42,7 @@ public class FrequencyDeviceItem : ItemDefinition
 				OnRun = ( player, item ) =>
 				{
 					// TODO: Open radio tuning UI (Phase 7)
-					var freq = item.GetData<string>( "frequency", "100.0" );
+					var freq = item.GetTrait<RadioTrait>().Frequency;
 					Log.Info( $"[{DisplayName}] Current frequency: {freq}" );
 					return false;
 				}

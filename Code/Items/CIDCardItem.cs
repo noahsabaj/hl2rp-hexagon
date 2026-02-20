@@ -1,3 +1,11 @@
+using Hexagon.Items;
+
+public class CIDTrait : ItemDataTrait
+{
+	public string Name { get; set; } = "Unknown";
+	public int Id { get; set; } = 0;
+	public bool CWU { get; set; } = false;
+}
 
 public class CIDCardItem : ItemDefinition
 {
@@ -23,9 +31,10 @@ public class CIDCardItem : ItemDefinition
 				OnCanRun = ( player, item ) => true,
 				OnRun = ( player, item ) =>
 				{
-					var name = item.GetData<string>( "name", "Unknown" );
-					var id = item.GetData<int>( "id", 0 );
-					var cwu = item.GetData<bool>( "cwu", false );
+					var trait = item.GetTrait<CIDTrait>();
+					var name = trait.Name;
+					var id = trait.Id;
+					var cwu = trait.CWU;
 					var priority = cwu ? " [CWU PRIORITY]" : "";
 					Log.Info( $"[CID] Name: {name} | ID: #{id}{priority}" );
 					return false;

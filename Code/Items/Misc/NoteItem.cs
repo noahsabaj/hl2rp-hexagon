@@ -1,3 +1,10 @@
+using Hexagon.Items;
+
+public class NoteTrait : ItemDataTrait
+{
+	public string Text { get; set; } = "";
+	public string Owner { get; set; } = "";
+}
 
 public class NoteItem : ItemDefinition
 {
@@ -14,10 +21,7 @@ public class NoteItem : ItemDefinition
 
 	public override void OnInstanced( ItemInstance item )
 	{
-		if ( !item.Data.ContainsKey( "text" ) )
-			item.SetData( "text", "" );
-		if ( !item.Data.ContainsKey( "owner" ) )
-			item.SetData( "owner", "" );
+		item.GetTrait<NoteTrait>();
 	}
 
 	public override List<ItemAction> GetActions()
@@ -29,7 +33,7 @@ public class NoteItem : ItemDefinition
 				Name = "Read",
 				OnRun = ( player, item ) =>
 				{
-					var text = item.GetData<string>( "text", "" );
+					var text = item.GetTrait<NoteTrait>().Text;
 					// TODO: Open note UI (Phase 7)
 					Log.Info( $"[Note] {text}" );
 					return false;
@@ -40,14 +44,15 @@ public class NoteItem : ItemDefinition
 				Name = "Write",
 				OnCanRun = ( player, item ) =>
 				{
-					var owner = item.GetData<string>( "owner", "" );
+					var owner = item.GetTrait<NoteTrait>().Owner;
 					return string.IsNullOrEmpty( owner ) || owner == player.Character?.Id;
 				},
 				OnRun = ( player, item ) =>
 				{
 					// TODO: Open note editor UI (Phase 7)
-					if ( string.IsNullOrEmpty( item.GetData<string>( "owner", "" ) ) )
-						item.SetData( "owner", player.Character.Id );
+					var trait = item.GetTrait<NoteTrait>();
+					if ( string.IsNullOrEmpty( trait.Owner ) )
+						trait.Owner = player.Character.Id;
 					return false;
 				}
 			}
