@@ -1,0 +1,54 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>HL2RP.V2.Tests</RootNamespace>
+    <LangVersion>14</LangVersion>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <IsPackable>false</IsPackable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MSTest" Version="4.0.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Microsoft.VisualStudio.TestTools.UnitTesting" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="MSTestSettings.cs" />
+    <Compile Include="Schema/**/*.cs" />
+    <Compile Include="Domain/**/*.cs" />
+    <Compile Include="Features/**/*.cs" />
+    <Compile Include="Architecture/**/*.cs" />
+    <Compile Include="Showcase/**/*.cs" />
+    <Compile Include="Runtime/**/*.cs" />
+    <Compile Include="UI/**/*.cs" />
+    <Compile Include="../Code/Assembly.cs" Link="Product/Assembly.cs" />
+    <Compile Include="../Code/Schema/**/*.cs" Link="Product/Schema/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="../Code/Domain/**/*.cs" Link="Product/Domain/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="../Code/Features/**/*.cs" Link="Product/Features/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="../Code/Showcase/**/*.cs" Link="Product/Showcase/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="../Code/Runtime/HL2RPRuntimeLogic.cs" Link="Product/Runtime/HL2RPRuntimeLogic.cs" />
+    <Compile Include="../Code/Runtime/HL2RPCreationAvailability.cs" Link="Product/Runtime/HL2RPCreationAvailability.cs" />
+    <Compile Include="../Code/UI/HL2RPPresentationFields.cs" Link="Product/UI/HL2RPPresentationFields.cs" />
+    <Compile Include="../Code/UI/HL2RPShowcaseProjection.cs" Link="Product/UI/HL2RPShowcaseProjection.cs" />
+    <Compile Include="../Code/UI/ItemActionArgumentBuilder.cs" Link="Product/UI/ItemActionArgumentBuilder.cs" />
+    <Compile Include="../Code/UI/InventoryGridRules.cs" Link="Product/UI/InventoryGridRules.cs" />
+    <Compile Include="../Code/UI/ShowcaseViewModels.cs" Link="Product/UI/ShowcaseViewModels.cs" />
+    <Compile Include="../Code/UI/InteractionWorkspaceCoordinator.cs" Link="Product/UI/InteractionWorkspaceCoordinator.cs" />
+    <Compile Include="../../hexagon/Code/V2/Kernel/**/*.cs" Link="Hexagon/Kernel/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="../../hexagon/Code/V2/Persistence/**/*.cs" Link="Hexagon/Persistence/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="../../hexagon/Code/V2/Domain/**/*.cs" Link="Hexagon/Domain/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="../../hexagon/Code/V2/Application/**/*.cs" Link="Hexagon/Application/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="../../hexagon/Code/V2/Composition/**/*.cs" Link="Hexagon/Composition/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="../../hexagon/Code/V2/Client/HexClientStore.cs" Link="Hexagon/Client/HexClientStore.cs" />
+    <Compile Include="../../hexagon/Code/V2/Client/ClientController.cs" Link="Hexagon/Client/ClientController.cs" />
+    <Compile Include="../../hexagon/Code/V2/Networking/**/*.cs" Link="Hexagon/Networking/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+</Project>

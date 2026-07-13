@@ -1,0 +1,197 @@
+@using System
+@using Hexagon.V2.Client
+@using Hexagon.V2.Kernel
+@using Sandbox
+@using Sandbox.UI
+@namespace HL2RP.UI
+@inherits Panel
+
+<root class="hl2rp-showcase-root">
+	@if ( Model is null || !Model.IsReady )
+	{
+		<div class="showcase-boot">
+			<div class="showcase-boot__mark"><span></span><span></span><span></span></div>
+			<div class="micro-label">HEXAGON V2</div>
+			<strong>Establishing client scope</strong>
+			<p>Waiting for the host readiness sentinel and private snapshot.</p>
+		</div>
+	}
+	else
+	{
+		@if ( Model.CharacterMenu is not null && Model.Hud is null )
+		{
+			<CharacterMenuPanel ViewModel="@Model.CharacterMenu" Controller="@Controller" OnResult="@HandleResult" />
+		}
+
+		@if ( Model.Hud is not null )
+		{
+			<HudLayer ViewModel="@Model.Hud" Chat="@Model.Chat" Notifications="@Model.Notifications"
+				Action="@Model.Action" Death="@Model.Death" Restraint="@Model.Restraint" Combine="@Model.Combine"
+				Controller="@Controller" OnResult="@HandleResult" OnDismissNotification="@OnDismissNotification"
+				OnOpenSearch="@OnOpenSearch" OnRespawn="@OnRespawn" />
+
+			<div class="showcase-dock">
+				@if ( Model.Inventory is not null )
+				{
+					<button class="@DockClass( ShowcaseWorkspace.Inventory )" @onclick="@(() => ToggleWorkspace( ShowcaseWorkspace.Inventory ))"><span>inventory_2</span>Inventory</button>
+				}
+				@if ( Model.Storage is not null )
+				{
+					<button class="@DockClass( ShowcaseWorkspace.Storage )" @onclick="@(() => ToggleWorkspace( ShowcaseWorkspace.Storage ))"><span>archive</span>Storage</button>
+				}
+				@if ( Model.Vendor is not null )
+				{
+					<button class="@DockClass( ShowcaseWorkspace.Vendor )" @onclick="@(() => ToggleWorkspace( ShowcaseWorkspace.Vendor ))"><span>storefront</span>Vendor</button>
+				}
+				@if ( Model.CivicRecord is not null )
+				{
+					<button class="@DockClass( ShowcaseWorkspace.CivicData )" @onclick="@(() => ToggleWorkspace( ShowcaseWorkspace.CivicData ))"><span>badge</span>Civic</button>
+				}
+				@if ( Model.Objectives is not null )
+				{
+					<button class="@DockClass( ShowcaseWorkspace.Objectives )" @onclick="@(() => ToggleWorkspace( ShowcaseWorkspace.Objectives ))"><span>assignment</span>Objectives</button>
+				}
+				@if ( Model.Radio is not null )
+				{
+					<button class="@DockClass( ShowcaseWorkspace.Radio )" @onclick="@(() => ToggleWorkspace( ShowcaseWorkspace.Radio ))"><span>radio</span>Radio</button>
+				}
+				@if ( Model.Scanner is not null )
+				{
+					<button class="@DockClass( ShowcaseWorkspace.Scanner )" @onclick="@(() => ToggleWorkspace( ShowcaseWorkspace.Scanner ))"><span>visibility</span>Scanner</button>
+				}
+				@if ( Model.Scoreboard is not null )
+				{
+					<button class="@(Model.ScoreboardOpen ? "is-active" : string.Empty)" @onclick="@(() => OnToggleScoreboard?.Invoke())"><span>groups</span>Players</button>
+				}
+				@if ( Model.Entitlements?.CanManage == true )
+				{
+					<button class="@DockClass( ShowcaseWorkspace.Entitlements )" @onclick="@(() => ToggleWorkspace( ShowcaseWorkspace.Entitlements ))"><span>admin_panel_settings</span>Access</button>
+				}
+			</div>
+
+			@if ( ActiveWorkspace == ShowcaseWorkspace.Entitlements &&
+				Model.Entitlements is EntitlementAdministrationViewModel entitlements )
+			{
+				<EntitlementAdministrationPanel ViewModel="@entitlements" Controller="@Controller"
+					OnResult="@HandleResult" />
+			}
+
+			@if ( IsOperationsWorkspace( ActiveWorkspace ) )
+			{
+				<OperationsPanel Workspace="@ActiveWorkspace" Inventory="@Model.Inventory" Door="@Model.Door" Storage="@Model.Storage"
+					Vendor="@Model.Vendor" Permits="@Model.Permits" Search="@Model.Search" Controller="@Controller"
+					OnWorkspaceChanged="@OnWorkspaceChanged" OnVendorPurchase="@OnVendorPurchase" OnVendorSale="@OnVendorSale"
+					OnPermitPurchase="@OnPermitPurchase" OnItemWorkspace="@OpenItemWorkspace"
+					OnResult="@HandleResult" />
+			}
+
+			@if ( IsCombineWorkspace( ActiveWorkspace ) )
+			{
+				<CombineSuitePanel Workspace="@ActiveWorkspace" CivicRecord="@Model.CivicRecord" Objectives="@Model.Objectives"
+					Note="@Model.Note" Radio="@Model.Radio" Scanner="@Model.Scanner" OnWorkspaceChanged="@SetWorkspace"
+					OnCivicRecordUpdate="@OnCivicRecordUpdate" OnObjectiveUpdate="@OnObjectiveUpdate" OnNoteSave="@OnNoteSave"
+					OnRadioTune="@OnRadioTune" OnScannerIntent="@OnScannerIntent" OnClose="@CloseCombineWorkspace" />
+			}
+
+			@if ( Model.ScoreboardOpen && Model.Scoreboard is not null )
+			{
+				<ScoreboardPanel ViewModel="@Model.Scoreboard" OnClose="@OnCloseScoreboard"
+					OnIntroduce="@OnIntroduce" OnInspectCivic="@OnInspectCivic" />
+			}
+
+			@if ( Model.Restraint is not null && Model.Restraint.TargetCharacterId is not null )
+			{
+				<RestraintPanel ViewModel="@Model.Restraint" OnRestraintAction="@OnRestraintAction"
+					OnOpenSearch="@OnOpenSearch" />
+			}
+		}
+
+		@if ( !string.IsNullOrWhiteSpace( LocalError ) )
+		{
+			<button class="local-error" @onclick="@(() => LocalError = string.Empty)"><span>error</span>@LocalError</button>
+		}
+
+		@if ( Model.ItemPresentation is ItemActionPresentationViewModel presentation )
+		{
+			<div class="item-presentation-backdrop">
+				<HL2RPWindow Eyebrow="ITEM / VERIFIED PRESENTATION" Title="@presentation.Title"
+					Subtitle="@presentation.Kind.Replace( '_', ' ' )" Variant="item-presentation-window"
+					OnClose="@(() => OnDismissItemPresentation?.Invoke( presentation.Sequence ))">
+					<Body>
+						<div class="item-presentation-fields">
+							@foreach ( var field in presentation.Fields )
+							{
+								<div class="item-presentation-field @(field.IsBody ? "is-body" : string.Empty)">
+									<span>@field.Label</span><strong>@field.Value</strong>
+								</div>
+							}
+						</div>
+					</Body>
+				</HL2RPWindow>
+			</div>
+		}
+	}
+</root>
+
+@code
+{
+	[Parameter] public HL2RPShowcaseViewModel Model { get; set; }
+	[Parameter] public IHexClientController Controller { get; set; }
+	[Parameter] public Action<WorkspaceTransitionRequest> OnWorkspaceChanged { get; set; }
+	[Parameter] public Action<SearchOpenRequest> OnOpenSearch { get; set; }
+	[Parameter] public Action<Guid> OnDismissNotification { get; set; }
+	[Parameter] public Action OnCloseScoreboard { get; set; }
+	[Parameter] public Action OnToggleScoreboard { get; set; }
+	[Parameter] public Action OnRespawn { get; set; }
+	[Parameter] public Action<VendorPurchaseRequest> OnVendorPurchase { get; set; }
+	[Parameter] public Action<VendorSaleRequest> OnVendorSale { get; set; }
+	[Parameter] public Action<PermitPurchaseRequest> OnPermitPurchase { get; set; }
+	[Parameter] public Action<ItemWorkspaceRequest> OnItemWorkspace { get; set; }
+	[Parameter] public Action<CivicRecordUpdateRequest> OnCivicRecordUpdate { get; set; }
+	[Parameter] public Action<ObjectiveUpdateRequest> OnObjectiveUpdate { get; set; }
+	[Parameter] public Action<NoteSaveRequest> OnNoteSave { get; set; }
+	[Parameter] public Action<RadioTuneRequest> OnRadioTune { get; set; }
+	[Parameter] public Action<RestraintActionRequest> OnRestraintAction { get; set; }
+	[Parameter] public Action<ScannerIntentRequest> OnScannerIntent { get; set; }
+	[Parameter] public Action<CharacterId> OnIntroduce { get; set; }
+	[Parameter] public Action<CharacterId> OnInspectCivic { get; set; }
+	[Parameter] public Action<long> OnDismissItemPresentation { get; set; }
+	[Parameter] public Action<OperationResult> OnOperationResult { get; set; }
+
+	private ShowcaseWorkspace ActiveWorkspace => Model?.ActiveWorkspace ?? ShowcaseWorkspace.None;
+	private string LocalError { get; set; } = string.Empty;
+
+	private void ToggleWorkspace( ShowcaseWorkspace workspace ) =>
+		RequestWorkspace( ActiveWorkspace == workspace ? ShowcaseWorkspace.None : workspace );
+
+	private void CloseCombineWorkspace()
+	{
+		if ( ActiveWorkspace == ShowcaseWorkspace.Scanner && Model.Scanner?.SessionId is InteractionSessionId sessionId )
+			OnScannerIntent?.Invoke( new ScannerIntentRequest( sessionId, ScannerIntent.Exit ) );
+		RequestWorkspace( ShowcaseWorkspace.None );
+	}
+
+	private void SetWorkspace( ShowcaseWorkspace workspace ) => RequestWorkspace( workspace );
+	private void RequestWorkspace( ShowcaseWorkspace workspace ) =>
+		OnWorkspaceChanged?.Invoke( new WorkspaceTransitionRequest( workspace ) );
+
+	private void OpenItemWorkspace( ItemWorkspaceRequest request )
+	{
+		OnItemWorkspace?.Invoke( request );
+	}
+
+	private string DockClass( ShowcaseWorkspace workspace ) => ActiveWorkspace == workspace ? "is-active" : string.Empty;
+
+	private static bool IsOperationsWorkspace( ShowcaseWorkspace workspace ) => workspace is ShowcaseWorkspace.Inventory
+		or ShowcaseWorkspace.Storage or ShowcaseWorkspace.Vendor or ShowcaseWorkspace.Permits or ShowcaseWorkspace.Search;
+
+	private static bool IsCombineWorkspace( ShowcaseWorkspace workspace ) => workspace is ShowcaseWorkspace.CivicData
+		or ShowcaseWorkspace.Objectives or ShowcaseWorkspace.NoteEditor or ShowcaseWorkspace.Radio or ShowcaseWorkspace.Scanner;
+
+	private void HandleResult( OperationResult result )
+	{
+		LocalError = result.Failed ? result.Error?.Message ?? "The host denied the request." : string.Empty;
+		OnOperationResult?.Invoke( result );
+		StateHasChanged();
+	}
+}

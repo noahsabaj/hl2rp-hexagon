@@ -1,0 +1,208 @@
+@using System
+@using System.Linq
+@using System.Threading.Tasks
+@using Hexagon.V2.Client
+@using Hexagon.V2.Kernel
+@using Hexagon.V2.Networking
+@using Sandbox.UI
+@namespace HL2RP.UI
+@inherits Panel
+
+<root class="hud-layer">
+	<div class="hud-vitals">
+		<div class="hud-vitals__identity">
+			<div class="micro-label">ACTIVE IDENTITY</div>
+			<div class="hud-vitals__name">@ViewModel.Public.CharacterName</div>
+			<div class="hud-vitals__location">@ViewModel.District · @ViewModel.Location</div>
+		</div>
+		<div class="hud-meter health">
+			<div class="hud-meter__top"><span>VITALS</span><strong>@ViewModel.Health</strong></div>
+			<div class="hud-meter__track"><span style="width: @Percent( ViewModel.Health, ViewModel.MaximumHealth )%;"></span></div>
+		</div>
+		<div class="hud-meter armor">
+			<div class="hud-meter__top"><span>PROTECTION</span><strong>@ViewModel.Armor</strong></div>
+			<div class="hud-meter__track"><span style="width: @Percent( ViewModel.Armor, ViewModel.MaximumArmor )%;"></span></div>
+		</div>
+		@if ( ViewModel.Private is not null )
+		{
+			<div class="hud-balance"><span>TOKENS</span><strong>@ViewModel.Private.Balance.ToString( "N0" )</strong></div>
+		}
+	</div>
+
+	<div class="hud-status-rail">
+		<div class="status-pill @(ViewModel.FlashlightEnabled ? "is-active" : string.Empty)">flashlight <span>LIGHT</span></div>
+		<div class="status-pill @(ViewModel.RadioEnabled ? "is-active" : string.Empty)">radio <span>RADIO</span></div>
+		@if ( ViewModel.Public.IsWeaponRaised )
+		{
+			<div class="status-pill danger is-active">crisis_alert <span>WEAPON RAISED</span></div>
+		}
+	</div>
+
+	@if ( ViewModel.Magazine >= 0 )
+	{
+		<div class="hud-ammo">
+			<div class="hud-ammo__magazine">@ViewModel.Magazine.ToString( "00" )</div>
+			<div class="hud-ammo__reserve">/ @ViewModel.ReserveAmmunition.ToString( "000" )</div>
+			<div class="micro-label">SIDEARM</div>
+		</div>
+	}
+
+	<div class="chat-panel @(ChatFocused ? "is-focused" : string.Empty)">
+		<div class="chat-log">
+			@if ( Chat is not null )
+			{
+				@foreach ( var message in Chat.Messages.TakeLast( 40 ) )
+				{
+					<div class="chat-message channel-@message.ChannelId">
+						<span class="chat-message__channel">@message.ChannelId.ToUpperInvariant()</span>
+						<span class="chat-message__author">@message.AuthorName</span>
+						<span class="chat-message__text">@message.Text</span>
+					</div>
+				}
+			}
+		</div>
+		<div class="chat-compose">
+			<div class="chat-channels">
+				@foreach ( var channel in Channels )
+				{
+					<button class="@(SelectedChannel == channel.Id ? "is-active" : string.Empty)"
+						@onclick="@(() => SelectedChannel = channel.Id)">@channel.Label</button>
+				}
+			</div>
+			<TextEntry Value:bind="@ChatText" Placeholder="Speak in character…" MaxLength="@(512)"
+				onfocus="@(() => ChatFocused = true)" onblur="@(() => ChatFocused = false)" onsubmit="SendChatAsync" />
+			<button class="hex-button primary" disabled="@(string.IsNullOrWhiteSpace( ChatText ))" @onclick="SendChatAsync">Send</button>
+		</div>
+	</div>
+
+	@if ( Action is not null )
+	{
+		<div class="action-progress">
+			<div class="action-progress__copy"><span>@Action.ActionId.Value</span><strong>@Action.Label</strong></div>
+			<div class="action-progress__track"><span style="width: @ActionPercent( Action )%;"></span></div>
+			@if ( Action.CanCancel )
+			{
+				<button @onclick="CancelActionAsync">close</button>
+			}
+		</div>
+	}
+
+	<div class="notification-stack">
+		@foreach ( var notice in Notifications.Where( notification => notification.ExpiresAtUtc > DateTimeOffset.UtcNow ) )
+		{
+			<button class="notification tone-@notice.Tone.ToString().ToLowerInvariant()" @onclick="@(() => OnDismissNotification?.Invoke( notice.Id ))">
+				<div class="notification__marker"></div>
+				<div><strong>@notice.Title</strong><span>@notice.Message</span></div>
+			</button>
+		}
+	</div>
+
+	@if ( Restraint is not null && (Restraint.IsRestrained || Restraint.TargetCharacterId is not null) )
+	{
+		<div class="restraint-status @(Restraint.IsRestrained ? "is-restrained" : string.Empty)">
+			<div class="restraint-status__icon">link</div>
+			<div>
+				<strong>@(Restraint.IsRestrained ? "RESTRAINED" : "RESTRAINT READY")</strong>
+				<span>@Restraint.StatusText</span>
+			</div>
+			@if ( Restraint.CanSearch && Restraint.TargetCharacterId is not null )
+			{
+				<button class="hex-button secondary"
+					@onclick="@(() => OnOpenSearch?.Invoke( new SearchOpenRequest( Restraint.TargetCharacterId.Value ) ))">Search</button>
+			}
+		</div>
+	}
+
+	@if ( Combine is not null && Combine.Visible )
+	{
+		<div class="combine-overlay">
+			<div class="combine-overlay__topline">
+				<span>CCA://@Combine.Division.ToUpperInvariant()</span>
+				<strong>@Combine.Rank @Combine.Callsign</strong>
+			</div>
+			<div class="combine-overlay__directive"><span>DIRECTIVE</span>@Combine.Directive</div>
+			<div class="combine-overlay__alerts">
+				@foreach ( var alert in Combine.Alerts.TakeLast( 3 ) )
+				{
+					<div class="combine-alert tone-@alert.Tone.ToString().ToLowerInvariant()">
+						<span>@alert.Code</span><strong>@alert.Message</strong>
+					</div>
+				}
+			</div>
+		</div>
+	}
+
+	@if ( Death is not null && Death.Visible )
+	{
+		<div class="death-screen">
+			<div class="death-screen__rule"></div>
+			<div class="micro-label">CIVIC STATUS // TERMINATED</div>
+			<div class="death-screen__title">You are deceased.</div>
+			<div class="death-screen__cause">@Death.Cause</div>
+			@if ( Death.RespawnAtUtc is DateTimeOffset availableAt && availableAt > DateTimeOffset.UtcNow )
+			{
+				<div class="death-screen__timer">Body reconstruction available in @Math.Ceiling( (availableAt - DateTimeOffset.UtcNow).TotalSeconds )s</div>
+			}
+			<button class="hex-button primary" disabled="@(!Death.CanRespawn)" @onclick="@(() => OnRespawn?.Invoke())">
+				@(Death.CanRespawn ? "Re-enter city" : "Awaiting reconstruction")
+			</button>
+		</div>
+	}
+</root>
+
+@code
+{
+	[Parameter] public HudViewModel ViewModel { get; set; }
+	[Parameter] public ChatSnapshot Chat { get; set; }
+	[Parameter] public System.Collections.Immutable.ImmutableArray<NotificationViewModel> Notifications { get; set; }
+	[Parameter] public ActionProgressSnapshot Action { get; set; }
+	[Parameter] public DeathViewModel Death { get; set; }
+	[Parameter] public RestraintViewModel Restraint { get; set; }
+	[Parameter] public CombineOverlayViewModel Combine { get; set; }
+	[Parameter] public IHexClientController Controller { get; set; }
+	[Parameter] public Action<OperationResult> OnResult { get; set; }
+	[Parameter] public Action<Guid> OnDismissNotification { get; set; }
+	[Parameter] public Action<SearchOpenRequest> OnOpenSearch { get; set; }
+	[Parameter] public Action OnRespawn { get; set; }
+
+	private readonly UiChoice[] Channels =
+	{
+		new( "ic", "IC", "In character" ), new( "ooc", "OOC", "Out of character" ),
+		new( "looc", "LOOC", "Local out of character" ), new( "whisper", "W", "Whisper" ),
+		new( "yell", "Y", "Yell" ), new( "emote", "ME", "Emote" ),
+		new( "radio", "R", "Radio" ), new( "request", "REQ", "Request" ),
+		new( "dispatch", "DISP", "Dispatch" )
+	};
+
+	private string SelectedChannel { get; set; } = "ic";
+	private string ChatText { get; set; } = string.Empty;
+	private bool ChatFocused { get; set; }
+
+	private static int Percent( int value, int maximum ) => maximum <= 0 ? 0 : Math.Clamp( value * 100 / maximum, 0, 100 );
+
+	private static int ActionPercent( ActionProgressSnapshot action )
+	{
+		var elapsed = DateTimeOffset.UtcNow - action.StartedAtUtc;
+		return Math.Clamp( (int)(elapsed.TotalMilliseconds / action.Duration.TotalMilliseconds * 100), 0, 100 );
+	}
+
+	private async Task SendChatAsync()
+	{
+		if ( Controller is null || string.IsNullOrWhiteSpace( ChatText ) )
+			return;
+
+		var text = ChatText;
+		ChatText = string.Empty;
+		var result = await Controller.SendChatAsync( SelectedChannel, text );
+		OnResult?.Invoke( result );
+		StateHasChanged();
+	}
+
+	private async Task CancelActionAsync()
+	{
+		if ( Controller is null || Action is null )
+			return;
+
+		OnResult?.Invoke( await Controller.CancelActionAsync( Action.InstanceId ) );
+	}
+}

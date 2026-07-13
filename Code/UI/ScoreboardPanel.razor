@@ -1,0 +1,50 @@
+@using System
+@using System.Linq
+@using Sandbox.UI
+@namespace HL2RP.UI
+@inherits Panel
+
+<root class="scoreboard-panel">
+	<HL2RPWindow Eyebrow="CITY NETWORK / LIVE" Title="@ViewModel.ServerName"
+		Subtitle="@($"{ViewModel.SchemaName} · {ViewModel.MapName} · {ViewModel.Players.Length} connected")"
+		Variant="scoreboard-window" OnClose="@OnClose">
+		<Body>
+			<div class="scoreboard-columns"><span>IDENTITY</span><span>ASSIGNMENT</span><span>STATUS</span></div>
+			@foreach ( var entry in ViewModel.Players
+				.OrderBy( player => player.Faction?.Value )
+				.ThenBy( player => player.DisplayName ) )
+			{
+				<div class="scoreboard-row @(entry.IsLocal ? "is-local" : string.Empty)">
+					<div class="scoreboard-row__identity">
+						<div class="scoreboard-row__avatar">@(entry.DisplayName[0].ToString())</div>
+						<div><strong>@entry.DisplayName</strong>
+						<span>@(entry.CharacterId is null ? "Selecting a character" : entry.IsDead ? "Deceased" : entry.Status)</span></div>
+					</div>
+					<div class="scoreboard-row__assignment">
+						<strong>@(entry.Faction?.Value ?? "observer")</strong>
+						<span>@(entry.Class?.Value ?? "unassigned")</span>
+					</div>
+					<div class="scoreboard-row__status"><span class="presence"></span>@entry.Status
+						@if ( !entry.IsLocal && !entry.IsDead && entry.CharacterId is CharacterId characterId )
+						{
+							@if ( ViewModel.CanInspectCivicData )
+							{
+								<button class="hex-button ghost" @onclick="@(() => OnInspectCivic?.Invoke( characterId ))">Civic</button>
+							}
+							<button class="hex-button ghost" @onclick="@(() => OnIntroduce?.Invoke( characterId ))">Introduce</button>
+						}
+					</div>
+				</div>
+			}
+		</Body>
+	</HL2RPWindow>
+</root>
+
+@code
+{
+	[Parameter] public ScoreboardViewModel ViewModel { get; set; }
+	[Parameter] public Action OnClose { get; set; }
+	[Parameter] public Action<CharacterId> OnIntroduce { get; set; }
+	[Parameter] public Action<CharacterId> OnInspectCivic { get; set; }
+	protected override int BuildHash() => HashCode.Combine( ViewModel?.ServerName, ViewModel?.Players.Length ?? 0 );
+}

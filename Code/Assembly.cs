@@ -1,23 +1,14 @@
-global using Sandbox;
-global using Hexagon.Core;
-global using Hexagon.Characters;
-global using Hexagon.Factions;
-global using Hexagon.Items;
-global using Hexagon.Items.Bases;
-global using Hexagon.Inventory;
-global using Hexagon.Permissions;
-global using Hexagon.Currency;
-global using Hexagon.Chat;
-global using Hexagon.Commands;
-global using Hexagon.Attributes;
-global using Hexagon.Config;
-global using Hexagon.Doors;
-global using Hexagon.Interaction;
-global using Hexagon.Logging;
-global using Hexagon.Persistence;
-global using Hexagon.Storage;
-global using Hexagon.UI;
-global using Hexagon.Vendors;
+#nullable enable
+
 global using System;
 global using System.Collections.Generic;
 global using System.Linq;
+global using Hexagon.V2.Application;
+global using Hexagon.V2.Domain;
+global using Hexagon.V2.Kernel;
+global using Hexagon.V2.Kernel.Definitions;
+global using Hexagon.V2.Kernel.Persistence;
+global using Hexagon.V2.Kernel.Policies;
+global using Hexagon.V2.Kernel.Schema;
+global using HL2RP.V2.Domain;
+global using HL2RP.V2.Schema;

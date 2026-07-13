@@ -1,0 +1,92 @@
+@using System
+@using System.Linq
+@using System.Threading.Tasks
+@using Hexagon.V2.Domain
+@using Hexagon.V2.Networking
+@using Sandbox.UI
+@namespace HL2RP.UI
+@inherits Panel
+
+<root class="hex-inventory">
+	<div class="hex-inventory__meta">
+		<div>
+			<div class="micro-label">@Snapshot.Kind</div>
+			<div class="hex-inventory__title">@Snapshot.Title</div>
+		</div>
+		<div class="hex-inventory__dimensions">@Snapshot.Width × @Snapshot.Height</div>
+	</div>
+
+	<div class="hex-inventory__grid" style="width: @(Snapshot.Width * CellSize)px; height: @(Snapshot.Height * CellSize)px;">
+		@for ( var y = 0; y < Snapshot.Height; y++ )
+		{
+			@for ( var x = 0; x < Snapshot.Width; x++ )
+			{
+				<div class="hex-inventory__cell" style="left: @(x * CellSize)px; top: @(y * CellSize)px; width: @(CellSize)px; height: @(CellSize)px;"></div>
+			}
+		}
+
+		@foreach ( var item in Snapshot.Items )
+		{
+			var selected = SelectedItemId is ItemId selectedId && selectedId == item.ItemId;
+			<button class="hex-item @(selected ? "is-selected" : string.Empty)"
+				style="left: @(item.X * CellSize)px; top: @(item.Y * CellSize)px; width: @(item.Width * CellSize)px; height: @(item.Height * CellSize)px;"
+				@onclick="@(() => OnSelect?.Invoke( item ))">
+				<div class="hex-item__category">@item.Category</div>
+				<div class="hex-item__name">@item.DisplayName</div>
+				@if ( item.Quantity > 1 )
+				{
+					<div class="hex-item__quantity">×@item.Quantity</div>
+				}
+			</button>
+		}
+	</div>
+
+	@if ( Snapshot.Items.Count == 0 )
+	{
+		<div class="hex-empty-state compact">@EmptyMessage</div>
+	}
+
+	@{
+		var selectedItem = SelectedItemId is ItemId id
+			? Snapshot.Items.FirstOrDefault( item => item.ItemId == id )
+			: null;
+	}
+	@if ( selectedItem is not null )
+	{
+		<div class="hex-item-detail">
+			<div class="hex-item-detail__copy">
+				<div class="micro-label">@selectedItem.DefinitionId.Value</div>
+				<div class="hex-item-detail__name">@selectedItem.DisplayName</div>
+				<div class="hex-item-detail__description">@selectedItem.Description</div>
+			</div>
+			<div class="hex-item-detail__actions">
+				@foreach ( var action in selectedItem.Actions.Where( InventoryGridRules.ShowAction ) )
+				{
+					<button class="hex-button secondary" disabled="@(!action.Enabled)"
+						title="@action.DisabledReason"
+						@onclick="@(() => OnAction is null ? Task.CompletedTask : OnAction( selectedItem, action ))">@action.Label</button>
+				}
+				@if ( InventoryGridRules.ShowDrop( CanDrop, selectedItem ) )
+				{
+					<button class="hex-button danger" disabled="@(!InventoryGridRules.EnableDrop( CanDrop, selectedItem ))"
+						title="@selectedItem.DropDisabledReason"
+						@onclick="@(() => OnDropItem is null ? Task.CompletedTask : OnDropItem( selectedItem ))">Drop</button>
+				}
+			</div>
+		</div>
+	}
+</root>
+
+@code
+{
+	[Parameter] public InventorySnapshot Snapshot { get; set; }
+	[Parameter] public ItemId? SelectedItemId { get; set; }
+	[Parameter] public string EmptyMessage { get; set; } = "No items are stored here.";
+	[Parameter] public bool CanDrop { get; set; }
+	[Parameter] public int CellSize { get; set; } = 72;
+	[Parameter] public Action<InventoryItemSnapshot> OnSelect { get; set; }
+	[Parameter] public Func<InventoryItemSnapshot, ItemActionSnapshot, Task> OnAction { get; set; }
+	[Parameter] public Func<InventoryItemSnapshot, Task> OnDropItem { get; set; }
+
+	protected override int BuildHash() => HashCode.Combine( Snapshot?.Revision ?? -1L, SelectedItemId, CanDrop );
+}

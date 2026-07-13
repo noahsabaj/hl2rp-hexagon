@@ -1,0 +1,9 @@
+.hl2rp-client-presenter {
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+
+	> .hl2rp-showcase-root {
+		pointer-events: all;
+	}
+}

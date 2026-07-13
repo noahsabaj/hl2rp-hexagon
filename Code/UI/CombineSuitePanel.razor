@@ -1,0 +1,278 @@
+@using System
+@using System.Linq
+@using Hexagon.V2.Domain
+@using Sandbox.UI
+@namespace HL2RP.UI
+@inherits Panel
+
+<root class="combine-suite-panel @(Workspace == ShowcaseWorkspace.Scanner ? "scanner-mode" : string.Empty)">
+	<HL2RPWindow Eyebrow="CITY ADMINISTRATION NETWORK" Title="@Title" Subtitle="@Subtitle"
+		Variant="combine-suite-window" OnClose="@OnClose">
+		<HeaderActions>
+			<div class="workspace-tabs combine-tabs">
+				@foreach ( var tab in AvailableTabs )
+				{
+					<button class="@(Workspace == tab.Workspace ? "is-active" : string.Empty)"
+						@onclick="@(() => OnWorkspaceChanged?.Invoke( tab.Workspace ))">@tab.Label</button>
+				}
+			</div>
+		</HeaderActions>
+		<Body>
+			@if ( Workspace == ShowcaseWorkspace.CivicData && CivicRecord is not null )
+			{
+				<div class="civic-layout">
+					<div class="civic-dossier">
+						<div class="civic-photo"><span>person</span><small>VERIFIED</small></div>
+						<div class="civic-identity"><span class="micro-label">CITIZEN DOSSIER</span><strong>@CivicRecord.Name</strong>
+							<div class="civic-id">CID @CivicRecord.CitizenId</div></div>
+						<div class="civic-score"><span>POINTS</span><strong>@CivicRecord.Points</strong><small>@CivicRecord.InfractionCount infractions</small></div>
+					</div>
+					<div class="civic-priority">
+						<div class="section-heading"><span>PRIORITY</span> Response classification</div>
+						<div class="choice-row wrap">
+							@foreach ( var priority in Enum.GetValues<CivicPriority>() )
+							{
+								<button class="priority-chip priority-@priority.ToString().ToLowerInvariant() @(SelectedPriority == priority ? "is-selected" : string.Empty)"
+									disabled="@(!CivicRecord.CanEdit)" @onclick="@(() => SelectedPriority = priority)">@priority</button>
+							}
+						</div>
+					</div>
+					<div class="civic-content">
+						<div class="civic-record-editor">
+							<div class="section-heading"><span>RECORD</span> Authorized observations</div>
+							<TextEntry Value:bind="@RecordText" Multiline="@true" MaxLength="@(2048)" Disabled="@(!CivicRecord.CanEdit)" />
+							@if ( CivicRecord.CanEdit )
+							{
+								<button class="hex-button primary" @onclick="SaveCivicRecord">Commit civic record</button>
+							}
+						</div>
+						<div class="infraction-list">
+							<div class="section-heading"><span>HISTORY</span> Infractions</div>
+							@if ( CivicRecord.Infractions.Length == 0 )
+							{
+								<div class="hex-empty-state compact">No infractions on record.</div>
+							}
+							@foreach ( var infraction in CivicRecord.Infractions.OrderByDescending( entry => entry.IssuedAtUtc ) )
+							{
+								<div class="infraction-row"><div><strong>@infraction.Summary</strong><span>@infraction.IssuedBy · @infraction.IssuedAtUtc.ToLocalTime().ToString( "g" )</span></div>
+									<div class="infraction-points">+@infraction.Points</div></div>
+							}
+						</div>
+					</div>
+				</div>
+			}
+			else if ( Workspace == ShowcaseWorkspace.Objectives && Objectives is not null )
+			{
+				<div class="objectives-layout">
+					<div class="objective-list">
+						@foreach ( var objective in Objectives.Objectives.OrderBy( objective => objective.Completed ).ThenByDescending( objective => objective.UpdatedAtUtc ) )
+						{
+							<button class="objective-card @(objective.Completed ? "is-complete" : string.Empty) @(SelectedObjectiveId == objective.Id ? "is-selected" : string.Empty)"
+								@onclick="@(() => SelectObjective( objective ))">
+								<div class="objective-card__state">@(objective.Completed ? "check_circle" : "radio_button_unchecked")</div>
+								<div><span>@objective.UpdatedAtUtc.ToLocalTime().ToString( "HH:mm" )</span><strong>@objective.Title</strong><p>@objective.Detail</p></div>
+							</button>
+						}
+						@if ( Objectives.Objectives.Length == 0 )
+						{
+							<div class="hex-empty-state"><div class="hex-empty-state__icon">task_alt</div><strong>No active objectives</strong><span>The city administration has not issued a directive.</span></div>
+						}
+					</div>
+					@if ( Objectives.CanEdit )
+					{
+						<div class="objective-editor">
+							<div class="section-heading"><span>EDITOR</span> Issue directive</div>
+							<div class="field-group"><label>Title</label><TextEntry Value:bind="@ObjectiveTitle" MaxLength="@(96)" /></div>
+							<div class="field-group"><label>Directive</label><TextEntry Value:bind="@ObjectiveDetail" Multiline="@true" MaxLength="@(512)" /></div>
+							<button class="hex-toggle @(ObjectiveCompleted ? "is-on" : string.Empty)" @onclick="@(() => ObjectiveCompleted = !ObjectiveCompleted)">
+								<span></span>@(ObjectiveCompleted ? "Completed" : "Active")</button>
+							<button class="hex-button primary" disabled="@(string.IsNullOrWhiteSpace( ObjectiveTitle ))" @onclick="SaveObjective">
+								@(string.IsNullOrEmpty( SelectedObjectiveId ) ? "Publish objective" : "Update objective")</button>
+							<button class="hex-button ghost" @onclick="ClearObjective">Clear editor</button>
+						</div>
+					}
+				</div>
+			}
+			else if ( Workspace == ShowcaseWorkspace.NoteEditor && Note is not null )
+			{
+				<div class="note-layout">
+					<div class="note-paper">
+						<div class="note-paper__rings"></div>
+						<TextEntry class="note-body" Value:bind="@NoteBody" Multiline="@true" MaxLength="@Note.MaximumLength"
+							Disabled="@(!Note.CanEdit)" Placeholder="Write a message…" />
+						<div class="note-count">@NoteBody.Length / @Note.MaximumLength</div>
+					</div>
+					<div class="note-tools"><div class="micro-label">PHYSICAL DOCUMENT</div><strong>Note editor</strong>
+						<p>Text is saved as typed item state. The local panel never owns the authoritative document.</p>
+						<button class="hex-button primary" disabled="@(!Note.CanEdit)" @onclick="SaveNote">Save note</button></div>
+				</div>
+			}
+			else if ( Workspace == ShowcaseWorkspace.Radio && Radio is not null )
+			{
+				<div class="radio-layout">
+					<div class="radio-device">
+						<div class="radio-device__antenna"></div><div class="radio-device__speaker"></div>
+						<div class="radio-device__display"><span>FREQUENCY</span><strong>@Frequency</strong><small>@Radio.ChannelName</small></div>
+						<button class="radio-device__power @(RadioEnabled ? "is-on" : string.Empty)" @onclick="@(() => RadioEnabled = !RadioEnabled)">power_settings_new</button>
+					</div>
+					<div class="radio-console">
+						<div class="section-heading"><span>TUNER</span> Handheld radio</div>
+						<div class="field-group"><label>Frequency</label><TextEntry Value:bind="@Frequency" MaxLength="@(16)" Placeholder="101.7" /></div>
+						<div class="preset-grid">
+							@foreach ( var preset in Radio.Presets )
+							{
+								<button disabled="@(!preset.Enabled)" title="@preset.Description" @onclick="@(() => Frequency = preset.Id)">
+									<span>@preset.Label</span><strong>@preset.Id</strong></button>
+							}
+						</div>
+						<button class="hex-button primary" @onclick="SaveRadio">Apply tuning</button>
+					</div>
+				</div>
+			}
+			else if ( Workspace == ShowcaseWorkspace.Scanner && Scanner is not null )
+			{
+				<div class="scanner-layout">
+					<div class="scanner-feed">
+						<div class="scanner-feed__reticle"><span></span><span></span><strong>OPTICAL FEED // @Scanner.UnitName</strong></div>
+						<div class="scanner-feed__telemetry top-left">HOST LINK VERIFIED<br />AUTHORITATIVE CONTROL</div>
+						<div class="scanner-feed__telemetry top-right">SEQ HOST-ORDERED<br />INPUT ≤ 20 HZ</div>
+						<div class="scanner-contacts">
+							@foreach ( var contact in Scanner.Contacts )
+							{
+								<div class="scanner-contact @(contact.Priority ? "is-priority" : string.Empty)"><span></span>@contact.Label · @contact.Distance.ToString( "0" )u</div>
+							}
+						</div>
+					</div>
+					<div class="scanner-controls">
+						<div class="scanner-flight-pad">
+							<button @onclick="@(() => SendScannerMotion( 1, 0, 0, 0, 0 ))">forward</button>
+							<button @onclick="@(() => SendScannerMotion( -1, 0, 0, 0, 0 ))">back</button>
+							<button @onclick="@(() => SendScannerMotion( 0, -1, 0, 0, 0 ))">left</button>
+							<button @onclick="@(() => SendScannerMotion( 0, 1, 0, 0, 0 ))">right</button>
+							<button @onclick="@(() => SendScannerMotion( 0, 0, 1, 0, 0 ))">rise</button>
+							<button @onclick="@(() => SendScannerMotion( 0, 0, -1, 0, 0 ))">descend</button>
+							<button @onclick="@(() => SendScannerMotion( 0, 0, 0, -1, 0 ))">yaw left</button>
+							<button @onclick="@(() => SendScannerMotion( 0, 0, 0, 1, 0 ))">yaw right</button>
+						</div>
+						<button class="scanner-control @(Scanner.SpotlightEnabled ? "is-active" : string.Empty)"
+							@onclick="@(() => SendScannerIntent( ScannerIntent.ToggleSpotlight ))"><span>light_mode</span>Spotlight</button>
+						<button class="scanner-control" @onclick="@(() => SendScannerIntent( ScannerIntent.Flash ))"><span>flash_on</span>Flash</button>
+						<button class="scanner-control primary" disabled="@(!CanTakePhoto)" @onclick="@(() => SendScannerIntent( ScannerIntent.TakePhoto ))">
+							<span>photo_camera</span>@(CanTakePhoto ? "Capture metadata" : "Photo cooling down")</button>
+						<button class="scanner-control danger" @onclick="@(() => SendScannerIntent( ScannerIntent.Exit ))"><span>logout</span>Exit pilot</button>
+					</div>
+				</div>
+			}
+			else
+			{
+				<div class="hex-empty-state"><div class="hex-empty-state__icon">sync_lock</div><strong>Network view unavailable</strong>
+					<span>The host has not granted this panel for the active character.</span></div>
+			}
+		</Body>
+	</HL2RPWindow>
+</root>
+
+@code
+{
+	[Parameter] public ShowcaseWorkspace Workspace { get; set; }
+	[Parameter] public CivicRecordViewModel CivicRecord { get; set; }
+	[Parameter] public ObjectivesViewModel Objectives { get; set; }
+	[Parameter] public NoteEditorViewModel Note { get; set; }
+	[Parameter] public RadioViewModel Radio { get; set; }
+	[Parameter] public ScannerViewModel Scanner { get; set; }
+	[Parameter] public Action<ShowcaseWorkspace> OnWorkspaceChanged { get; set; }
+	[Parameter] public Action<CivicRecordUpdateRequest> OnCivicRecordUpdate { get; set; }
+	[Parameter] public Action<ObjectiveUpdateRequest> OnObjectiveUpdate { get; set; }
+	[Parameter] public Action<NoteSaveRequest> OnNoteSave { get; set; }
+	[Parameter] public Action<RadioTuneRequest> OnRadioTune { get; set; }
+	[Parameter] public Action<ScannerIntentRequest> OnScannerIntent { get; set; }
+	[Parameter] public Action OnClose { get; set; }
+
+	private CivicRecordViewModel _boundCivic;
+	private NoteEditorViewModel _boundNote;
+	private RadioViewModel _boundRadio;
+	private CivicPriority SelectedPriority { get; set; }
+	private string RecordText { get; set; } = string.Empty;
+	private string SelectedObjectiveId { get; set; } = string.Empty;
+	private string ObjectiveTitle { get; set; } = string.Empty;
+	private string ObjectiveDetail { get; set; } = string.Empty;
+	private bool ObjectiveCompleted { get; set; }
+	private string NoteBody { get; set; } = string.Empty;
+	private string Frequency { get; set; } = string.Empty;
+	private bool RadioEnabled { get; set; }
+	private long _scannerSequence;
+
+	private (ShowcaseWorkspace Workspace, string Label)[] AvailableTabs => new[]
+	{
+		(ShowcaseWorkspace.CivicData, "Civic data"), (ShowcaseWorkspace.Objectives, "Objectives"),
+		(ShowcaseWorkspace.NoteEditor, "Note"), (ShowcaseWorkspace.Radio, "Radio"),
+		(ShowcaseWorkspace.Scanner, "Scanner")
+	}.Where( tab => HasWorkspace( tab.Item1 ) ).ToArray();
+
+	private string Title => Workspace switch
+	{
+		ShowcaseWorkspace.CivicData => "Civic Data Terminal", ShowcaseWorkspace.Objectives => "City Objectives",
+		ShowcaseWorkspace.NoteEditor => "Document Editor", ShowcaseWorkspace.Radio => "Radio Tuning",
+		ShowcaseWorkspace.Scanner => "Scanner Pilot Interface", _ => "Combine Network"
+	};
+
+	private string Subtitle => Workspace switch
+	{
+		ShowcaseWorkspace.CivicData => "Identity, points, infractions, and priority status",
+		ShowcaseWorkspace.Objectives => "Audited city administration directives",
+		ShowcaseWorkspace.NoteEditor => "Typed state on a physical note item",
+		ShowcaseWorkspace.Radio => "Canonical live inventory determines recipients",
+		ShowcaseWorkspace.Scanner => "Host-bound flight session and trusted photo metadata",
+		_ => string.Empty
+	};
+
+	private bool CanTakePhoto => Scanner?.NextPhotoAtUtc is not DateTimeOffset readyAt || readyAt <= DateTimeOffset.UtcNow;
+
+	protected override void OnParametersSet()
+	{
+		if ( CivicRecord is not null && !ReferenceEquals( CivicRecord, _boundCivic ) )
+		{
+			_boundCivic = CivicRecord; SelectedPriority = CivicRecord.Priority; RecordText = CivicRecord.RecordText;
+		}
+		if ( Note is not null && !ReferenceEquals( Note, _boundNote ) )
+		{
+			_boundNote = Note; NoteBody = Note.Body;
+		}
+		if ( Radio is not null && !ReferenceEquals( Radio, _boundRadio ) )
+		{
+			_boundRadio = Radio; Frequency = Radio.Frequency; RadioEnabled = Radio.Enabled;
+		}
+	}
+
+	private bool HasWorkspace( ShowcaseWorkspace workspace ) => workspace switch
+	{
+		ShowcaseWorkspace.CivicData => CivicRecord is not null, ShowcaseWorkspace.Objectives => Objectives is not null,
+		ShowcaseWorkspace.NoteEditor => Note is not null, ShowcaseWorkspace.Radio => Radio is not null,
+		ShowcaseWorkspace.Scanner => Scanner is not null, _ => false
+	};
+
+	private void SaveCivicRecord() => OnCivicRecordUpdate?.Invoke( new CivicRecordUpdateRequest( CivicRecord.CharacterId, SelectedPriority, RecordText.Trim() ) );
+	private void SaveNote() => OnNoteSave?.Invoke( new NoteSaveRequest( Note.ItemId, NoteBody ) );
+	private void SaveRadio() => OnRadioTune?.Invoke( new RadioTuneRequest( Radio.RadioItemId, Frequency.Trim(), RadioEnabled ) );
+	private void SendScannerIntent( ScannerIntent intent ) => OnScannerIntent?.Invoke( new ScannerIntentRequest( Scanner.SessionId, intent ) );
+	private void SendScannerMotion( int forward, int right, int up, int yaw, int pitch ) =>
+		OnScannerIntent?.Invoke( new ScannerIntentRequest(
+			Scanner.SessionId, ScannerIntent.Move, ++_scannerSequence, forward, right, up, yaw, pitch ) );
+
+	private void SelectObjective( CityObjectiveViewModel objective )
+	{
+		SelectedObjectiveId = objective.Id; ObjectiveTitle = objective.Title;
+		ObjectiveDetail = objective.Detail; ObjectiveCompleted = objective.Completed;
+	}
+
+	private void ClearObjective()
+	{
+		SelectedObjectiveId = string.Empty; ObjectiveTitle = string.Empty; ObjectiveDetail = string.Empty; ObjectiveCompleted = false;
+	}
+
+	private void SaveObjective()
+	{
+		OnObjectiveUpdate?.Invoke( new ObjectiveUpdateRequest( SelectedObjectiveId, ObjectiveTitle.Trim(), ObjectiveDetail.Trim(), ObjectiveCompleted ) );
+		ClearObjective();
+	}
+}

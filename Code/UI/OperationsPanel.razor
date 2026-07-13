@@ -1,0 +1,354 @@
+@using System
+@using System.Collections.Generic
+@using System.Linq
+@using System.Threading.Tasks
+@using Hexagon.V2.Client
+@using Hexagon.V2.Domain
+@using Hexagon.V2.Kernel
+@using Hexagon.V2.Networking
+@using HL2RP.V2.Schema
+@using Sandbox.UI
+@namespace HL2RP.UI
+@inherits Panel
+
+<root class="operations-panel">
+	<HL2RPWindow Eyebrow="CIVIC OPERATIONS" Title="@WindowTitle" Subtitle="@WindowSubtitle"
+		Variant="operations-window" OnClose="@CloseRequested">
+		<HeaderActions>
+			<div class="workspace-tabs">
+				@foreach ( var tab in AvailableTabs )
+				{
+					<button class="@(Workspace == tab.Workspace ? "is-active" : string.Empty)"
+						@onclick="@(() => RequestWorkspace( tab.Workspace ))">@tab.Label</button>
+				}
+			</div>
+		</HeaderActions>
+		<Body>
+			@if ( Workspace == ShowcaseWorkspace.Inventory && Inventory is not null )
+			{
+				<div class="single-inventory-layout">
+					<InventoryGrid Snapshot="@Inventory.Inventory" SelectedItemId="@_selectedPrimary"
+						CanDrop="@Inventory.CanDrop" EmptyMessage="@Inventory.EmptyMessage"
+						OnSelect="@SelectPrimary" OnAction="@RunActionAsync" OnDropItem="@DropAsync" />
+					@if ( Door is not null )
+					{
+						<div class="door-session-controls">
+							<div><strong>Ownable door</strong><span>@Door.OwnerStatus · @(Door.IsOpen ? "Open" : "Closed") · @(Door.CombineLocked ? "Combine locked" : "Unlocked")</span></div>
+							<button class="hex-button secondary" disabled="@(!Door.CanClaim)" title="@Door.ClaimDisabledReason"
+								@onclick="@ClaimDoorAsync">Claim current door</button>
+							<button class="hex-button secondary" disabled="@(!Door.CanRelease)" title="@Door.ReleaseDisabledReason"
+								@onclick="@ReleaseDoorAsync">Release current door</button>
+						</div>
+					}
+					@if ( SelectedTokenStack is InventoryItemSnapshot tokenStack )
+					{
+						<div class="token-action-controls">
+							<div class="field-group">
+								<label>Split amount</label>
+								<TextEntry Value="@_splitAmountText" OnTextEdited="@SetSplitAmount"
+									Placeholder="Positive token amount" />
+								<div class="field-hint">A split must leave tokens in the original stack.</div>
+							</div>
+							<div class="field-group">
+								<label>Combine with visible stack</label>
+								<div class="choice-row wrap">
+									@foreach ( var candidate in OtherVisibleTokenStacks( tokenStack.ItemId ) )
+									{
+										<button class="choice-chip @(_combineTarget == candidate.ItemId ? "is-selected" : string.Empty)"
+											@onclick="@(() => _combineTarget = candidate.ItemId)">@candidate.DisplayName ×@candidate.Quantity</button>
+									}
+								</div>
+								@if ( !OtherVisibleTokenStacks( tokenStack.ItemId ).Any() )
+								{
+									<div class="field-hint">No second token stack is visible in this inventory.</div>
+								}
+							</div>
+						</div>
+					}
+					@if ( SelectedRequestDevice is InventoryItemSnapshot requestDevice )
+					{
+						var requestAvailability = InventoryGridRules.DedicatedAction(
+							requestDevice, HL2RPIds.Actions.Request );
+						<div class="request-device-controls">
+							<div class="field-group">
+								<label>Request Civil Protection</label>
+								<TextEntry Value="@_requestText" OnTextEdited="@SetRequestText"
+									MaxLength="@(512)" Placeholder="Describe the assistance required" />
+							</div>
+							<button class="hex-button primary"
+								disabled="@(string.IsNullOrWhiteSpace( _requestText ) || requestAvailability?.Enabled != true)"
+								title="@requestAvailability?.DisabledReason"
+								@onclick="@(() => SendRequestAsync( requestDevice ))">Send audited request</button>
+						</div>
+					}
+				</div>
+			}
+			else if ( Workspace == ShowcaseWorkspace.Storage && Storage is not null )
+			{
+				<InventoryTransferPanel ViewModel="@Storage" Controller="@Controller" IsSearch="@false" OnResult="@OnResult" />
+			}
+			else if ( Workspace == ShowcaseWorkspace.Search && Search is not null )
+			{
+				<div class="interaction-banner warning"><span>policy</span>@Search.Caption</div>
+				<InventoryTransferPanel ViewModel="@Search" Controller="@Controller" IsSearch="@true" OnResult="@OnResult" />
+			}
+			else if ( Workspace == ShowcaseWorkspace.Vendor && Vendor is not null )
+			{
+				<div class="vendor-layout">
+					<div class="vendor-catalog">
+						<div class="vendor-heading"><div><span class="micro-label">AUTHORIZED POINT OF SALE</span><strong>@Vendor.Name</strong><p>@Vendor.Description</p></div>
+							<div class="vendor-balance"><span>AVAILABLE</span>@Vendor.Balance.ToString( "N0" ) T</div></div>
+						<div class="vendor-offers">
+							@foreach ( var offer in Vendor.Offers )
+							{
+								<div class="vendor-offer @(!offer.CanBuy ? "is-disabled" : string.Empty)">
+									<div class="vendor-offer__icon">inventory_2</div>
+									<div class="vendor-offer__copy"><span>@offer.DefinitionId.Value</span><strong>@offer.Name</strong><p>@offer.Description</p></div>
+									<div class="vendor-offer__stock"><span>STOCK</span>@(offer.Stock < 0 ? "∞" : offer.Stock.ToString( "N0" ))</div>
+									<div class="vendor-offer__price">@offer.Price.ToString( "N0" ) T</div>
+									<button class="hex-button primary" disabled="@(!offer.CanBuy)" title="@offer.DisabledReason"
+										@onclick="@(() => OnVendorPurchase?.Invoke( new VendorPurchaseRequest( Vendor.SessionId, offer.DefinitionId, 1 ) ))">Purchase</button>
+								</div>
+							}
+						</div>
+					</div>
+					@if ( Vendor.SellingInventory is not null )
+					{
+						<div class="vendor-sell">
+							<div class="section-heading"><span>SELL</span> Your inventory</div>
+							@foreach ( var item in Vendor.SellingInventory.Items )
+							{
+								var canSell = InventoryGridRules.TryVendorSell( item, out var payout, out var sellReason );
+								<div class="sell-row"><div><strong>@item.DisplayName</strong><span>@item.Category · ×@item.Quantity</span></div>
+									<button class="hex-button secondary" disabled="@(!canSell)" title="@sellReason"
+										@onclick="@(() => OnVendorSale?.Invoke(
+										new VendorSaleRequest( Vendor.SessionId, Vendor.SellingInventory.InventoryId, item.ItemId, 1 ) ))">
+										@(canSell ? $"Sell · {payout:N0} T" : "Unavailable")</button></div>
+							}
+						</div>
+					}
+				</div>
+			}
+			else if ( Workspace == ShowcaseWorkspace.Permits && Permits is not null )
+			{
+				<div class="permit-layout">
+					<div class="permit-intro"><span class="micro-label">COMMERCE ADMINISTRATION</span><strong>Business permits</strong>
+						<p>Permits are typed civic credentials. Vendors verify the active character's credential on the host.</p>
+						<div class="permit-balance">BALANCE <strong>@Permits.Balance.ToString( "N0" ) T</strong></div></div>
+					<div class="permit-cards">
+						@foreach ( var permit in Permits.Permits )
+						{
+							<div class="permit-card @(permit.Owned ? "is-owned" : string.Empty)">
+								<div class="permit-card__seal">verified</div><span>@permit.PermitKindId</span><strong>@permit.Name</strong><p>@permit.Description</p>
+								<div class="permit-card__footer"><span>@permit.StatusText</span>
+									@if ( permit.Owned ) { <div class="permit-owned">OWNED</div> }
+									else { <button class="hex-button primary" disabled="@(!permit.Available)"
+									@onclick="@(() => OnPermitPurchase?.Invoke( new PermitPurchaseRequest( permit.PermitKindId ) ))">@permit.Price.ToString( "N0" ) T</button> }
+								</div>
+							</div>
+						}
+					</div>
+				</div>
+			}
+			else
+			{
+				<div class="hex-empty-state"><div class="hex-empty-state__icon">lock</div><strong>Access has ended</strong>
+					<span>The host revoked this workspace or its interaction session.</span></div>
+			}
+		</Body>
+		<Footer>
+			<div class="window-status">@StatusText</div>
+			<div class="session-status"><span></span>Host-validated session</div>
+		</Footer>
+	</HL2RPWindow>
+</root>
+
+@code
+{
+	[Parameter] public ShowcaseWorkspace Workspace { get; set; }
+	[Parameter] public InventoryWorkspaceViewModel Inventory { get; set; }
+	[Parameter] public DoorSessionViewModel Door { get; set; }
+	[Parameter] public InventoryTransferViewModel Storage { get; set; }
+	[Parameter] public VendorViewModel Vendor { get; set; }
+	[Parameter] public PermitViewModel Permits { get; set; }
+	[Parameter] public InventoryTransferViewModel Search { get; set; }
+	[Parameter] public IHexClientController Controller { get; set; }
+	[Parameter] public Action<WorkspaceTransitionRequest> OnWorkspaceChanged { get; set; }
+	[Parameter] public Action<VendorPurchaseRequest> OnVendorPurchase { get; set; }
+	[Parameter] public Action<VendorSaleRequest> OnVendorSale { get; set; }
+	[Parameter] public Action<PermitPurchaseRequest> OnPermitPurchase { get; set; }
+	[Parameter] public Action<ItemWorkspaceRequest> OnItemWorkspace { get; set; }
+	[Parameter] public Action<OperationResult> OnResult { get; set; }
+
+	private ItemId? _selectedPrimary;
+	private ItemId? _combineTarget;
+	private string _splitAmountText = "1";
+	private string _requestText = string.Empty;
+	private long? _splitAmount = 1;
+	private string StatusText { get; set; } = "Select an item to inspect its host-approved actions.";
+	private InventoryItemSnapshot SelectedTokenStack => Inventory?.Inventory.Items.FirstOrDefault( item =>
+		_selectedPrimary is ItemId selected && item.ItemId == selected && item.DefinitionId.Value == HL2RPIds.Items.TokenStack );
+	private InventoryItemSnapshot SelectedRequestDevice => Inventory?.Inventory.Items.FirstOrDefault( item =>
+		_selectedPrimary is ItemId selected && item.ItemId == selected && item.DefinitionId.Value == HL2RPIds.Items.RequestDevice );
+
+	private (ShowcaseWorkspace Workspace, string Label)[] AvailableTabs => new[]
+	{
+		(ShowcaseWorkspace.Inventory, "Inventory"), (ShowcaseWorkspace.Storage, "Storage"),
+		(ShowcaseWorkspace.Vendor, "Vendor"), (ShowcaseWorkspace.Permits, "Permits"),
+		(ShowcaseWorkspace.Search, "Search")
+	}.Where( tab => HasWorkspace( tab.Item1 ) ).ToArray();
+
+	private string WindowTitle => Workspace switch
+	{
+		ShowcaseWorkspace.Inventory => Inventory?.Inventory.Title ?? "Inventory",
+		ShowcaseWorkspace.Storage => Storage?.Destination.Title ?? "Storage",
+		ShowcaseWorkspace.Vendor => Vendor?.Name ?? "Vendor",
+		ShowcaseWorkspace.Permits => "Permit Registry",
+		ShowcaseWorkspace.Search => "Authorized Search",
+		_ => "Operations"
+	};
+
+	private string WindowSubtitle => Workspace switch
+	{
+		ShowcaseWorkspace.Inventory => "Your active character inventory",
+		ShowcaseWorkspace.Storage => Storage?.Caption ?? "Session-scoped storage access",
+		ShowcaseWorkspace.Vendor => "Stock, funds, and delivery commit together",
+		ShowcaseWorkspace.Permits => "Typed credentials for regulated commerce",
+		ShowcaseWorkspace.Search => "Temporary transfer grant for a restrained target",
+		_ => string.Empty
+	};
+
+	private bool HasWorkspace( ShowcaseWorkspace workspace ) => workspace switch
+	{
+		ShowcaseWorkspace.Inventory => Inventory is not null,
+		ShowcaseWorkspace.Storage => Storage is not null,
+		ShowcaseWorkspace.Vendor => Vendor is not null,
+		ShowcaseWorkspace.Permits => Permits is not null,
+		ShowcaseWorkspace.Search => Search is not null,
+		_ => false
+	};
+
+	private void SelectPrimary( InventoryItemSnapshot item )
+	{
+		_selectedPrimary = item.ItemId;
+		var candidates = OtherVisibleTokenStacks( item.ItemId ).ToArray();
+		if ( _combineTarget is not ItemId current || candidates.All( candidate => candidate.ItemId != current ) )
+			_combineTarget = candidates.FirstOrDefault()?.ItemId;
+	}
+
+	private IEnumerable<InventoryItemSnapshot> OtherVisibleTokenStacks( ItemId primaryItemId ) =>
+		Inventory?.Inventory.Items.Where( item => item.ItemId != primaryItemId &&
+			item.DefinitionId.Value == HL2RPIds.Items.TokenStack ) ?? Enumerable.Empty<InventoryItemSnapshot>();
+
+	private void SetSplitAmount( string value )
+	{
+		_splitAmountText = value ?? string.Empty;
+		_splitAmount = long.TryParse( _splitAmountText, out var parsed ) && parsed > 0 ? parsed : null;
+	}
+
+	private void SetRequestText( string value ) => _requestText = value ?? string.Empty;
+	private Task ClaimDoorAsync() => ChangeDoorOwnershipAsync( "claim" );
+	private Task ReleaseDoorAsync() => ChangeDoorOwnershipAsync( "release" );
+
+	private async Task ChangeDoorOwnershipAsync( string intent )
+	{
+		if ( Controller is null ) return;
+		var result = await Controller.RunSchemaCommandAsync(
+			HL2RPIds.Commands.DoorOwnership,
+			new Dictionary<string, SnapshotValue>( StringComparer.Ordinal )
+			{
+				["intent"] = SnapshotValue.Choice( intent )
+			} );
+		Report( result, intent == "claim" ? "Door claimed." : "Door released." );
+	}
+
+	private async Task SendRequestAsync( InventoryItemSnapshot device )
+	{
+		var availability = InventoryGridRules.DedicatedAction( device, HL2RPIds.Actions.Request );
+		if ( Controller is null || Inventory is null || string.IsNullOrWhiteSpace( _requestText ) ||
+			availability?.Enabled != true ) return;
+		var arguments = new Dictionary<string, SnapshotValue>( StringComparer.Ordinal )
+		{
+			["text"] = SnapshotValue.String( _requestText.Trim() )
+		};
+		var result = await Controller.RunItemActionAsync(
+			Inventory.Inventory.InventoryId, device.ItemId, new ActionId( HL2RPIds.Actions.Request ), arguments );
+		Report( result, "Request transmitted." );
+		if ( result.Succeeded ) _requestText = string.Empty;
+	}
+
+	private async Task RunActionAsync( InventoryItemSnapshot item, ItemActionSnapshot action )
+	{
+		if ( Controller is null || !action.Enabled ) return;
+		if ( action.Invocation == ItemActionInvocationKind.DedicatedPanel )
+		{
+			var workspace = action.ActionId.Value switch
+			{
+				HL2RPIds.Actions.Write => ShowcaseWorkspace.NoteEditor,
+				HL2RPIds.Actions.Tune => ShowcaseWorkspace.Radio,
+				_ => ShowcaseWorkspace.None
+			};
+			if ( workspace != ShowcaseWorkspace.None ) OnItemWorkspace?.Invoke( new ItemWorkspaceRequest( item.ItemId, workspace ) );
+			return;
+		}
+		var inventory = FindInventory( item.ItemId );
+		if ( inventory is null ) return;
+
+		if ( action.ActionId.Value == HL2RPIds.Actions.Split )
+		{
+			if ( !ItemActionArgumentBuilder.TrySplit( _splitAmount, item.Quantity, out var arguments ) )
+			{
+				StatusText = "Split amount must be positive and less than the visible stack quantity.";
+				StateHasChanged();
+				return;
+			}
+			Report( await Controller.RunItemActionAsync( inventory.Value, item.ItemId, action.ActionId, arguments ),
+				$"{action.Label}: {item.DisplayName}" );
+			return;
+		}
+
+		if ( action.ActionId.Value == HL2RPIds.Actions.Combine )
+		{
+			var targetIsVisible = _combineTarget is ItemId target && OtherVisibleTokenStacks( item.ItemId )
+				.Any( candidate => candidate.ItemId == target );
+			if ( !targetIsVisible || !ItemActionArgumentBuilder.TryCombine( item.ItemId, _combineTarget, out var arguments ) )
+			{
+				StatusText = "Select another visible token stack to combine.";
+				StateHasChanged();
+				return;
+			}
+			Report( await Controller.RunItemActionAsync( inventory.Value, item.ItemId, action.ActionId, arguments ),
+				$"{action.Label}: {item.DisplayName}" );
+			return;
+		}
+
+		Report( await Controller.RunItemActionAsync( inventory.Value, item.ItemId, action.ActionId ), $"{action.Label}: {item.DisplayName}" );
+	}
+
+	private async Task DropAsync( InventoryItemSnapshot item )
+	{
+		if ( Controller is null || Inventory is null || !item.CanDrop ) return;
+		Report( await Controller.DropItemAsync( Inventory.Inventory.InventoryId, item.ItemId ), $"Dropped {item.DisplayName}." );
+	}
+
+	private InventoryId? FindInventory( ItemId itemId )
+	{
+		var candidates = new[]
+		{
+			Inventory?.Inventory, Storage?.Source, Storage?.Destination, Search?.Source, Search?.Destination, Vendor?.SellingInventory
+		};
+		return candidates.FirstOrDefault( inventory => inventory?.Items.Any( item => item.ItemId == itemId ) == true )?.InventoryId;
+	}
+
+	private void RequestWorkspace( ShowcaseWorkspace workspace ) =>
+		OnWorkspaceChanged?.Invoke( new WorkspaceTransitionRequest( workspace ) );
+
+	private void CloseRequested() => RequestWorkspace( ShowcaseWorkspace.None );
+
+	private void Report( OperationResult result, string success )
+	{
+		StatusText = result.Succeeded ? success : result.Error?.Message ?? "The host denied the request.";
+		OnResult?.Invoke( result );
+		StateHasChanged();
+	}
+}

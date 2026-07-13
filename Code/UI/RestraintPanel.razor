@@ -1,0 +1,42 @@
+@using System
+@using Hexagon.V2.Domain
+@using Sandbox.UI
+@namespace HL2RP.UI
+@inherits Panel
+
+<root class="restraint-panel">
+	<div class="restraint-panel__icon">link</div>
+	<div class="restraint-panel__copy">
+		<span class="micro-label">RESTRAINT PROTOCOL</span>
+		<strong>@(ViewModel.IsRestrained ? "Movement restricted" : "Target acquired")</strong>
+		<p>@ViewModel.StatusText</p>
+		@if ( ViewModel.Remaining is TimeSpan remaining )
+		{
+			<div class="restraint-panel__timer">@remaining.TotalSeconds.ToString( "0.0" ) seconds</div>
+		}
+	</div>
+	<div class="restraint-panel__actions">
+		@if ( ViewModel.TargetCharacterId is CharacterId target )
+		{
+			<button class="hex-button @(ViewModel.IsRestrained ? "danger" : "primary")"
+				@onclick="@(() => OnRestraintAction?.Invoke( new RestraintActionRequest( target, !ViewModel.IsRestrained ) ))">
+				@(ViewModel.IsRestrained ? "Remove restraint" : "Apply zip tie")</button>
+			@if ( ViewModel.CanSearch )
+			{
+				<button class="hex-button secondary" @onclick="@(() => OpenSearch( target ))">Open search</button>
+			}
+		}
+	</div>
+</root>
+
+@code
+{
+	[Parameter] public RestraintViewModel ViewModel { get; set; }
+	[Parameter] public Action<RestraintActionRequest> OnRestraintAction { get; set; }
+	[Parameter] public Action<SearchOpenRequest> OnOpenSearch { get; set; }
+
+	private void OpenSearch( CharacterId target )
+	{
+		OnOpenSearch?.Invoke( new SearchOpenRequest( target ) );
+	}
+}
