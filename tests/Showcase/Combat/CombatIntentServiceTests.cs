@@ -10,7 +10,9 @@ using Hexagon.V2.Application;
 using Hexagon.V2.Domain;
 using Hexagon.V2.Kernel;
 using Hexagon.V2.Persistence;
+using HL2RP.V2.Domain;
 using HL2RP.V2.Features;
+using HL2RP.V2.Runtime;
 using HL2RP.V2.Schema;
 using HL2RP.V2.Showcase.Combat;
 
@@ -45,6 +47,9 @@ public sealed class CombatIntentServiceTests
 			shooter.Actor, shooter.InventoryId, shooterPistol.Id));
 
 		Assert.IsTrue(first.Succeeded, first.Error?.Message);
+		Assert.IsNotNull(first.Value.Raise);
+		Assert.IsFalse(first.Value.Raise.HasDurableChanges,
+			"Raise completion is session-only; fire owns the first durable raised state.");
 		Assert.AreEqual(PistolCombatService.DefaultRaiseDelay, delay.LastDelay);
 		Assert.AreEqual(1, delay.Count);
 		Assert.AreEqual(6L, first.Value.PlayerDamage?.RemainingHealth);
@@ -79,7 +84,7 @@ public sealed class CombatIntentServiceTests
 	}
 
 	[TestMethod]
-	public async Task FailedLethalDropSurfacesFailureAndRestoresUsableAliveHealth()
+	public async Task FailedLethalDropReturnsCommittedShotReceiptAndDegradedDiagnostic()
 	{
 		await using var environment = await ShowcaseTestEnvironment.CreateAsync();
 		var shooterPistol = ShowcaseTestEnvironment.Pistol(equipped: true, raised: false);
@@ -99,12 +104,21 @@ public sealed class CombatIntentServiceTests
 			environment.Layout, new AllowWorldModels(), environment.Clock, lifecycleBoundary);
 		var service = new CombatIntentService(pistol, failingBoundary, lifecycle, health,
 			new AdvancingDelay(environment.Clock), environment.Clock);
+		var projection = new HL2RPProjectionIndex();
+		projection.Rebuild(
+			environment.Repositories.Inventories.All(),
+			environment.Repositories.Items.All(),
+			environment.Repositories.Characters.All(),
+			environment.Repositories.CharacterReferences.All(),
+			environment.Repositories.SceneEntities.All());
 
 		var fired = await service.FireAsync(new CombatFireIntent(
 			shooter.Actor, shooter.InventoryId, shooterPistol.Id));
 
-		Assert.IsFalse(fired.Succeeded);
-		StringAssert.Contains(fired.Error!.Message, "target health was restored");
+		Assert.IsTrue(fired.Succeeded, fired.Error?.Message);
+		Assert.IsNotNull(fired.Value.DegradedDeathTransition);
+		StringAssert.Contains(fired.Value.DegradedDeathTransition.Message, "target health was restored");
+		Assert.IsNull(fired.Value.Death);
 		Assert.AreEqual(1L, health.Require(target.Actor.CharacterId).Value.CurrentHealth);
 		Assert.IsNotNull(environment.Repositories.Inventories.Find(
 			DomainKeys.Inventory(target.InventoryId))!.Value.Find(targetPistol.Id));
@@ -113,6 +127,44 @@ public sealed class CombatIntentServiceTests
 		Assert.AreEqual(PistolItemState.MagazineCapacity - 1,
 			environment.ReadPistol(shooterPistol.Id).MagazineRounds,
 			"The committed shot remains visible even when the second death transaction fails.");
+
+		projection.Apply(fired.Value.Fire.Commit, environment.Repositories);
+		Assert.IsTrue(projection.TryGetItem(shooterPistol.Id, out var projectedPistol));
+		var projectedState = HL2RPPersistence.Pistol.Deserialize(
+			projectedPistol.Traits[CombatTraitNames.Pistol].Data,
+			projectedPistol.Traits[CombatTraitNames.Pistol].TypeVersion);
+		Assert.AreEqual(PistolItemState.MagazineCapacity - 1, projectedState.MagazineRounds,
+			"The exposed fire receipt must bring the incremental projection to committed ammunition state.");
+	}
+
+	[TestMethod]
+	public async Task FireFailureAfterCompletedRaiseLeavesPersistenceUnchanged()
+	{
+		await using var environment = await ShowcaseTestEnvironment.CreateAsync();
+		var pistolItem = ShowcaseTestEnvironment.Pistol(equipped: true, raised: false);
+		var shooter = await environment.SeedCharacterAsync(210, items: new[] { pistolItem });
+		var damage = new NoOpPlayerDamageBoundary();
+		var pistol = new PistolCombatService(environment.Repositories, environment.Access,
+			environment.Clock, new FailingRaycast(), damage);
+		var lifecycle = new CombatLifecycleService(environment.Repositories, environment.Schema,
+			environment.Layout, new AllowWorldModels(), environment.Clock,
+			new RecordingLifecycleBoundary(pistol));
+		var service = new CombatIntentService(pistol, damage, lifecycle,
+			new CanonicalCombatHealthDirectory(), new AdvancingDelay(environment.Clock), environment.Clock);
+		var sequenceBefore = environment.Provider.Health.Sequence;
+
+		var fired = await service.FireAsync(new CombatFireIntent(
+			shooter.Actor, shooter.InventoryId, pistolItem.Id));
+
+		Assert.IsTrue(fired.Failed);
+		Assert.AreEqual(ErrorCode.InternalError, fired.Error!.Code);
+		Assert.AreEqual(sequenceBefore, environment.Provider.Health.Sequence,
+			"Completing the raise must not create an independent durable transaction.");
+		var persisted = environment.ReadPistol(pistolItem.Id);
+		Assert.IsFalse(persisted.Raised);
+		Assert.AreEqual(PistolItemState.MagazineCapacity, persisted.MagazineRounds);
+		Assert.IsTrue(pistol.IsHostRaised(shooter.Actor, shooter.InventoryId, pistolItem.Id).Value,
+			"A completed raise is session authority even though failed fire leaves persistence untouched.");
 	}
 
 	[TestMethod]
@@ -356,6 +408,13 @@ public sealed class CombatIntentServiceTests
 		public OperationResult<AuthoritativeShot> Resolve(PistolFireIntent intent) =>
 			OperationResult<AuthoritativeShot>.Success(new AuthoritativeShot(
 				new WorldPoint(0, 0, 0), new WorldPoint(100, 0, 0), null, false));
+	}
+
+	private sealed class FailingRaycast : IAuthoritativePistolRaycast
+	{
+		public OperationResult<AuthoritativeShot> Resolve(PistolFireIntent intent) =>
+			OperationResult<AuthoritativeShot>.Failure(
+				ErrorCode.InternalError, "Authoritative raycast failed after raise completion.");
 	}
 
 	private sealed class AdvancingDelay : ICombatIntentDelay

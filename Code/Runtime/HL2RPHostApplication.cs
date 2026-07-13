@@ -12,6 +12,7 @@ using Hexagon.V2.Kernel;
 using Hexagon.V2.Kernel.Events;
 using Hexagon.V2.Kernel.Policies;
 using Hexagon.V2.Networking;
+using Hexagon.V2.Persistence;
 using Hexagon.V2.Runtime;
 using HL2RP.V2.Domain;
 using HL2RP.V2.Features;
@@ -54,17 +55,20 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 	private readonly Dictionary<ConnectionId, ItemActionPresentationEnvelope> _itemActionPresentations = new();
 	private readonly object _lifecycleSync = new();
 	private readonly HashSet<Task> _pendingLifecycle = new();
-	private readonly Dictionary<ConnectionId, ActiveRestraintAction> _activeRestraintActions = new();
-	private readonly Dictionary<ConnectionId, ActivePistolRaiseAction> _activePistolActions = new();
+	private readonly HL2RPTimedActionOwnership<ConnectionId, ActiveRestraintAction> _activeRestraintActions = new();
+	private readonly HL2RPTimedActionOwnership<ConnectionId, ActivePistolRaiseAction> _activePistolActions = new();
 	private readonly HashSet<CharacterId> _respawningCharacters = new();
-	private readonly CanonicalLiveInventoryView _liveInventory = new();
-	private readonly CanonicalChatConnectionPositionDirectory _chatPositions = new();
-	private readonly CanonicalChatAuthorityDirectory _chatAuthorities = new();
+	private readonly HL2RPIncrementalLiveInventoryView _liveInventory = new();
+	private readonly HL2RPIncrementalChatConnectionDirectory _chatPositions = new();
+	private readonly HL2RPIncrementalChatAuthorityDirectory _chatAuthorities = new();
 	private readonly ChatAdmissionService _chatAdmission = new();
 	private readonly CanonicalCombatHealthDirectory _combatHealth = new();
-	private readonly CanonicalCombatPlayerTargetDirectory _combatTargets = new();
+	private readonly HL2RPIncrementalCombatPlayerTargetDirectory _combatTargets = new();
 	private readonly HL2RPPresentationInvalidation _presentationInvalidation = new();
+	private readonly HL2RPEntitlementPresentationInvalidation _entitlementPresentationInvalidation;
+	private readonly HL2RPMaintenanceSupervisor _maintenance;
 	private readonly HL2RPPresentationSequence _itemPresentationSequence = new();
+	private readonly HL2RPProjectionIndex _projectionIndex = new();
 	private readonly HL2RPCivicSubjectSelections _civicSubjects = new();
 	private readonly HL2RPExecutableItemActionCatalog _executableActions =
 		HL2RPExecutableItemActionCatalog.CreateDefault();
@@ -90,6 +94,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 	private CivicService? _civic;
 	private RecognitionService? _recognition;
 	private CityObjectiveService? _objectives;
+	private HL2RPObjectiveCommandRouter? _objectiveRouter;
 	private RadioTuningService? _radio;
 	private CommerceService? _commerce;
 	private DocumentService? _documents;
@@ -115,6 +120,13 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 	{
 		_context = context ?? throw new ArgumentNullException( nameof(context) );
 		_repositories = context.Repositories;
+		_entitlementPresentationInvalidation = new HL2RPEntitlementPresentationInvalidation(
+			_presentationInvalidation, EntitlementRecipients );
+		_maintenance = new HL2RPMaintenanceSupervisor(
+			TickAsync,
+			failure => Log.Error(
+				failure.Exception,
+				$"HL2RP_MAINTENANCE_FAILED consecutive={failure.ConsecutiveFailures} retry_ms={failure.RetryDelay.TotalMilliseconds:0}" ) );
 		_audit = new PostCommitEventBus<AdminAuditFact>( new[]
 		{
 			new EventHandlerRegistration<AdminAuditFact>(
@@ -126,7 +138,8 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 		{
 			new EventHandlerRegistration<HL2RPAccountEntitlementChanged>(
 				"hl2rp.runtime.entitlement_refresh",
-				new HL2RPEntitlementChangedHandler( () => _presentationInvalidation.Invalidate() ) )
+				new HL2RPEntitlementChangedHandler( change =>
+					_entitlementPresentationInvalidation.Observe( change ) ) )
 		}, failure => Log.Error( failure.Exception,
 			$"HL2RP entitlement handler '{failure.HandlerId}' failed after commit." ) );
 		_entitlements = new HL2RPAccountEntitlementService(
@@ -202,6 +215,13 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 	public async ValueTask<OperationResult> InitializeAsync( CancellationToken cancellationToken = default )
 	{
 		if ( _disposed ) return OperationResult.Failure( ErrorCode.Conflict, "HL2RP host is disposed." );
+		var sceneIdentitySystem = _context.Scene.GetSystem<PersistentSceneIdentityIndexSystem>();
+		if ( sceneIdentitySystem is null )
+			return OperationResult.Failure(
+				ErrorCode.ConfigurationInvalid,
+				"Persistent scene identity index system is unavailable for the host scene." );
+		var sceneIdentities = sceneIdentitySystem.EnsureRuntimeReady();
+		if ( sceneIdentities.Failed ) return Failure( sceneIdentities.Error! );
 		var executableActions = _executableActions.Validate( _context.Schema );
 		if ( executableActions.Failed ) return executableActions;
 		foreach ( var path in _characterModels.ModelPaths )
@@ -297,6 +317,10 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 		_recognition = new RecognitionService(
 			_repositories, _clock, new HL2RPEncounterAuthorizer( this ), _featurePolicy, audit: _audit );
 		_objectives = new CityObjectiveService( _repositories, _clock, _featurePolicy, audit: _audit );
+		_objectiveRouter = new HL2RPObjectiveCommandRouter(
+			_objectives,
+			() => _projectionIndex.FirstSceneEntity( "city" )?.Id,
+			Guid.NewGuid );
 		_radio = new RadioTuningService( _repositories, _access, _clock, _featurePolicy, audit: _audit );
 		_commerce = new CommerceService(
 			_repositories, _context.Schema, _access, sessionResolver, _ids, _layout,
@@ -313,7 +337,8 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 			_context.Scene, _features, ResolveActorState, _repositories, ResolveCombatTargetToken );
 		_scanner = new ScannerPilotService(
 			_repositories, _interactions, _sessions, _clock,
-			boundaries, boundaries, boundaries, boundaries, boundaries );
+			boundaries, boundaries, boundaries, boundaries, boundaries,
+			new HL2RPScannerCommitSink( this ) );
 		var reconciledScanners = await _scanner.ReconcilePersistedPilotsAsync( cancellationToken );
 		if ( reconciledScanners.Failed ) return reconciledScanners;
 		_combatLifecycle = new CombatLifecycleService(
@@ -327,9 +352,13 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 		_combatIntent = new CombatIntentService(
 			_pistol, playerDamage, _combatLifecycle, _combatHealth, new SystemCombatIntentDelay(), _clock );
 		_healthVials = new HealthVialConsumeService( _repositories, _access, _layout, _combatHealth );
-		var reconciledPistols = await ReconcileRaisedPistolsAsync( cancellationToken );
-		if ( reconciledPistols.Failed ) return reconciledPistols;
-		PublishLiveInventory();
+		var reconciledPistols = await _pistol.ReconcileRaisedPistolsAsync( cancellationToken );
+		if ( reconciledPistols.Failed ) return Failure( reconciledPistols.Error! );
+		if ( reconciledPistols.Value.Commit is not null )
+			_projectionIndex.Apply( reconciledPistols.Value.Commit, _repositories );
+		RebuildProjectionIndex();
+		RebuildLiveInventory();
+		RefreshAllLiveConnections();
 		RestoreWorldItems();
 		var invariants = new DomainInvariantValidator(
 			_repositories,
@@ -346,6 +375,8 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 		if ( _disposed ) return;
 		_clients[new ConnectionId( actor.Connection.Id )] = new ClientBinding(
 			actor.Connection, actor.AccountId, actor.Player, null );
+		_projectionIndex.ObserveConnection( new ConnectionId( actor.Connection.Id ), actor.AccountId );
+		_projectionIndex.InvalidateRuntimeDependency( "roster-membership", "global" );
 		SendCharacterList( actor.Connection, actor.AccountId );
 		PublishAll();
 	}
@@ -354,20 +385,20 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 	{
 		var connectionId = new ConnectionId( actor.Connection.Id );
 		if ( !_clients.Remove( connectionId, out var binding ) ) return;
+		_projectionIndex.ForgetConnection( connectionId );
 		_presentationInvalidation.ForgetConnection( connectionId );
 		_itemActionPresentations.Remove( connectionId );
 		_civicSubjects.ClearConnection( connectionId );
 		_entitlementQueries.Remove( connectionId );
+		CancelTimedActionsForLifecycle( connectionId, binding.CharacterId );
 		if ( binding.CharacterId is CharacterId characterId )
 		{
-			TrackLifecycle( ClearRaisedPistolsAsync(
+			TrackLifecycle( ClearRaisedPistolsForLifecycleAsync(
 				new InventoryActor( connectionId, binding.AccountId, characterId ), CancellationToken.None ) );
 			_access.RevokeCharacter( connectionId, characterId );
 			_interactions?.CharacterChanged( connectionId, characterId );
 			_combatIntent?.ClearCharacter( characterId );
 		}
-		if ( _activeRestraintActions.Remove( connectionId, out var action ) ) action.Cancellation.Cancel();
-		if ( _activePistolActions.Remove( connectionId, out var pistolAction ) ) pistolAction.Cancellation.Cancel();
 		_access.RevokeConnection( connectionId );
 		_interactions?.Disconnected( connectionId );
 		_chat?.RevokeConnection( connectionId );
@@ -376,7 +407,8 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 		_ = binding.Player.HostStripPlayableBody();
 		if ( binding.CharacterId is CharacterId disconnectedCharacter )
 			_combatHealth.Remove( disconnectedCharacter );
-		PublishLiveConnections();
+		_projectionIndex.InvalidateRuntimeDependency( "roster-membership", "global" );
+		RemoveLiveConnection( connectionId );
 		PublishAll();
 	}
 
@@ -394,39 +426,60 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 		if ( !_clients.TryGetValue( new ConnectionId( actor.Connection.Id ), out var binding ) ||
 			binding.AccountId != actor.AccountId )
 			return OperationResult.Failure( ErrorCode.Unauthorized, "RPC actor is not bound to this host scope." );
+		var connectionId = new ConnectionId( actor.Connection.Id );
+		var projectionDelta = new CommandProjectionDelta();
+		var characterBefore = binding.CharacterId;
+		var mainBefore = characterBefore is CharacterId activeBefore ? MainInventory( activeBefore )?.Id : null;
+		var restraintTieBefore = command is RunSchemaCommandCommand { CommandId: HL2RPIds.Commands.RestraintSet } &&
+			mainBefore is InventoryId restraintInventory
+			? _repositories.Inventories.Find( DomainKeys.Inventory( restraintInventory ) )?.Value.Placements
+				.Select( placement => _repositories.Items.Find( DomainKeys.Item( placement.ItemId ) )?.Value )
+				.FirstOrDefault( item => item?.Definition.Value == HL2RPIds.Items.ZipTie )?.Id
+			: null;
 
 		OperationResult result = command switch
 		{
 			RequestCharacterListCommand => ListCharacters( actor ),
-			CreateCharacterCommand create => await CreateAsync( actor, create, cancellationToken ),
-			LoadCharacterCommand load => await LoadAsync( actor, load.CharacterId, cancellationToken ),
-			DeleteCharacterCommand delete => await DeleteAsync( actor, delete.CharacterId, cancellationToken ),
-			UnloadCharacterCommand => await UnloadAsync( actor, cancellationToken ),
-			MoveInventoryItemCommand move => await MoveAsync( actor, move, cancellationToken ),
-			RunItemActionCommand action => await RunItemActionAsync( actor, action, cancellationToken ),
-			DropItemCommand drop => await DropAsync( actor, drop, cancellationToken ),
-			PickUpItemCommand pickup => await PickupAsync( actor, pickup, cancellationToken ),
+			CreateCharacterCommand create => await CreateAsync( actor, create, projectionDelta, cancellationToken ),
+			LoadCharacterCommand load => await LoadAsync( actor, load.CharacterId, projectionDelta, cancellationToken ),
+			DeleteCharacterCommand delete => await DeleteAsync( actor, delete.CharacterId, projectionDelta, cancellationToken ),
+			UnloadCharacterCommand => await UnloadAsync( actor, projectionDelta, cancellationToken ),
+			MoveInventoryItemCommand move => await MoveAsync( actor, move, projectionDelta, cancellationToken ),
+			RunItemActionCommand action => await RunItemActionAsync( actor, action, projectionDelta, cancellationToken ),
+			DropItemCommand drop => await DropAsync( actor, drop, projectionDelta, cancellationToken ),
+			PickUpItemCommand pickup => await PickupAsync( actor, pickup, projectionDelta, cancellationToken ),
 			SendChatCommand chat => SendChat( actor, chat ),
 			CancelActionCommand cancel => CancelAction( actor, cancel.InstanceId ),
-			BeginInteractionCommand begin => await BeginInteractionAsync( actor, begin.Target, cancellationToken ),
+			BeginInteractionCommand begin => await BeginInteractionAsync( actor, begin.Target, projectionDelta, cancellationToken ),
 			ContinueInteractionCommand continuation => ContinueInteraction( actor, continuation ),
 			CloseInteractionCommand close => CloseInteraction( actor, close.SessionId ),
-			RunSchemaCommandCommand schema => await RunSchemaCommandAsync( actor, schema, cancellationToken ),
+			RunSchemaCommandCommand schema => await RunSchemaCommandAsync( actor, schema, projectionDelta, cancellationToken ),
 			_ => OperationResult.Failure( ErrorCode.UnknownDefinition, "Client command is not registered by HL2RP." )
 		};
 
-		if ( result.Succeeded && command is not RequestCharacterListCommand and not SendChatCommand )
-		{
-			PublishLiveInventory();
-			PublishAll();
-		}
-		return result;
+		var characterAfter = _clients.TryGetValue( connectionId, out var afterBinding )
+			? afterBinding.CharacterId : null;
+		var durableMutation = result.Succeeded && projectionDelta.Receipts.Any(
+			receipt => receipt.Documents.Count > 0 );
+		var outcome = HL2RPPresentationPlanner.Outcome(
+			connectionId, command, result,
+			durableMutation,
+			characterBefore != characterAfter );
+		var changes = EnrichChanges(
+			connectionId, command, outcome.Changes, projectionDelta, mainBefore, restraintTieBefore );
+		PublishChanges( changes, projectionDelta.Receipts );
+		return outcome.Result;
 	}
 
-	public async ValueTask TickAsync()
+	public void RequestMaintenanceTick() => _maintenance.RequestTick();
+
+	internal HL2RPMaintenanceStatus MaintenanceStatus => _maintenance.Status;
+
+	private async ValueTask TickAsync( CancellationToken cancellationToken )
 	{
 		if ( _disposed ) return;
-		PublishLiveConnections();
+		_entitlementPresentationInvalidation.MaterializePending();
+		RefreshAllLiveConnections();
 		_interactions?.RevalidateActiveSessions();
 		_sessions?.RevokeExpired();
 		var now = _clock.UtcNow;
@@ -435,9 +488,10 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 			_nextPresentationTargetPollAtUtc = now + PresentationTargetPollInterval;
 			ObserveRestraintTargets();
 		}
-		if ( _presentationInvalidation.IsRefreshDue( now ) ) PublishAll();
+		if ( _presentationInvalidation.IsRefreshDue( now ) ) PublishDuePresentation( now );
 		if ( IsVerification && !_probeStarted )
 		{
+			cancellationToken.ThrowIfCancellationRequested();
 			if ( _clients.Count == 0 && _verificationActor is null ) return;
 			_probeStarted = true;
 			await RunVerificationProbeAsync();
@@ -448,9 +502,9 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 	{
 		if ( _disposed ) return;
 		_disposed = true;
+		await _maintenance.DisposeAsync();
 		if ( _sessions is not null ) _sessions.SessionRevoked -= OnInteractionSessionRevoked;
-		foreach ( var action in _activeRestraintActions.Values ) action.Cancellation.Cancel();
-		foreach ( var action in _activePistolActions.Values ) action.Cancellation.Cancel();
+		CancelAllTimedActionsForLifecycle();
 		if ( _scanner is not null )
 			foreach ( var connectionId in _clients.Keys.ToArray() )
 				TrackLifecycle( _scanner.DisconnectAsync( connectionId ).AsTask() );
@@ -459,14 +513,18 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 		lock ( _lifecycleSync ) pending = _pendingLifecycle.ToArray();
 		foreach ( var task in pending ) await task;
 		if ( _scanner is not null ) await _scanner.DrainCleanupAsync();
+		if ( _pistol is not null )
+		{
+			var reconciledPistols = await _pistol.ReconcileRaisedPistolsAsync();
+			if ( reconciledPistols.Failed )
+				Log.Error( $"HL2RP pistol shutdown reconciliation failed: {reconciledPistols.Error!.Message}" );
+			else if ( reconciledPistols.Value.Commit is not null )
+				_projectionIndex.Apply( reconciledPistols.Value.Commit, _repositories );
+		}
 		foreach ( var binding in _clients.Values ) _ = binding.Player.HostStripPlayableBody();
 		foreach ( var worldObject in _worldObjects.Values )
 			if ( worldObject.IsValid() ) worldObject.Destroy();
 		_worldObjects.Clear();
-		foreach ( var action in _activeRestraintActions.Values ) action.Cancellation.Dispose();
-		_activeRestraintActions.Clear();
-		foreach ( var action in _activePistolActions.Values ) action.Cancellation.Dispose();
-		_activePistolActions.Clear();
 		if ( _verificationActor?.Body is GameObject verificationBody && verificationBody.IsValid() )
 			verificationBody.Destroy();
 		_verificationActor = null;
@@ -481,7 +539,10 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 
 	private void OnInteractionSessionRevoked( InteractionSession session )
 	{
-		if ( !_disposed ) _presentationInvalidation.Invalidate();
+		if ( _disposed ) return;
+		_projectionIndex.RemoveSceneSession( session.Id );
+		_projectionIndex.InvalidateVisibility( session.ConnectionId );
+		_presentationInvalidation.Invalidate( session.ConnectionId );
 	}
 
 	private void PresentItemAction( ItemActionCommittedEvent committed )
@@ -491,7 +552,6 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 			binding.AccountId != committed.Actor.AccountId || binding.CharacterId != committed.Actor.CharacterId ) return;
 		_itemActionPresentations[committed.Actor.ConnectionId] = new ItemActionPresentationEnvelope(
 			committed.Actor.CharacterId, _itemPresentationSequence.Next(), committed.Presentation );
-		_presentationInvalidation.Invalidate();
 	}
 
 	private void ObserveRestraintTargets()
@@ -514,12 +574,19 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 	private async ValueTask<OperationResult> CreateAsync(
 		RpcActor actor,
 		CreateCharacterCommand command,
+		CommandProjectionDelta projectionDelta,
 		CancellationToken cancellationToken )
 	{
 		var request = HL2RPRuntimeProjection.ToCreationRequest( _context.Schema, command.Input );
 		if ( request.Failed ) return Failure( request.Error! );
 		var created = await _characters.CreateAsync( actor.AccountId, request.Value, cancellationToken );
 		if ( created.Failed ) return Failure( created.Error! );
+		projectionDelta.Documents.Add( new DocumentAddress(
+			DomainCollections.Characters, DomainKeys.Character( created.Value.Character.Id ) ) );
+		projectionDelta.Inventories.UnionWith( created.Value.Inventories.Select( inventory => inventory.Id ) );
+		projectionDelta.Items.UnionWith( created.Value.Items.Select( item => item.Id ) );
+		projectionDelta.Documents.UnionWith( created.Value.Commit.Documents.Select( document => document.Address ) );
+		projectionDelta.Observe( created.Value.Commit );
 		SendCharacterList( actor.Connection, actor.AccountId );
 		return OperationResult.Success();
 	}
@@ -527,6 +594,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 	private async ValueTask<OperationResult> LoadAsync(
 		RpcActor actor,
 		CharacterId characterId,
+		CommandProjectionDelta projectionDelta,
 		CancellationToken cancellationToken )
 	{
 		var document = _repositories.Characters.Find( DomainKeys.Character( characterId ) );
@@ -540,15 +608,14 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 		var main = MainInventory( characterId );
 		if ( main is null ) return OperationResult.Failure( ErrorCode.NotFound, "Character main inventory was not found." );
 		var connectionId = new ConnectionId( actor.Connection.Id );
+		var admission = HL2RPCharacterLoadAdmission.Validate(
+			connectionId,
+			characterId,
+			_clients.Select( pair => new HL2RPActiveCharacterBinding(
+				pair.Key, pair.Value.CharacterId ) ) );
+		if ( admission.Failed ) return admission;
 		var previous = FindActiveCharacter( connectionId );
-		_itemActionPresentations.Remove( connectionId );
-		_civicSubjects.ClearConnection( connectionId );
-		if ( previous is not null )
-			await ClearRaisedPistolsAsync( new InventoryActor( connectionId, actor.AccountId, previous.Id ), cancellationToken );
-		var touched = await _aggregates.TouchLastPlayedAsync(
-			actor.AccountId, characterId, _clock.UtcNow, cancellationToken );
-		if ( touched.Failed ) return Failure( touched.Error! );
-		var body = actor.Player.HostBuildPlayableBody( candidate =>
+		var body = actor.Player.HostPreparePlayableBody( candidate =>
 		{
 			candidate.WorldTransform = actor.Player.GameObject.WorldTransform;
 			ConfigureForcefieldCollisionTags( candidate, document.Value );
@@ -557,6 +624,86 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 			renderer.Model = Model.Load( modelPath.Value );
 		} );
 		if ( body.Failed ) return Failure( body.Error! );
+		using var preparedBody = body.Value;
+
+		var preparedTouch = _aggregates.PrepareTouchLastPlayed(
+			actor.AccountId, characterId, _clock.UtcNow );
+		if ( preparedTouch.Failed ) return Failure( preparedTouch.Error! );
+
+		PreparedPistolLifecycleClear? preparedPistols = null;
+		if ( previous is not null )
+		{
+			var prepared = _pistol!.PrepareCharacterClear( previous.Id );
+			if ( prepared.Failed ) return Failure( prepared.Error! );
+			preparedPistols = prepared.Value;
+		}
+
+		var unitOfWork = _repositories.Provider.BeginUnitOfWork();
+		var stagedTouch = _aggregates.StageTouchLastPlayed( unitOfWork, preparedTouch.Value );
+		if ( stagedTouch.Failed )
+		{
+			await HL2RPUnitOfWork.DisposeAsync( unitOfWork );
+			return Failure( stagedTouch.Error! );
+		}
+		if ( preparedPistols is not null )
+		{
+			var stagedPistols = _pistol!.StageCharacterClear( unitOfWork, preparedPistols );
+			if ( stagedPistols.Failed )
+			{
+				await HL2RPUnitOfWork.DisposeAsync( unitOfWork );
+				return Failure( stagedPistols.Error! );
+			}
+		}
+		var committed = await HL2RPUnitOfWork.CommitAndDisposeAsync( unitOfWork, cancellationToken );
+		if ( !committed.Succeeded ) return CombatPersistence.Failure( committed.Error! );
+
+		projectionDelta.Observe( committed.Value! );
+		projectionDelta.Connections.Add( connectionId );
+		projectionDelta.Characters.Add( characterId );
+		var completedTouch = _aggregates.CompleteTouchLastPlayed( preparedTouch.Value, committed.Value! );
+		if ( completedTouch.Failed )
+			Log.Error(
+				$"HL2RP_LOAD_DEGRADED character={characterId.Value:D} stage=last_played_completion " +
+				$"message={completedTouch.Error!.Message}" );
+		if ( preparedPistols is not null )
+		{
+			var completedPistols = _pistol!.CompleteCharacterClear( preparedPistols, committed.Value );
+			if ( completedPistols.Failed )
+			{
+				_combatIntent?.ClearCharacter( previous!.Id );
+				Log.Error(
+					$"HL2RP_LOAD_DEGRADED character={previous!.Id.Value:D} stage=pistol_completion " +
+					$"message={completedPistols.Error!.Message}" );
+			}
+			else
+			{
+				projectionDelta.Items.UnionWith( completedPistols.Value.ChangedPistols );
+				projectionDelta.Characters.Add( previous!.Id );
+				var previousMain = MainInventory( previous.Id );
+				if ( previousMain is not null ) projectionDelta.Inventories.Add( previousMain.Id );
+			}
+		}
+
+		if ( !_clients.TryGetValue( connectionId, out var currentBinding ) ||
+			currentBinding.AccountId != actor.AccountId ||
+			!ReferenceEquals( currentBinding.Player, actor.Player ) ||
+			currentBinding.CharacterId != previous?.Id )
+		{
+			Log.Info(
+				$"HL2RP_LOAD_BINDING_CHANGED_AFTER_COMMIT connection={connectionId.Value:D} " +
+				$"character={characterId.Value:D} sequence={committed.Value!.Sequence}" );
+			return OperationResult.Success();
+		}
+
+		if ( !preparedBody.TryActivate( out _ ) )
+		{
+			Log.Info(
+				$"HL2RP_LOAD_LIFECYCLE_ENDED_AFTER_COMMIT connection={connectionId.Value:D} " +
+				$"character={characterId.Value:D} sequence={committed.Value!.Sequence}" );
+			return OperationResult.Success();
+		}
+		_itemActionPresentations.Remove( connectionId );
+		_civicSubjects.ClearConnection( connectionId );
 		if ( previous is not null )
 		{
 			_access.RevokeCharacter( connectionId, previous.Id );
@@ -571,22 +718,31 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 			Capabilities = CharacterCapabilities,
 			Kind = InventoryGrantKind.Character
 		} );
-		_clients[connectionId] = _clients[connectionId] with { CharacterId = characterId };
+		SetBindingCharacter( connectionId, characterId );
 		if ( _combatHealth.Require( characterId ).Failed ) _combatHealth.Publish( characterId, 100, 100 );
-		PublishCombatTargets();
 		return OperationResult.Success();
 	}
 
 	private async ValueTask<OperationResult> DeleteAsync(
 		RpcActor actor,
 		CharacterId characterId,
+		CommandProjectionDelta projectionDelta,
 		CancellationToken cancellationToken )
 	{
 		var connectionId = new ConnectionId( actor.Connection.Id );
-		if ( _clients[connectionId].CharacterId == characterId )
-			await ClearRaisedPistolsAsync( new InventoryActor( connectionId, actor.AccountId, characterId ), cancellationToken );
+		var deletedInventories = _projectionIndex.InventoriesOwnedBy( characterId );
+		var deletedItems = deletedInventories.SelectMany( _projectionIndex.ItemsIn ).Distinct().ToArray();
+		var deletedReferences = _projectionIndex.CharacterReferenceKeys( characterId );
 		var deleted = await _characters.DeleteAsync( actor.AccountId, characterId, cancellationToken );
-		if ( deleted.Failed ) return deleted;
+		if ( deleted.Failed ) return Failure( deleted.Error! );
+		projectionDelta.Documents.Add( new DocumentAddress(
+			DomainCollections.Characters, DomainKeys.Character( characterId ) ) );
+		projectionDelta.Inventories.UnionWith( deletedInventories );
+		projectionDelta.Items.UnionWith( deletedItems );
+		foreach ( var reference in deletedReferences )
+			projectionDelta.Documents.Add( new DocumentAddress( DomainCollections.CharacterReferences, reference ) );
+		projectionDelta.Documents.UnionWith( deleted.Value.Commit.Documents.Select( document => document.Address ) );
+		projectionDelta.Observe( deleted.Value.Commit );
 		_civicSubjects.ClearSubject( characterId );
 		_civicSubjects.ClearConnection( connectionId );
 		if ( _clients[connectionId].CharacterId == characterId ) UnloadBinding( connectionId, characterId );
@@ -594,75 +750,74 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 		return OperationResult.Success();
 	}
 
-	private async ValueTask<OperationResult> UnloadAsync( RpcActor actor, CancellationToken cancellationToken )
+	private async ValueTask<OperationResult> UnloadAsync(
+		RpcActor actor,
+		CommandProjectionDelta projectionDelta,
+		CancellationToken cancellationToken )
 	{
 		var connectionId = new ConnectionId( actor.Connection.Id );
 		if ( _clients[connectionId].CharacterId is CharacterId characterId )
 		{
-			await ClearRaisedPistolsAsync( new InventoryActor( connectionId, actor.AccountId, characterId ), cancellationToken );
+			CancelTimedActionsForLifecycle( connectionId, characterId );
+			var cleared = await ClearRaisedPistolsAsync(
+				new InventoryActor( connectionId, actor.AccountId, characterId ),
+				projectionDelta,
+				cancellationToken );
+			if ( cleared.Failed ) return cleared;
 			UnloadBinding( connectionId, characterId );
 		}
 		return OperationResult.Success();
 	}
 
-	private async Task ClearRaisedPistolsAsync( InventoryActor actor, CancellationToken cancellationToken )
+	private async ValueTask<OperationResult> ClearRaisedPistolsAsync(
+		InventoryActor actor,
+		CommandProjectionDelta projectionDelta,
+		CancellationToken cancellationToken )
 	{
-		var main = MainInventory( actor.CharacterId );
-		if ( main is null || _pistol is null ) return;
-		foreach ( var placement in main.Placements )
+		if ( _combatIntent is null ) return OperationResult.Success();
+		var cleared = await _combatIntent.ClearCharacterAsync( actor.CharacterId, cancellationToken );
+		if ( cleared.Failed ) return Failure( cleared.Error! );
+		if ( cleared.Value.Commit is not null )
 		{
-			var item = _repositories.Items.Find( DomainKeys.Item( placement.ItemId ) )?.Value;
-			if ( item?.Definition.Value != HL2RPIds.Items.Pistol || !item.Traits.TryGetValue( "pistol", out var payload ) ) continue;
-			PistolItemState state;
-			try { state = HL2RPPersistence.Pistol.Deserialize( payload.Data, payload.TypeVersion ); }
-			catch ( Exception ) { continue; }
-			if ( !state.Raised ) continue;
-			var lowered = await _pistol.LowerAsync( actor, main.Id, item.Id, cancellationToken );
-			if ( lowered.Failed ) throw new InvalidOperationException( lowered.Error!.Message );
+			projectionDelta.Observe( cleared.Value.Commit );
+			projectionDelta.Connections.Add( actor.ConnectionId );
+			projectionDelta.Characters.Add( actor.CharacterId );
+			projectionDelta.Items.UnionWith( cleared.Value.ChangedPistols );
+			var main = MainInventory( actor.CharacterId );
+			if ( main is not null ) projectionDelta.Inventories.Add( main.Id );
 		}
+		return OperationResult.Success();
 	}
 
-	private async ValueTask<OperationResult> ReconcileRaisedPistolsAsync( CancellationToken cancellationToken )
+	private async Task ClearRaisedPistolsForLifecycleAsync(
+		InventoryActor actor,
+		CancellationToken cancellationToken )
 	{
-		var raised = new List<(Hexagon.V2.Persistence.DocumentSnapshot<ItemRecord> Document, PistolItemState State)>();
-		foreach ( var document in _repositories.Items.All().Where( value => value.Value.Definition.Value == HL2RPIds.Items.Pistol ) )
+		var projectionDelta = new CommandProjectionDelta();
+		var cleared = await ClearRaisedPistolsAsync( actor, projectionDelta, cancellationToken );
+		if ( cleared.Failed )
 		{
-			if ( !document.Value.Traits.TryGetValue( "pistol", out var payload ) ) continue;
-			try
-			{
-				var state = HL2RPPersistence.Pistol.Deserialize( payload.Data, payload.TypeVersion );
-				if ( state.Raised ) raised.Add( (document, state) );
-			}
-			catch ( Exception )
-			{
-				return OperationResult.Failure( ErrorCode.PersistedTypeInvalid, "Persisted pistol state is malformed." );
-			}
+			Log.Error(
+				$"HL2RP pistol lifecycle cleanup failed for character {actor.CharacterId.Value:D}: " +
+				cleared.Error!.Message );
+			return;
 		}
-		if ( raised.Count == 0 ) return OperationResult.Success();
-		var unit = _repositories.Provider.BeginUnitOfWork();
-		foreach ( var entry in raised )
-		{
-			var editor = unit.Edit( _repositories.Items, entry.Document );
-			if ( editor is null )
+		if ( projectionDelta.Receipts.Count == 0 ) return;
+		PublishChanges(
+			new HL2RPPresentationChangeSet
 			{
-				await HL2RPUnitOfWork.DisposeAsync( unit );
-				return OperationResult.Failure( ErrorCode.Conflict, "Pistol changed during startup reconciliation." );
-			}
-			var traits = new Dictionary<string, TypedPayload>( editor.Value.Traits, StringComparer.Ordinal )
-			{
-				["pistol"] = HL2RPPersistence.Payload( HL2RPPersistence.Pistol, entry.State with { Raised = false } )
-			};
-			editor.Replace( editor.Value with { Traits = traits } );
-			unit.Save( editor );
-		}
-		var committed = await HL2RPUnitOfWork.CommitAndDisposeAsync( unit, cancellationToken );
-		return committed.Succeeded ? OperationResult.Success() : OperationResult.Failure( ErrorCode.InternalError, committed.Error!.Message );
+				Connections = projectionDelta.Connections.ToArray(),
+				Characters = projectionDelta.Characters.ToArray(),
+				Inventories = projectionDelta.Inventories.ToArray(),
+				Items = projectionDelta.Items.ToArray(),
+				RebuildLiveInventory = projectionDelta.Inventories.Count > 0 || projectionDelta.Items.Count > 0
+			},
+			projectionDelta.Receipts );
 	}
 
 	private void UnloadBinding( ConnectionId connectionId, CharacterId characterId )
 	{
-		if ( _activeRestraintActions.Remove( connectionId, out var action ) ) action.Cancellation.Cancel();
-		if ( _activePistolActions.Remove( connectionId, out var pistolAction ) ) pistolAction.Cancellation.Cancel();
+		CancelTimedActionsForLifecycle( connectionId, characterId );
 		_access.RevokeCharacter( connectionId, characterId );
 		_interactions?.CharacterChanged( connectionId, characterId );
 		_combatIntent?.ClearCharacter( characterId );
@@ -670,27 +825,82 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 		_civicSubjects.ClearConnection( connectionId );
 		var binding = _clients[connectionId];
 		_ = binding.Player.HostStripPlayableBody();
-		_clients[connectionId] = binding with { CharacterId = null };
+		SetBindingCharacter( connectionId, null );
 		_combatHealth.Remove( characterId );
-		PublishCombatTargets();
+		RefreshLiveConnection( connectionId );
+	}
+
+	private void CancelTimedActionsForLifecycle( ConnectionId connectionId, CharacterId? characterId )
+	{
+		foreach ( var action in _activeRestraintActions.CancelForLifecycle(
+			connectionId,
+			candidate => characterId is null || candidate.Actor.CharacterId == characterId ) )
+		{
+			CancelToken( action.Cancellation );
+			if ( _restraints is not null )
+			{
+				var cancelled = _restraints.Cancel( action.Ticket.TicketId, action.Actor );
+				if ( cancelled.Failed && cancelled.Error!.Code != ErrorCode.Unauthorized )
+					Log.Warning( $"HL2RP restraint lifecycle cancellation degraded: {cancelled.Error.Message}" );
+			}
+		}
+		foreach ( var action in _activePistolActions.CancelForLifecycle(
+			connectionId,
+			candidate => characterId is null || candidate.Actor.CharacterId == characterId ) )
+			CancelToken( action.Cancellation );
+	}
+
+	private void CancelAllTimedActionsForLifecycle()
+	{
+		foreach ( var action in _activeRestraintActions.CancelAllForLifecycle() )
+		{
+			CancelToken( action.Cancellation );
+			if ( _restraints is not null )
+			{
+				var cancelled = _restraints.Cancel( action.Ticket.TicketId, action.Actor );
+				if ( cancelled.Failed && cancelled.Error!.Code != ErrorCode.Unauthorized )
+					Log.Warning( $"HL2RP restraint shutdown cancellation degraded: {cancelled.Error.Message}" );
+			}
+		}
+		foreach ( var action in _activePistolActions.CancelAllForLifecycle() )
+			CancelToken( action.Cancellation );
+	}
+
+	private static void CancelToken( CancellationTokenSource cancellation )
+	{
+		try
+		{
+			cancellation.Cancel();
+		}
+		catch ( ObjectDisposedException )
+		{
+			// The action owner may have completed between the atomic state change
+			// and delivery of the best-effort pre-commit cancellation signal.
+		}
 	}
 
 	private async ValueTask<OperationResult> MoveAsync(
 		RpcActor rpc,
 		MoveInventoryItemCommand command,
+		CommandProjectionDelta projectionDelta,
 		CancellationToken cancellationToken )
 	{
 		var actor = RequireInventoryActor( rpc );
 		if ( actor.Failed ) return Failure( actor.Error! );
-		var result = await _inventory.MoveAsync(
+		var result = await _inventory.MoveCommittedAsync(
 			actor.Value, command.SourceId, command.TargetId, command.ItemId, command.X, command.Y, cancellationToken );
-		if ( result.Succeeded ) _bags?.ItemMoved( command.ItemId );
-		return result;
+		if ( result.Succeeded )
+		{
+			projectionDelta.Observe( result.Value );
+			_bags?.ItemMoved( command.ItemId );
+		}
+		return Untyped( result );
 	}
 
 	private async ValueTask<OperationResult> RunItemActionAsync(
 		RpcActor rpc,
 		RunItemActionCommand command,
+		CommandProjectionDelta projectionDelta,
 		CancellationToken cancellationToken )
 	{
 		var actor = RequireInventoryActor( rpc );
@@ -704,62 +914,125 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 		if ( executable.Route == ExecutableItemActionRoute.TokenSplit )
 		{
 			var amount = new HL2RPCommandArguments( command.Arguments ).Integer( "amount" );
-			return amount.Succeeded && amount.Value is > 0 and <= int.MaxValue
-				? Untyped( await _tokens!.SplitAsync( actor.Value, command.InventoryId, command.ItemId, (int)amount.Value, cancellationToken ) )
-				: OperationResult.Failure( ErrorCode.InvalidArgument, "Token split amount is invalid." );
+			if ( amount.Failed || amount.Value is <= 0 or > int.MaxValue )
+				return OperationResult.Failure( ErrorCode.InvalidArgument, "Token split amount is invalid." );
+			var split = await _tokens!.SplitAsync(
+				actor.Value, command.InventoryId, command.ItemId, (int)amount.Value, cancellationToken );
+			if ( split.Succeeded )
+			{
+				projectionDelta.Observe( split.Value );
+				projectionDelta.Inventories.Add( command.InventoryId );
+				projectionDelta.Items.Add( split.Value.PrimaryItemId );
+				if ( split.Value.SecondaryItemId is ItemId secondary ) projectionDelta.Items.Add( secondary );
+			}
+			return Untyped( split );
 		}
 		if ( executable.Route == ExecutableItemActionRoute.TokenCombine )
 		{
 			var other = new HL2RPCommandArguments( command.Arguments ).Guid( "other_item_id" );
-			return other.Succeeded
-				? Untyped( await _tokens!.CombineAsync( actor.Value, command.InventoryId, command.ItemId, new ItemId( other.Value ), cancellationToken ) )
-				: Failure( other.Error! );
+			if ( other.Failed ) return Failure( other.Error! );
+			var combined = await _tokens!.CombineAsync(
+				actor.Value, command.InventoryId, command.ItemId, new ItemId( other.Value ), cancellationToken );
+			if ( combined.Succeeded )
+			{
+				projectionDelta.Observe( combined.Value );
+				projectionDelta.Inventories.Add( command.InventoryId );
+				projectionDelta.Items.Add( combined.Value.PrimaryItemId );
+				if ( combined.Value.SecondaryItemId is ItemId secondary ) projectionDelta.Items.Add( secondary );
+			}
+			return Untyped( combined );
 		}
 		if ( executable.Route == ExecutableItemActionRoute.CombineLockInstall )
 		{
 			var session = CurrentSession( actor.Value, InteractionSessionKind.Door );
-			return session is null
-				? OperationResult.Failure( ErrorCode.Unauthorized, "A current door session is required." )
-				: Untyped( await _combineLocks!.InstallAsync(
-					actor.Value, session.Id, command.InventoryId, command.ItemId, cancellationToken ) );
+			if ( session is null )
+				return OperationResult.Failure( ErrorCode.Unauthorized, "A current door session is required." );
+			var installed = await _combineLocks!.InstallAsync(
+				actor.Value, session.Id, command.InventoryId, command.ItemId, cancellationToken );
+			if ( installed.Succeeded )
+			{
+				projectionDelta.Observe( installed.Value );
+				projectionDelta.SceneEntities.Add( installed.Value.DoorEntityId );
+			}
+			return Untyped( installed );
 		}
 		if ( executable.Route == ExecutableItemActionRoute.HealthVialConsume )
-			return Untyped( await _healthVials!.ConsumeAsync(
-				actor.Value, command.InventoryId, command.ItemId, cancellationToken ) );
+		{
+			var consumed = await _healthVials!.ConsumeAsync(
+				actor.Value, command.InventoryId, command.ItemId, cancellationToken );
+			if ( consumed.Succeeded )
+			{
+				projectionDelta.Observe( consumed.Value );
+				projectionDelta.Inventories.Add( command.InventoryId );
+				projectionDelta.Items.Add( consumed.Value.VialItemId );
+			}
+			return Untyped( consumed );
+		}
 		if ( executable.Route == ExecutableItemActionRoute.RadioTuning )
 		{
 			var frequency = new HL2RPCommandArguments( command.Arguments ).String( "frequency" );
-			return frequency.Failed ? Failure( frequency.Error! ) : Untyped( await _radio!.TuneAsync(
-				actor.Value, command.InventoryId, command.ItemId, frequency.Value, cancellationToken ) );
+			if ( frequency.Failed ) return Failure( frequency.Error! );
+			var tuned = await _radio!.TuneAsync(
+				actor.Value, command.InventoryId, command.ItemId, frequency.Value, cancellationToken );
+			if ( tuned.Succeeded )
+			{
+				projectionDelta.Observe( tuned.Value );
+				projectionDelta.Items.Add( command.ItemId );
+			}
+			return Untyped( tuned );
 		}
 		if ( executable.Route == ExecutableItemActionRoute.RequestDevice )
 		{
 			var text = new HL2RPCommandArguments( command.Arguments ).String( "text" );
-			return text.Failed ? Failure( text.Error! ) : Untyped( await _requests!.SendAsync(
-				actor.Value, command.InventoryId, command.ItemId, text.Value, cancellationToken ) );
+			if ( text.Failed ) return Failure( text.Error! );
+			var requested = await _requests!.SendAsync(
+				actor.Value, command.InventoryId, command.ItemId, text.Value, cancellationToken );
+			if ( requested.Succeeded )
+			{
+				projectionDelta.Observe( requested.Value );
+				projectionDelta.Items.Add( command.ItemId );
+			}
+			return Untyped( requested );
 		}
 		if ( executable.Route == ExecutableItemActionRoute.NoteEditor )
 		{
 			var body = new HL2RPCommandArguments( command.Arguments ).String( "body", true );
-			return body.Failed ? Failure( body.Error! ) : Untyped( await _documents!.EditNoteAsync(
-				actor.Value, command.InventoryId, command.ItemId, body.Value, cancellationToken ) );
+			if ( body.Failed ) return Failure( body.Error! );
+			var edited = await _documents!.EditNoteAsync(
+				actor.Value, command.InventoryId, command.ItemId, body.Value, cancellationToken );
+			if ( edited.Succeeded )
+			{
+				projectionDelta.Observe( edited.Value );
+				projectionDelta.Items.Add( command.ItemId );
+			}
+			return Untyped( edited );
 		}
 		if ( executable.Route == ExecutableItemActionRoute.RestraintIntent )
-			return await SetRestraintAsync( actor.Value, new HL2RPCommandArguments( command.Arguments ), cancellationToken );
+			return await SetRestraintAsync(
+				actor.Value, new HL2RPCommandArguments( command.Arguments ), projectionDelta, cancellationToken );
 		if ( executable.Route == ExecutableItemActionRoute.CombatFireIntent )
-			return await FirePistolAsync( actor.Value, command.InventoryId, command.ItemId, cancellationToken );
-		return await _itemActions.ExecuteAsync(
+			return await FirePistolAsync(
+				actor.Value, command.InventoryId, command.ItemId, projectionDelta, cancellationToken );
+		var executed = await _itemActions.ExecuteCommittedAsync(
 			actor.Value,
 			command.InventoryId,
 			command.ItemId,
 			command.ActionId,
 			command.Arguments,
 			cancellationToken );
+		if ( executed.Succeeded )
+		{
+			projectionDelta.Observe( executed.Value );
+			projectionDelta.Inventories.Add( command.InventoryId );
+			projectionDelta.Items.Add( command.ItemId );
+		}
+		return Untyped( executed );
 	}
 
 	private async ValueTask<OperationResult> DropAsync(
 		RpcActor rpc,
 		DropItemCommand command,
+		CommandProjectionDelta projectionDelta,
 		CancellationToken cancellationToken )
 	{
 		var actor = RequireInventoryActor( rpc );
@@ -767,30 +1040,53 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 		var transform = DropTransform( rpc.Player.PlayableBody ?? rpc.Player.GameObject );
 		if ( !IsFinite( transform ) )
 			return OperationResult.Failure( ErrorCode.InvalidArgument, "Authoritative drop transform is not finite." );
-		var result = await _worldItems.DropAsync( actor.Value, command.SourceId, command.ItemId, transform, cancellationToken );
+		var result = await _worldItems.DropCommittedAsync(
+			actor.Value, command.SourceId, command.ItemId, transform, cancellationToken );
 		if ( result.Succeeded )
 		{
-			_bags?.ItemMoved( command.ItemId );
-			RestoreWorldItem( command.ItemId );
+			projectionDelta.Observe( result.Value );
+			try { _bags?.ItemMoved( command.ItemId ); }
+			catch ( Exception exception )
+			{
+				Log.Warning( $"HL2RP_DROP_DEGRADED item={command.ItemId.Value:D} " +
+					$"stage=bag_invalidation message={exception.Message}" );
+			}
+			LogWorldItemBoundaryError( command.ItemId, "drop_restore", RestoreWorldItem( command.ItemId ) );
 		}
-		return result;
+		return Untyped( result );
 	}
 
 	private async ValueTask<OperationResult> PickupAsync(
 		RpcActor rpc,
 		PickUpItemCommand command,
+		CommandProjectionDelta projectionDelta,
 		CancellationToken cancellationToken )
 	{
 		var actor = RequireInventoryActor( rpc );
 		if ( actor.Failed ) return Failure( actor.Error! );
-		var result = await _worldItems.PickUpAsync(
+		var result = await _worldItems.PickUpCommittedAsync(
 			actor.Value, command.ItemId, command.DestinationId, cancellationToken );
 		if ( result.Succeeded )
 		{
-			_bags?.ItemMoved( command.ItemId );
-			if ( _worldObjects.Remove( command.ItemId, out var worldObject ) && worldObject.IsValid() ) worldObject.Destroy();
+			projectionDelta.Observe( result.Value );
+			try { _bags?.ItemMoved( command.ItemId ); }
+			catch ( Exception exception )
+			{
+				Log.Warning( $"HL2RP_PICKUP_DEGRADED item={command.ItemId.Value:D} " +
+					$"stage=bag_invalidation message={exception.Message}" );
+			}
+			try
+			{
+				if ( _worldObjects.Remove( command.ItemId, out var worldObject ) && worldObject.IsValid() )
+					worldObject.Destroy();
+			}
+			catch ( Exception exception )
+			{
+				Log.Warning( $"HL2RP_PICKUP_DEGRADED item={command.ItemId.Value:D} " +
+					$"stage=world_destroy message={exception.Message}" );
+			}
 		}
-		return result;
+		return Untyped( result );
 	}
 
 	private OperationResult SendChat( RpcActor rpc, SendChatCommand command )
@@ -829,6 +1125,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 	private async ValueTask<OperationResult> BeginInteractionAsync(
 		RpcActor rpc,
 		InteractionTargetInput input,
+		CommandProjectionDelta projectionDelta,
 		CancellationToken cancellationToken )
 	{
 		var actor = RequireInventoryActor( rpc );
@@ -844,34 +1141,62 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 				{
 					if ( dock.LinkedDroneId is not SceneEntityId droneId )
 						return OperationResult.Failure( ErrorCode.ConfigurationInvalid, "Scanner dock has no linked drone." );
-					return Untyped( await _scanner!.EnterAsync( actor.Value, droneId, cancellationToken ) );
+					return await EnterScannerTargetAsync(
+						actor.Value, droneId, projectionDelta, cancellationToken );
 				}
 				if ( scannerFeature is HL2RPScannerDroneComponent )
-					return Untyped( await _scanner!.EnterAsync( actor.Value, targetId, cancellationToken ) );
+					return await EnterScannerTargetAsync(
+						actor.Value, targetId, projectionDelta, cancellationToken );
 			}
 		}
 		var opened = _interactions!.Begin(
 			actor.Value.ConnectionId, actor.Value.AccountId, actor.Value.CharacterId, target.Value );
 		if ( opened.Failed ) return Failure( opened.Error! );
+		if ( opened.Value.Session is InteractionSession observedSession )
+			_projectionIndex.ObserveSceneSession( observedSession );
 		if ( target.Value.Kind != InteractionTargetKind.SceneEntity ) return OperationResult.Success();
 		var sceneId = new SceneEntityId( target.Value.Id );
 		if ( !_features.TryGetValue( sceneId, out var feature ) )
 			return OperationResult.Failure( ErrorCode.NotFound, "Scene feature is unavailable." );
 		if ( feature is HL2RPForcefieldComponent )
-			return Untyped( await _sceneBehavior!.ToggleForcefieldAsync(
-				actor.Value, sceneId, cancellationToken ) );
+		{
+			var toggled = await _sceneBehavior!.ToggleForcefieldAsync(
+				actor.Value, sceneId, cancellationToken );
+			if ( toggled.Succeeded )
+			{
+				projectionDelta.Observe( toggled.Value );
+				projectionDelta.SceneEntities.Add( toggled.Value.SceneEntityId );
+			}
+			return Untyped( toggled );
+		}
 		if ( opened.Value.Session is not InteractionSession session ) return OperationResult.Success();
 		if ( feature is HL2RPMachineComponent )
 		{
 			var main = MainInventory( actor.Value.CharacterId );
-			return main is null
-				? OperationResult.Failure( ErrorCode.NotFound, "Character main inventory was not found." )
-				: Untyped( await _commerce!.PurchaseFromMachineAsync(
-					actor.Value, session.Id, main.Id, cancellationToken ) );
+			if ( main is null )
+				return OperationResult.Failure( ErrorCode.NotFound, "Character main inventory was not found." );
+			var purchased = await _commerce!.PurchaseFromMachineAsync(
+				actor.Value, session.Id, main.Id, cancellationToken );
+			if ( purchased.Succeeded )
+			{
+				projectionDelta.Observe( purchased.Value );
+				projectionDelta.SceneEntities.Add( purchased.Value.SceneEntityId );
+				projectionDelta.Inventories.Add( main.Id );
+				projectionDelta.Items.UnionWith( purchased.Value.ItemIds );
+			}
+			return Untyped( purchased );
 		}
 		if ( feature is HL2RPDoorComponent )
-			return Untyped( await _sceneBehavior!.ToggleDoorAsync(
-				actor.Value, session.Id, cancellationToken ) );
+		{
+			var toggled = await _sceneBehavior!.ToggleDoorAsync(
+				actor.Value, session.Id, cancellationToken );
+			if ( toggled.Succeeded )
+			{
+				projectionDelta.Observe( toggled.Value );
+				projectionDelta.SceneEntities.Add( toggled.Value.SceneEntityId );
+			}
+			return Untyped( toggled );
+		}
 		return OperationResult.Success();
 	}
 
@@ -901,24 +1226,34 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 	{
 		var actor = RequireInventoryActor( rpc );
 		if ( actor.Failed ) return Failure( actor.Error! );
-		if ( _activeRestraintActions.TryGetValue( actor.Value.ConnectionId, out var action ) &&
-			action.Ticket.TicketId.Value == instanceId && action.Actor == actor.Value )
+		var restraintCancellation = _activeRestraintActions.TryCancel(
+			actor.Value.ConnectionId,
+			candidate => candidate.Ticket.TicketId.Value == instanceId && candidate.Actor == actor.Value,
+			out var action );
+		if ( restraintCancellation == HL2RPTimedActionCancelOutcome.Cancelled )
 		{
-			action.Cancellation.Cancel();
+			CancelToken( action!.Cancellation );
 			var result = _restraints!.Cancel( action.Ticket.TicketId, action.Actor );
-			_activeRestraintActions.Remove( actor.Value.ConnectionId );
-			PublishAll();
+			PublishConnections( new[] { actor.Value.ConnectionId }, invalidateRuntime: true );
 			return result;
 		}
-		if ( _activePistolActions.TryGetValue( actor.Value.ConnectionId, out var pistol ) &&
-			pistol.InstanceId == instanceId && pistol.Actor == actor.Value )
+		if ( restraintCancellation == HL2RPTimedActionCancelOutcome.CommitOwned )
+			return OperationResult.Failure( ErrorCode.Conflict,
+				"Action commit is already in progress and can no longer be cancelled." );
+		var pistolCancellation = _activePistolActions.TryCancel(
+			actor.Value.ConnectionId,
+			candidate => candidate.InstanceId == instanceId && candidate.Actor == actor.Value,
+			out var pistol );
+		if ( pistolCancellation == HL2RPTimedActionCancelOutcome.Cancelled )
 		{
-			pistol.Cancellation.Cancel();
+			CancelToken( pistol!.Cancellation );
 			_combatIntent!.ClearCharacter( actor.Value.CharacterId );
-			_activePistolActions.Remove( actor.Value.ConnectionId );
-			PublishAll();
+			PublishConnections( new[] { actor.Value.ConnectionId }, invalidateRuntime: true );
 			return OperationResult.Success();
 		}
+		if ( pistolCancellation == HL2RPTimedActionCancelOutcome.CommitOwned )
+			return OperationResult.Failure( ErrorCode.Conflict,
+				"Action commit is already in progress and can no longer be cancelled." );
 		return OperationResult.Failure( ErrorCode.Unauthorized, "Action instance is not bound to the actor." );
 	}
 
@@ -926,28 +1261,62 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 		InventoryActor actor,
 		InventoryId inventoryId,
 		ItemId pistolId,
+		CommandProjectionDelta projectionDelta,
 		CancellationToken cancellationToken )
 	{
 		var raised = _pistol!.IsHostRaised( actor, inventoryId, pistolId );
 		if ( raised.Failed ) return Failure( raised.Error! );
 		CancellationTokenSource? linked = null;
 		ActivePistolRaiseAction? active = null;
+		var durableSuccess = false;
 		if ( !raised.Value )
 		{
-			if ( _activePistolActions.ContainsKey( actor.ConnectionId ) )
-				return OperationResult.Failure( ErrorCode.Conflict, "Another pistol raise is active." );
 			linked = CancellationTokenSource.CreateLinkedTokenSource( cancellationToken );
 			active = new ActivePistolRaiseAction(
 				actor, Guid.NewGuid(), _clock.UtcNow + PistolCombatService.DefaultRaiseDelay, linked );
-			_activePistolActions.Add( actor.ConnectionId, active );
-			PublishAll();
+			if ( !_activePistolActions.TryAdd( actor.ConnectionId, active ) )
+			{
+				linked.Dispose();
+				return OperationResult.Failure( ErrorCode.Conflict, "Another pistol raise is active." );
+			}
+			PublishConnections( new[] { actor.ConnectionId }, invalidateRuntime: true );
 		}
 		try
 		{
-			return Untyped( await _combatIntent!.FireAsync(
+			var fired = await _combatIntent!.FireAsync(
 				new CombatFireIntent( actor, inventoryId, pistolId, () =>
-					active is null || _activePistolActions.TryGetValue( actor.ConnectionId, out var current ) && current == active ),
-				linked?.Token ?? cancellationToken ) );
+					active is null || _activePistolActions.TryClaimCommit( actor.ConnectionId, active ) ),
+				linked?.Token ?? cancellationToken );
+			if ( fired.Succeeded )
+			{
+				projectionDelta.Observe( fired.Value.Fire.Commit );
+				projectionDelta.Inventories.Add( inventoryId );
+				projectionDelta.Items.Add( pistolId );
+				if ( fired.Value.PlayerDamage is PlayerCombatDamageOutcome playerDamage )
+				{
+					projectionDelta.Connections.Add( playerDamage.Target.Actor.ConnectionId );
+					projectionDelta.Characters.Add( playerDamage.Target.Actor.CharacterId );
+					projectionDelta.Inventories.Add( playerDamage.Target.InventoryId );
+					if ( playerDamage.VestItemId is ItemId vestId ) projectionDelta.Items.Add( vestId );
+				}
+				if ( fired.Value.Death is DeathTransitionReceipt death )
+				{
+					if ( death.Commit is not null ) projectionDelta.Observe( death.Commit );
+					projectionDelta.Broadcast = true;
+					projectionDelta.RebuildLiveInventory = death.DroppedPistol is not null;
+					projectionDelta.RebuildCombatTargets = true;
+					if ( death.BoundaryError is OperationError boundaryError )
+						Log.Warning(
+							$"HL2RP_DEATH_BOUNDARY_DEGRADED character={death.Respawn.CharacterId.Value:D} " +
+							$"code={boundaryError.Code} message={boundaryError.Message}" );
+				}
+				if ( fired.Value.DegradedDeathTransition is OperationError degraded )
+					Log.Warning(
+						$"HL2RP_COMBAT_DEGRADED character={actor.CharacterId.Value:D} " +
+						$"code={degraded.Code} message={degraded.Message}" );
+				durableSuccess = true;
+			}
+			return Untyped( fired );
 		}
 		catch ( OperationCanceledException )
 		{
@@ -955,16 +1324,27 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 		}
 		finally
 		{
-			if ( active is not null && _activePistolActions.TryGetValue( actor.ConnectionId, out var current ) && current == active )
-				_activePistolActions.Remove( actor.ConnectionId );
+			var completion = active is null
+				? default
+				: _activePistolActions.Complete( actor.ConnectionId, active, durableSuccess );
 			linked?.Dispose();
-			if ( active is not null ) PublishAll();
+			if ( completion.PublishFailure )
+				PublishConnections( new[] { actor.ConnectionId }, invalidateRuntime: true );
+			if ( active is not null && completion.LifecycleCleanupRequested )
+			{
+				var cleanup = await ClearRaisedPistolsAsync( active.Actor, projectionDelta, CancellationToken.None );
+				if ( cleanup.Failed )
+					Log.Error(
+						$"HL2RP late pistol lifecycle cleanup failed for character {active.Actor.CharacterId.Value:D}: " +
+						cleanup.Error!.Message );
+			}
 		}
 	}
 
 	private async ValueTask<OperationResult> RunSchemaCommandAsync(
 		RpcActor rpc,
 		RunSchemaCommandCommand command,
+		CommandProjectionDelta projectionDelta,
 		CancellationToken cancellationToken )
 	{
 		if ( !_context.Schema.Commands.TryGet( command.CommandId, out var definition ) )
@@ -972,7 +1352,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 		if ( command.CommandId is HL2RPIds.Commands.EntitlementQuery or
 			HL2RPIds.Commands.EntitlementGrant or HL2RPIds.Commands.EntitlementRevoke )
 			return await RunEntitlementCommandAsync(
-				rpc, command.CommandId, new HL2RPCommandArguments( command.Arguments ), cancellationToken );
+				rpc, command, projectionDelta, cancellationToken );
 		var actor = RequireInventoryActor(
 			rpc, allowDead: command.CommandId == HL2RPIds.Commands.CombatRespawn );
 		if ( actor.Failed ) return Failure( actor.Error! );
@@ -983,18 +1363,24 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 		return command.CommandId switch
 		{
 			HL2RPIds.Commands.CivicData => CivicData( actor.Value, arguments ),
-			HL2RPIds.Commands.CityObjectives => await SetObjectivesAsync( actor.Value, arguments, cancellationToken ),
-			HL2RPIds.Commands.Priority => await SetPriorityAsync( actor.Value, arguments, cancellationToken ),
-			HL2RPIds.Commands.RadioFrequency => await TuneRadioAsync( actor.Value, arguments, cancellationToken ),
-			HL2RPIds.Commands.Introduce => await IntroduceAsync( actor.Value, arguments, cancellationToken ),
-			HL2RPIds.Commands.DoorOwnership => await DoorOwnershipAsync( actor.Value, arguments, cancellationToken ),
+			HL2RPIds.Commands.CityObjectives => await SetObjectivesAsync(
+				actor.Value, arguments, projectionDelta, cancellationToken ),
+			HL2RPIds.Commands.Priority => await SetPriorityAsync(
+				actor.Value, arguments, projectionDelta, cancellationToken ),
+			HL2RPIds.Commands.RadioFrequency => await TuneRadioAsync( actor.Value, arguments, projectionDelta, cancellationToken ),
+			HL2RPIds.Commands.Introduce => await IntroduceAsync(
+				actor.Value, arguments, projectionDelta, cancellationToken ),
+			HL2RPIds.Commands.DoorOwnership => await DoorOwnershipAsync(
+				actor.Value, arguments, projectionDelta, cancellationToken ),
 			HL2RPIds.Commands.AdministrationAudit => PublishAdministrationAudit( actor.Value ),
-			HL2RPIds.Commands.CommerceBuy => await BuyAsync( actor.Value, arguments, cancellationToken ),
-			HL2RPIds.Commands.CommerceSell => await SellAsync( actor.Value, arguments, cancellationToken ),
-			HL2RPIds.Commands.PermitPurchase => await PurchasePermitAsync( actor.Value, arguments, cancellationToken ),
-			HL2RPIds.Commands.NoteWrite => await WriteNoteAsync( actor.Value, arguments, cancellationToken ),
-			HL2RPIds.Commands.RestraintSet => await SetRestraintAsync( actor.Value, arguments, cancellationToken ),
-			HL2RPIds.Commands.ScannerIntent => await ScannerIntentAsync( actor.Value, arguments, cancellationToken ),
+			HL2RPIds.Commands.CommerceBuy => await BuyAsync( actor.Value, arguments, projectionDelta, cancellationToken ),
+			HL2RPIds.Commands.CommerceSell => await SellAsync( actor.Value, arguments, projectionDelta, cancellationToken ),
+			HL2RPIds.Commands.PermitPurchase => await PurchasePermitAsync( actor.Value, arguments, projectionDelta, cancellationToken ),
+			HL2RPIds.Commands.NoteWrite => await WriteNoteAsync( actor.Value, arguments, projectionDelta, cancellationToken ),
+			HL2RPIds.Commands.RestraintSet => await SetRestraintAsync(
+				actor.Value, arguments, projectionDelta, cancellationToken ),
+			HL2RPIds.Commands.ScannerIntent => await ScannerIntentAsync(
+				actor.Value, arguments, projectionDelta, cancellationToken ),
 			HL2RPIds.Commands.CombatRespawn => RespawnCharacter( actor.Value ),
 			_ => OperationResult.Failure( ErrorCode.UnknownDefinition, "Schema command has no HL2RP runtime handler." )
 		};
@@ -1002,8 +1388,8 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 
 	private async ValueTask<OperationResult> RunEntitlementCommandAsync(
 		RpcActor rpc,
-		string commandId,
-		HL2RPCommandArguments arguments,
+		RunSchemaCommandCommand command,
+		CommandProjectionDelta projectionDelta,
 		CancellationToken cancellationToken )
 	{
 		var connectionId = new ConnectionId( rpc.Connection.Id );
@@ -1012,16 +1398,10 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 		if ( !CanManageEntitlements( administrator ) )
 			return OperationResult.Failure(
 				ErrorCode.Unauthorized, "Authenticated account cannot manage entitlements." );
-		var accountText = arguments.String( "account" );
-		if ( accountText.Failed || !ulong.TryParse(
-			accountText.Value,
-			System.Globalization.NumberStyles.None,
-			System.Globalization.CultureInfo.InvariantCulture,
-			out var accountValue ) || accountValue == 0 )
+		if ( !HL2RPPresentationPlanner.TryAccountId( command.Arguments, "account", out var targetAccountId ) )
 			return OperationResult.Failure(
 				ErrorCode.InvalidArgument, "Target account must be a non-zero unsigned account ID." );
-		var targetAccountId = new AccountId( accountValue );
-		if ( commandId == HL2RPIds.Commands.EntitlementQuery )
+		if ( command.CommandId == HL2RPIds.Commands.EntitlementQuery )
 		{
 			var observed = _entitlements.Observe( targetAccountId );
 			if ( observed.Failed ) return Failure( observed.Error! );
@@ -1031,6 +1411,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 			return OperationResult.Success();
 		}
 
+		var arguments = new HL2RPCommandArguments( command.Arguments );
 		var flagText = arguments.String( "flag" );
 		var revision = arguments.Integer( "revision" );
 		if ( flagText.Failed || revision.Failed || revision.Value < 0 )
@@ -1038,15 +1419,26 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 		var flag = HL2RPAccountEntitlements.ParseSingleFlag( flagText.Value );
 		if ( flag.Failed ) return Failure( flag.Error! );
 		var expectedRevision = new Hexagon.V2.Persistence.DocumentRevision( revision.Value );
-		var changed = commandId == HL2RPIds.Commands.EntitlementGrant
+		var changed = command.CommandId == HL2RPIds.Commands.EntitlementGrant
 			? await _entitlements.GrantAsync(
 				administrator, targetAccountId, flag.Value, expectedRevision, cancellationToken )
 			: await _entitlements.RevokeAsync(
 				administrator, targetAccountId, flag.Value, expectedRevision, cancellationToken );
 		if ( changed.Failed ) return Failure( changed.Error! );
+		projectionDelta.Observe( changed.Value );
 		_entitlementQueries[connectionId] = targetAccountId;
+		projectionDelta.Connections.UnionWith(
+			_entitlementPresentationInvalidation.Claim( targetAccountId ) );
 		return OperationResult.Success();
 	}
+
+	private IReadOnlyList<ConnectionId> EntitlementRecipients( AccountId accountId ) =>
+		_clients
+			.Where( pair => pair.Value.AccountId == accountId ||
+				_entitlementQueries.TryGetValue( pair.Key, out var queried ) && queried == accountId )
+			.Select( pair => pair.Key )
+			.Distinct()
+			.ToArray();
 
 	private OperationResult PublishAdministrationAudit( InventoryActor actor )
 	{
@@ -1075,57 +1467,79 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 	}
 
 	private async ValueTask<OperationResult> SetObjectivesAsync(
-		InventoryActor actor, HL2RPCommandArguments args, CancellationToken cancellationToken )
+		InventoryActor actor,
+		HL2RPCommandArguments args,
+		CommandProjectionDelta projectionDelta,
+		CancellationToken cancellationToken )
 	{
-		var title = args.String( "title" );
-		var detail = args.String( "detail", true );
-		var completed = args.Boolean( "completed" );
-		if ( title.Failed || detail.Failed || completed.Failed ) return OperationResult.Failure( ErrorCode.InvalidArgument, "Objective arguments are invalid." );
-		var city = _repositories.SceneEntities.All().Select( value => value.Value ).FirstOrDefault( value => value.Kind == "city" );
-		if ( city is null ) return OperationResult.Failure( ErrorCode.NotFound, "City state is unavailable." );
-		var id = args.String( "objective", true );
-		var objectiveId = id.Succeeded && !string.IsNullOrWhiteSpace( id.Value )
-			? id.Value
-			: $"objective.{Guid.NewGuid():N}";
-		var cityState = HL2RPPersistence.CityState.Deserialize( city.State.Data, city.State.TypeVersion );
-		var objectives = HL2RPObjectiveState.Upsert(
-			cityState.Objectives, objectiveId, $"{title.Value}\n{detail.Value}".Trim(), completed.Value, _clock.UtcNow );
-		return Untyped( await _objectives!.ReplaceAsync( actor, city.Id, objectives, cancellationToken ) );
+		var routed = await _objectiveRouter!.RouteAsync( actor, args, cancellationToken );
+		if ( routed.Receipt is not null )
+		{
+			projectionDelta.Observe( routed.Receipt.ProjectionReceipt );
+			projectionDelta.Documents.UnionWith(
+				routed.Receipt.ProjectionReceipt.Documents.Select( value => value.Address ) );
+		}
+		return routed.Command.Result;
 	}
 
 	private async ValueTask<OperationResult> SetPriorityAsync(
-		InventoryActor actor, HL2RPCommandArguments args, CancellationToken cancellationToken )
+		InventoryActor actor,
+		HL2RPCommandArguments args,
+		CommandProjectionDelta projectionDelta,
+		CancellationToken cancellationToken )
 	{
 		var target = args.Guid( "character" );
 		var priority = args.String( "priority" );
 		var record = args.String( "record", true );
 		if ( target.Failed || priority.Failed || record.Failed || !Enum.TryParse<CivicPriorityStatus>( priority.Value, true, out var parsed ) )
 			return OperationResult.Failure( ErrorCode.InvalidArgument, "Priority arguments are invalid." );
-		return Untyped( await _civic!.UpdateRecordAsync(
-			actor, new CharacterId( target.Value ), parsed, record.Value, cancellationToken ) );
+		var updated = await _civic!.UpdateRecordAsync(
+			actor, new CharacterId( target.Value ), parsed, record.Value, cancellationToken );
+		if ( updated.Succeeded ) projectionDelta.Observe( updated.Value );
+		return Untyped( updated );
 	}
 
 	private async ValueTask<OperationResult> TuneRadioAsync(
-		InventoryActor actor, HL2RPCommandArguments args, CancellationToken cancellationToken )
+		InventoryActor actor,
+		HL2RPCommandArguments args,
+		CommandProjectionDelta projectionDelta,
+		CancellationToken cancellationToken )
 	{
 		var item = args.Guid( "item" );
 		var frequency = args.String( "frequency" );
 		var enabled = args.Boolean( "enabled" );
 		var main = MainInventory( actor.CharacterId );
 		if ( item.Failed || frequency.Failed || enabled.Failed || main is null ) return OperationResult.Failure( ErrorCode.InvalidArgument, "Radio arguments are invalid." );
-		return Untyped( await _radio!.ConfigureAsync(
-			actor, main.Id, new ItemId( item.Value ), frequency.Value, enabled.Value, cancellationToken ) );
+		var tuned = await _radio!.ConfigureAsync(
+			actor, main.Id, new ItemId( item.Value ), frequency.Value, enabled.Value, cancellationToken );
+		if ( tuned.Succeeded )
+		{
+			projectionDelta.Observe( tuned.Value );
+			projectionDelta.Inventories.Add( main.Id );
+			projectionDelta.Items.Add( new ItemId( item.Value ) );
+		}
+		return Untyped( tuned );
 	}
 
 	private async ValueTask<OperationResult> IntroduceAsync(
-		InventoryActor actor, HL2RPCommandArguments args, CancellationToken cancellationToken )
+		InventoryActor actor,
+		HL2RPCommandArguments args,
+		CommandProjectionDelta projectionDelta,
+		CancellationToken cancellationToken )
 	{
 		var target = args.Guid( "character" );
-		return target.Failed ? Failure( target.Error! ) : Untyped( await _recognition!.IntroduceAsync( actor, new CharacterId( target.Value ), cancellationToken ) );
+		if ( target.Failed ) return Failure( target.Error! );
+		var introduced = await _recognition!.IntroduceAsync(
+			actor, new CharacterId( target.Value ), cancellationToken );
+		if ( introduced.Succeeded ) projectionDelta.Observe( introduced.Value );
+		return Untyped( introduced );
 	}
 
 	private async ValueTask<OperationResult> BuyAsync(
-		InventoryActor actor, HL2RPCommandArguments args, CancellationToken cancellationToken )
+		InventoryActor actor,
+		HL2RPCommandArguments args,
+		CommandProjectionDelta projectionDelta,
+		CancellationToken cancellationToken )
 	{
 		var session = args.Guid( "session" );
 		var definition = args.String( "definition" );
@@ -1133,13 +1547,24 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 		var main = MainInventory( actor.CharacterId );
 		if ( session.Failed || definition.Failed || quantity.Failed || quantity.Value is < 1 or > 64 || main is null )
 			return OperationResult.Failure( ErrorCode.InvalidArgument, "Vendor purchase arguments are invalid." );
-		return Untyped( await _commerce!.BuyAsync(
+		var purchased = await _commerce!.BuyAsync(
 			actor, new InteractionSessionId( session.Value ), main.Id,
-			new DefinitionId( definition.Value ), (int)quantity.Value, cancellationToken ) );
+			new DefinitionId( definition.Value ), (int)quantity.Value, cancellationToken );
+		if ( purchased.Succeeded )
+		{
+			projectionDelta.Observe( purchased.Value );
+			projectionDelta.SceneEntities.Add( purchased.Value.SceneEntityId );
+			projectionDelta.Inventories.Add( main.Id );
+			projectionDelta.Items.UnionWith( purchased.Value.ItemIds );
+		}
+		return Untyped( purchased );
 	}
 
 	private async ValueTask<OperationResult> SellAsync(
-		InventoryActor actor, HL2RPCommandArguments args, CancellationToken cancellationToken )
+		InventoryActor actor,
+		HL2RPCommandArguments args,
+		CommandProjectionDelta projectionDelta,
+		CancellationToken cancellationToken )
 	{
 		var session = args.Guid( "session" );
 		var inventory = args.Guid( "inventory" );
@@ -1147,34 +1572,65 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 		if ( session.Failed || inventory.Failed || item.Failed ) return OperationResult.Failure( ErrorCode.InvalidArgument, "Vendor sale arguments are invalid." );
 		var result = await _commerce!.SellAsync(
 			actor, new InteractionSessionId( session.Value ), new InventoryId( inventory.Value ), new ItemId( item.Value ), cancellationToken );
-		if ( result.Succeeded ) _bags?.ItemMoved( new ItemId( item.Value ) );
+		if ( result.Succeeded )
+		{
+			projectionDelta.Observe( result.Value );
+			projectionDelta.SceneEntities.Add( result.Value.SceneEntityId );
+			_bags?.ItemMoved( new ItemId( item.Value ) );
+			projectionDelta.Inventories.Add( new InventoryId( inventory.Value ) );
+			projectionDelta.Items.UnionWith( result.Value.ItemIds );
+		}
 		return Untyped( result );
 	}
 
 	private async ValueTask<OperationResult> PurchasePermitAsync(
-		InventoryActor actor, HL2RPCommandArguments args, CancellationToken cancellationToken )
+		InventoryActor actor,
+		HL2RPCommandArguments args,
+		CommandProjectionDelta projectionDelta,
+		CancellationToken cancellationToken )
 	{
 		var kind = args.String( "permit" );
 		var main = MainInventory( actor.CharacterId );
 		if ( kind.Failed || main is null ) return OperationResult.Failure( ErrorCode.InvalidArgument, "Permit purchase arguments are invalid." );
 		var parsed = HL2RPPresentationContracts.ParsePermitKind( kind.Value );
-		return parsed.Failed
-			? Failure( parsed.Error! )
-			: Untyped( await _permitPurchases!.PurchaseAsync( actor, main.Id, parsed.Value, cancellationToken ) );
+		if ( parsed.Failed ) return Failure( parsed.Error! );
+		var purchased = await _permitPurchases!.PurchaseAsync(
+			actor, main.Id, parsed.Value, cancellationToken );
+		if ( purchased.Succeeded )
+		{
+			projectionDelta.Observe( purchased.Value );
+			projectionDelta.Inventories.Add( main.Id );
+			projectionDelta.Items.Add( purchased.Value.PermitItemId );
+		}
+		return Untyped( purchased );
 	}
 
 	private async ValueTask<OperationResult> WriteNoteAsync(
-		InventoryActor actor, HL2RPCommandArguments args, CancellationToken cancellationToken )
+		InventoryActor actor,
+		HL2RPCommandArguments args,
+		CommandProjectionDelta projectionDelta,
+		CancellationToken cancellationToken )
 	{
 		var item = args.Guid( "item" );
 		var body = args.String( "body", true );
 		var main = MainInventory( actor.CharacterId );
 		if ( item.Failed || body.Failed || main is null ) return OperationResult.Failure( ErrorCode.InvalidArgument, "Note arguments are invalid." );
-		return Untyped( await _documents!.EditNoteAsync( actor, main.Id, new ItemId( item.Value ), body.Value, cancellationToken ) );
+		var edited = await _documents!.EditNoteAsync(
+			actor, main.Id, new ItemId( item.Value ), body.Value, cancellationToken );
+		if ( edited.Succeeded )
+		{
+			projectionDelta.Observe( edited.Value );
+			projectionDelta.Inventories.Add( main.Id );
+			projectionDelta.Items.Add( edited.Value.NoteItemId );
+		}
+		return Untyped( edited );
 	}
 
 	private async ValueTask<OperationResult> SetRestraintAsync(
-		InventoryActor actor, HL2RPCommandArguments args, CancellationToken cancellationToken )
+		InventoryActor actor,
+		HL2RPCommandArguments args,
+		CommandProjectionDelta projectionDelta,
+		CancellationToken cancellationToken )
 	{
 		var target = args.Guid( "character" );
 		var restrain = args.Boolean( "restrain" );
@@ -1184,51 +1640,75 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 		if ( search.Value )
 		{
 			var targetInventory = MainInventory( targetId );
-			return targetInventory is null
-				? OperationResult.Failure( ErrorCode.NotFound, "Search target main inventory was not found." )
-				: Untyped( _search!.Open( actor, targetId, targetInventory.Id ) );
+			if ( targetInventory is null )
+				return OperationResult.Failure( ErrorCode.NotFound, "Search target main inventory was not found." );
+			var opened = _search!.Open( actor, targetId, targetInventory.Id );
+			if ( opened.Succeeded ) projectionDelta.Inventories.Add( targetInventory.Id );
+			return Untyped( opened );
 		}
-		if ( !restrain.Value ) return Untyped( await _restraints!.UnrestrainAsync( actor, targetId, cancellationToken ) );
+		if ( !restrain.Value )
+		{
+			var released = await _restraints!.UnrestrainAsync( actor, targetId, cancellationToken );
+			if ( released.Succeeded ) projectionDelta.Observe( released.Value );
+			return Untyped( released );
+		}
 		var main = MainInventory( actor.CharacterId );
 		var zip = main?.Placements.Select( value => _repositories.Items.Find( DomainKeys.Item( value.ItemId ) )?.Value )
 			.FirstOrDefault( value => value?.Definition.Value == HL2RPIds.Items.ZipTie );
 		if ( main is null || zip is null ) return OperationResult.Failure( ErrorCode.NotFound, "A zip tie is required." );
 		var ticket = _restraints!.Begin( actor, targetId, main.Id, zip.Id );
 		if ( ticket.Failed ) return Failure( ticket.Error! );
-		if ( _activeRestraintActions.ContainsKey( actor.ConnectionId ) )
+		var linked = CancellationTokenSource.CreateLinkedTokenSource( cancellationToken );
+		var active = new ActiveRestraintAction( actor, ticket.Value, linked );
+		var durableSuccess = false;
+		var cancelledByCommand = false;
+		if ( !_activeRestraintActions.TryAdd( actor.ConnectionId, active ) )
 		{
+			linked.Dispose();
 			_restraints.Cancel( ticket.Value.TicketId, actor );
 			return OperationResult.Failure( ErrorCode.Conflict, "Another restraint action is already active." );
 		}
-		var linked = CancellationTokenSource.CreateLinkedTokenSource( cancellationToken );
-		var active = new ActiveRestraintAction( actor, ticket.Value, linked );
-		_activeRestraintActions.Add( actor.ConnectionId, active );
-		PublishAll();
+		PublishConnections( new[] { actor.ConnectionId }, invalidateRuntime: true );
 		try
 		{
 			var delay = ticket.Value.CompletesAtUtc - _clock.UtcNow;
 			if ( delay > TimeSpan.Zero ) await Task.Delay( delay, linked.Token );
-			var stillActive = _activeRestraintActions.TryGetValue( actor.ConnectionId, out var current ) && current == active;
-			return stillActive
-				? Untyped( await _restraints.CompleteAsync( ticket.Value.TicketId, actor, linked.Token ) )
-				: OperationResult.Failure( ErrorCode.Conflict, "Restraint action was cancelled." );
+			if ( !_activeRestraintActions.TryClaimCommit( actor.ConnectionId, active ) )
+				return OperationResult.Failure( ErrorCode.Conflict, "Restraint action was cancelled." );
+			var completed = await _restraints.CompleteAsync(
+				ticket.Value.TicketId, actor, CancellationToken.None );
+			if ( completed.Succeeded )
+			{
+				projectionDelta.Observe( completed.Value );
+				durableSuccess = true;
+			}
+			return Untyped( completed );
 		}
 		catch ( OperationCanceledException )
 		{
-			_ = _restraints.Cancel( ticket.Value.TicketId, actor );
+			var cancelled = _activeRestraintActions.TryCancel(
+				actor.ConnectionId, candidate => ReferenceEquals( candidate, active ), out _ );
+			if ( cancelled == HL2RPTimedActionCancelOutcome.Cancelled )
+			{
+				cancelledByCommand = true;
+				_ = _restraints.Cancel( ticket.Value.TicketId, actor );
+			}
 			return OperationResult.Failure( ErrorCode.Conflict, "Restraint action was cancelled." );
 		}
 		finally
 		{
-			if ( _activeRestraintActions.TryGetValue( actor.ConnectionId, out var current ) && current == active )
-				_activeRestraintActions.Remove( actor.ConnectionId );
+			var completion = _activeRestraintActions.Complete( actor.ConnectionId, active, durableSuccess );
 			linked.Dispose();
-			PublishAll();
+			if ( cancelledByCommand || completion.PublishFailure )
+				PublishConnections( new[] { actor.ConnectionId }, invalidateRuntime: true );
 		}
 	}
 
 	private async ValueTask<OperationResult> ScannerIntentAsync(
-		InventoryActor actor, HL2RPCommandArguments args, CancellationToken cancellationToken )
+		InventoryActor actor,
+		HL2RPCommandArguments args,
+		CommandProjectionDelta projectionDelta,
+		CancellationToken cancellationToken )
 	{
 		var intent = args.String( "intent" );
 		if ( intent.Failed ) return Failure( intent.Error! );
@@ -1238,12 +1718,15 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 			: null;
 		return intent.Value switch
 		{
-			"enter" => await EnterScannerAsync( actor, cancellationToken ),
+			"enter" => await EnterScannerAsync( actor, projectionDelta, cancellationToken ),
 			"exit" when active is not null => await _scanner!.ExitAsync( actor, active.SessionId, cancellationToken ),
-			"spotlight" when active is not null => Untyped( await _scanner!.ToggleSpotlightAsync( actor, active.SessionId, cancellationToken ) ),
+			"spotlight" when active is not null => await ToggleScannerSpotlightAsync(
+				actor, active.SessionId, projectionDelta, cancellationToken ),
 			"flash" when active is not null => _scanner!.Flash( actor, active.SessionId ),
-			"photo" when active is not null => Untyped( await _scanner!.TakePhotoAsync( actor, active.SessionId, cancellationToken ) ),
-			"move" when active is not null => await ApplyScannerInputAsync( actor, active.SessionId, args, cancellationToken ),
+			"photo" when active is not null => await TakeScannerPhotoAsync(
+				actor, active.SessionId, projectionDelta, cancellationToken ),
+			"move" when active is not null => await ApplyScannerInputAsync(
+				actor, active.SessionId, args, projectionDelta, cancellationToken ),
 			_ => OperationResult.Failure( ErrorCode.InvalidArgument, "Scanner intent or session is invalid." )
 		};
 	}
@@ -1252,6 +1735,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 		InventoryActor actor,
 		InteractionSessionId sessionId,
 		HL2RPCommandArguments args,
+		CommandProjectionDelta projectionDelta,
 		CancellationToken cancellationToken )
 	{
 		var sequence = args.Integer( "sequence" );
@@ -1264,11 +1748,35 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 			sequence.Value <= 0 || new[] { forward.Value, right.Value, up.Value, yaw.Value, pitch.Value }
 				.Any( value => value is < -1 or > 1 ) )
 			return OperationResult.Failure( ErrorCode.InvalidArgument, "Scanner motion axes or sequence are invalid." );
-		return Untyped( await _scanner!.ApplyInputAsync( actor, new ScannerInputIntent(
-			sessionId, sequence.Value, forward.Value, right.Value, up.Value, yaw.Value, pitch.Value ), cancellationToken ) );
+		var applied = await _scanner!.ApplyInputAsync( actor, new ScannerInputIntent(
+			sessionId, sequence.Value, forward.Value, right.Value, up.Value, yaw.Value, pitch.Value ), cancellationToken );
+		if ( applied.Succeeded )
+		{
+			projectionDelta.Observe( applied.Value );
+			LogScannerBoundaryError( applied.Value.BoundaryError );
+		}
+		return Untyped( applied );
 	}
 
-	private async ValueTask<OperationResult> EnterScannerAsync( InventoryActor actor, CancellationToken cancellationToken )
+	private async ValueTask<OperationResult> TakeScannerPhotoAsync(
+		InventoryActor actor,
+		InteractionSessionId sessionId,
+		CommandProjectionDelta projectionDelta,
+		CancellationToken cancellationToken )
+	{
+		var photo = await _scanner!.TakePhotoAsync( actor, sessionId, cancellationToken );
+		if ( photo.Succeeded )
+		{
+			projectionDelta.Observe( photo.Value );
+			LogScannerBoundaryError( photo.Value.BoundaryError );
+		}
+		return Untyped( photo );
+	}
+
+	private async ValueTask<OperationResult> EnterScannerAsync(
+		InventoryActor actor,
+		CommandProjectionDelta projectionDelta,
+		CancellationToken cancellationToken )
 	{
 		var session = CurrentSession( actor, InteractionSessionKind.Scanner );
 		if ( session is null || session.Target.Kind != InteractionTargetKind.SceneEntity )
@@ -1280,12 +1788,51 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 				return OperationResult.Failure( ErrorCode.ConfigurationInvalid, "Scanner dock has no linked drone." );
 			target = droneId;
 		}
-		return Untyped( await _scanner!.EnterAsync( actor, target, cancellationToken ) );
+		return await EnterScannerTargetAsync( actor, target, projectionDelta, cancellationToken );
+	}
+
+	private async ValueTask<OperationResult> EnterScannerTargetAsync(
+		InventoryActor actor,
+		SceneEntityId target,
+		CommandProjectionDelta projectionDelta,
+		CancellationToken cancellationToken )
+	{
+		var entered = await _scanner!.EnterAsync( actor, target, cancellationToken );
+		if ( entered.Succeeded )
+		{
+			projectionDelta.Observe( entered.Value );
+			projectionDelta.SceneEntities.Add( entered.Value.Session.ScannerId );
+			LogScannerBoundaryError( entered.Value.BoundaryError );
+		}
+		return Untyped( entered );
+	}
+
+	private async ValueTask<OperationResult> ToggleScannerSpotlightAsync(
+		InventoryActor actor,
+		InteractionSessionId sessionId,
+		CommandProjectionDelta projectionDelta,
+		CancellationToken cancellationToken )
+	{
+		var toggled = await _scanner!.ToggleSpotlightAsync( actor, sessionId, cancellationToken );
+		if ( toggled.Succeeded )
+		{
+			projectionDelta.Observe( toggled.Value );
+			projectionDelta.SceneEntities.Add( toggled.Value.ScannerId );
+			LogScannerBoundaryError( toggled.Value.BoundaryError );
+		}
+		return Untyped( toggled );
+	}
+
+	private static void LogScannerBoundaryError( OperationError? error )
+	{
+		if ( error is not null )
+			Log.Warning( $"HL2RP_SCANNER_BOUNDARY_DEGRADED code={error.Code} message={error.Message}" );
 	}
 
 	private async ValueTask<OperationResult> DoorOwnershipAsync(
 		InventoryActor actor,
 		HL2RPCommandArguments arguments,
+		CommandProjectionDelta projectionDelta,
 		CancellationToken cancellationToken )
 	{
 		var intent = arguments.String( "intent" );
@@ -1297,14 +1844,19 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 			!_features.TryGetValue( new SceneEntityId( session.Target.Id ), out var feature ) ||
 			feature is not HL2RPDoorComponent { Ownable: true } )
 			return OperationResult.Failure( ErrorCode.PolicyDenied, "Current door does not support personal ownership." );
-		return intent.Value switch
+		OperationResult<DoorOwnershipReceipt> changed;
+		if ( intent.Value == "claim" )
+			changed = await _doorOwnership!.ClaimAsync( actor, session.Id, cancellationToken );
+		else if ( intent.Value == "release" )
+			changed = await _doorOwnership!.ReleaseAsync( actor, session.Id, cancellationToken );
+		else return OperationResult.Failure(
+			ErrorCode.InvalidArgument, "Door ownership intent must be claim or release." );
+		if ( changed.Succeeded )
 		{
-			"claim" => Untyped( await _doorOwnership!.ClaimAsync(
-				actor, session.Id, cancellationToken ) ),
-			"release" => Untyped( await _doorOwnership!.ReleaseAsync(
-				actor, session.Id, cancellationToken ) ),
-			_ => OperationResult.Failure( ErrorCode.InvalidArgument, "Door ownership intent must be claim or release." )
-		};
+			projectionDelta.Observe( changed.Value );
+			projectionDelta.SceneEntities.Add( changed.Value.DoorEntityId );
+		}
+		return Untyped( changed );
 	}
 
 	private OperationResult RespawnCharacter( InventoryActor actor )
@@ -1363,15 +1915,14 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 			{
 				_access.RevokeCharacter( actor.ConnectionId, actor.CharacterId );
 				_ = binding.Player.HostStripPlayableBody();
-				PublishAll();
+				PublishConnections( new[] { actor.ConnectionId }, invalidateRuntime: true );
 				return Failure( respawned.Error! );
 			}
 
 			if ( _combatHealth.Require( actor.CharacterId ).Failed )
 				_combatHealth.Publish( actor.CharacterId, 100, 100 );
 			_presentationInvalidation.ClearDeathDeadline( actor.CharacterId );
-			PublishCombatTargets();
-			PublishAll();
+			RefreshLiveConnection( actor.ConnectionId );
 			return OperationResult.Success();
 		}
 		finally
@@ -1402,8 +1953,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 			administrator.AccountId, characterId, HL2RPIds.Permissions.ManageEntitlements );
 
 	private bool IsKnownAccount( AccountId accountId ) =>
-		_clients.Values.Any( value => value.AccountId == accountId ) ||
-		_repositories.Characters.All().Any( value => value.Value.AccountId == accountId );
+		_clients.Values.Any( value => value.AccountId == accountId ) || _projectionIndex.IsKnownAccount( accountId );
 
 	private InventoryRecord? MainInventory( CharacterId characterId )
 	{
@@ -1540,65 +2090,78 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 			admission: _chatAdmission );
 	}
 
-	private void PublishLiveInventory()
+	private void RebuildLiveInventory() => _liveInventory.Rebuild(
+		_context.Persistence.Health.Sequence,
+		_projectionIndex.LiveInventoryRows() );
+
+	private void ApplyLiveInventory(
+		HL2RPPresentationChangeSet changes,
+		IReadOnlyList<HL2RPProjectionApplyResult> applied )
 	{
-		var allInventories = _repositories.Inventories.All().Select( value => value.Value ).ToArray();
-		var rows = new List<LiveInventoryItemView>();
-		foreach ( var inventory in allInventories )
-		{
-			var owner = OwningCharacter( inventory, allInventories );
-			foreach ( var placement in inventory.Placements )
-			{
-				var item = _repositories.Items.Find( DomainKeys.Item( placement.ItemId ) )?.Value;
-				if ( item is not null ) rows.Add( new LiveInventoryItemView( item.Id, owner, item.Definition, item.Traits ) );
-			}
-		}
-		_liveInventory.Publish( _context.Persistence.Health.Sequence, rows );
-		PublishLiveConnections();
+		var affected = new HashSet<ItemId>( applied.SelectMany( value => value.AffectedLiveItems ) );
+		affected.UnionWith( changes.Items );
+		foreach ( var inventory in changes.Inventories ) affected.UnionWith( _projectionIndex.ItemsIn( inventory ) );
+		var deltas = affected.OrderBy( value => value.Value )
+			.Select( item => new HL2RPLiveInventoryDelta(
+				item,
+				_projectionIndex.TryCreateLiveInventoryRow( item, out var row ) ? row : null ) )
+			.ToArray();
+		_liveInventory.Apply( _context.Persistence.Health.Sequence, deltas );
 	}
 
-	private void PublishLiveConnections()
+	private void RefreshAllLiveConnections()
 	{
-		var rows = new List<LiveChatConnection>();
-		var authorities = new List<LiveChatAuthority>();
-		foreach ( var pair in _clients )
-		{
-			var character = FindActiveCharacter( pair.Key );
-			var body = pair.Value.Player.PlayableBody;
-			if ( character is null || body is null ) continue;
-			var position = body.WorldPosition;
-			rows.Add( new LiveChatConnection(
-				pair.Key, character.Id, new ChatPosition( position.x, position.y, position.z ) ) );
-			authorities.Add( new LiveChatAuthority(
-				pair.Key,
-				character.AccountId,
-				character.Id,
-				character.Faction,
-				HL2RPRuntimeProjection.PermissionsFor( character ) ) );
-		}
+		foreach ( var connectionId in _clients.Keys.ToArray() ) RefreshLiveConnection( connectionId );
+	}
+
+	private void RemoveLiveConnection( ConnectionId connectionId )
+	{
 		var version = Math.Max( _presentationRevision, _context.Persistence.Health.Sequence );
-		_chatPositions.Publish( version, rows );
-		_chatAuthorities.Publish( version, authorities );
-		PublishCombatTargets();
+		_chatPositions.Apply( version, connectionId, null );
+		_chatAuthorities.Apply( version, connectionId, null );
+		_combatTargets.Apply( connectionId, null );
 	}
 
-	private void PublishCombatTargets()
+	private void RefreshLiveConnection( ConnectionId connectionId )
 	{
-		var targets = new List<CombatPlayerTarget>();
-		foreach ( var pair in _clients )
+		var version = Math.Max( _presentationRevision, _context.Persistence.Health.Sequence );
+		if ( !_clients.TryGetValue( connectionId, out var binding ) )
 		{
-			var character = FindActiveCharacter( pair.Key );
-			var body = pair.Value.Player.PlayableBody;
-			var main = character is null ? null : MainInventory( character.Id );
-			if ( character is null || body is null || main is null || _combatLifecycle?.GetState( character.Id ) is not null ) continue;
-			if ( _combatHealth.Require( character.Id ).Failed ) _combatHealth.Publish( character.Id, 100, 100 );
-			targets.Add( new CombatPlayerTarget(
-				character.Id.Value.ToString( "D" ),
-				new InventoryActor( pair.Key, pair.Value.AccountId, character.Id ),
-				main.Id,
-				DropTransform( body ) ) );
+			RemoveLiveConnection( connectionId );
+			return;
 		}
-		_combatTargets.Publish( targets );
+		var character = FindActiveCharacter( connectionId );
+		var body = binding.Player.PlayableBody;
+		if ( character is null || body is null )
+		{
+			_chatPositions.Apply( version, connectionId, null );
+			_chatAuthorities.Apply( version, connectionId, null );
+			_combatTargets.Apply( connectionId, null );
+			return;
+		}
+
+		var position = body.WorldPosition;
+		_chatPositions.Apply( version, connectionId, new LiveChatConnection(
+			connectionId, character.Id, new ChatPosition( position.x, position.y, position.z ) ) );
+		_chatAuthorities.Apply( version, connectionId, new LiveChatAuthority(
+			connectionId,
+			character.AccountId,
+			character.Id,
+			character.Faction,
+			HL2RPRuntimeProjection.PermissionsFor( character ) ) );
+
+		var main = MainInventory( character.Id );
+		if ( main is null || _combatLifecycle?.GetState( character.Id ) is not null )
+		{
+			_combatTargets.Apply( connectionId, null );
+			return;
+		}
+		if ( _combatHealth.Require( character.Id ).Failed ) _combatHealth.Publish( character.Id, 100, 100 );
+		_combatTargets.Apply( connectionId, new CombatPlayerTarget(
+			character.Id.Value.ToString( "D" ),
+			new InventoryActor( connectionId, binding.AccountId, character.Id ),
+			main.Id,
+			DropTransform( body ) ) );
 	}
 
 	private string? ResolveCombatTargetToken( GameObject hit )
@@ -1614,19 +2177,112 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 		return null;
 	}
 
-	private CharacterId? OwningCharacter( InventoryRecord inventory, IReadOnlyList<InventoryRecord> all )
+	private void RebuildProjectionIndex() => _projectionIndex.Rebuild(
+		_repositories.Inventories.All(),
+		_repositories.Items.All(),
+		_repositories.Characters.All(),
+		_repositories.CharacterReferences.All(),
+		_repositories.SceneEntities.All() );
+
+	private HL2RPPresentationChangeSet EnrichChanges(
+		ConnectionId connectionId,
+		ClientCommand command,
+		HL2RPPresentationChangeSet changes,
+		CommandProjectionDelta projectionDelta,
+		InventoryId? mainBefore,
+		ItemId? restraintTieBefore )
 	{
-		var current = inventory;
-		var seen = new HashSet<InventoryId>();
-		while ( seen.Add( current.Id ) )
+		if ( changes.IsEmpty && !projectionDelta.HasPersistentChanges ) return changes;
+		var inventories = new HashSet<InventoryId>( changes.Inventories );
+		var items = new HashSet<ItemId>( changes.Items );
+		var sceneEntities = new HashSet<SceneEntityId>( changes.SceneEntities );
+		var documents = new HashSet<DocumentAddress>( changes.Documents );
+		var connections = new HashSet<ConnectionId>( changes.Connections );
+		var characters = new HashSet<CharacterId>( changes.Characters );
+		connections.UnionWith( projectionDelta.Connections );
+		characters.UnionWith( projectionDelta.Characters );
+		inventories.UnionWith( projectionDelta.Inventories );
+		items.UnionWith( projectionDelta.Items );
+		sceneEntities.UnionWith( projectionDelta.SceneEntities );
+		documents.UnionWith( projectionDelta.Documents );
+		if ( command is RunSchemaCommandCommand && changes.RebuildLiveInventory && mainBefore is InventoryId main )
+			inventories.Add( main );
+		if ( command is RunSchemaCommandCommand { CommandId: HL2RPIds.Commands.RestraintSet } &&
+			restraintTieBefore is ItemId tie ) items.Add( tie );
+		_projectionIndex.InvalidateVisibility( connectionId );
+		return changes with
 		{
-			if ( current.Owner.Kind == InventoryOwnerKind.Character ) return new CharacterId( current.Owner.OwnerId );
-			if ( current.Owner.Kind != InventoryOwnerKind.ParentItem ) return null;
-			var parent = new ItemId( current.Owner.OwnerId );
-			current = all.FirstOrDefault( candidate => candidate.Find( parent ) is not null )!;
-			if ( current is null ) return null;
+			Connections = connections.ToArray(),
+			Characters = characters.ToArray(),
+			Inventories = inventories.ToArray(),
+			Items = items.ToArray(),
+			SceneEntities = sceneEntities.ToArray(),
+			Documents = documents.ToArray(),
+			Broadcast = changes.Broadcast || projectionDelta.Broadcast,
+			RebuildLiveInventory = changes.RebuildLiveInventory || projectionDelta.RebuildLiveInventory ||
+				projectionDelta.Inventories.Count > 0 || projectionDelta.Items.Count > 0,
+			RebuildCombatTargets = changes.RebuildCombatTargets || projectionDelta.RebuildCombatTargets
+		};
+	}
+
+	private void PublishChanges( HL2RPPresentationChangeSet changes, CommitReceipt receipt ) =>
+		PublishChanges( changes, new[] { receipt } );
+
+	private void PublishChanges( HL2RPPresentationChangeSet changes, IReadOnlyList<CommitReceipt> receipts )
+	{
+		ArgumentNullException.ThrowIfNull( receipts );
+		var applied = receipts.OrderBy( value => value.Sequence )
+			.Select( receipt => _projectionIndex.Apply( receipt, _repositories ) )
+			.ToArray();
+		var receiptInventories = applied.SelectMany( value => value.AffectedInventories ).ToHashSet();
+		var receiptItems = applied.SelectMany( value => value.AffectedLiveItems ).ToHashSet();
+		if ( receiptInventories.Count > 0 || receiptItems.Count > 0 )
+		{
+			receiptInventories.UnionWith( changes.Inventories );
+			receiptItems.UnionWith( changes.Items );
+			changes = changes with
+			{
+				Inventories = receiptInventories.OrderBy( value => value.Value ).ToArray(),
+				Items = receiptItems.OrderBy( value => value.Value ).ToArray(),
+				RebuildLiveInventory = true
+			};
 		}
-		return null;
+		if ( changes.IsEmpty ) return;
+		foreach ( var connection in changes.Connections ) _projectionIndex.InvalidateRuntime( connection );
+		foreach ( var character in changes.Characters )
+			if ( _projectionIndex.ConnectionForCharacter( character ) is ConnectionId connection )
+				_projectionIndex.InvalidateRuntime( connection );
+		if ( changes.RebuildLiveConnections )
+			_projectionIndex.InvalidateRuntimeDependency( "roster-membership", "global" );
+		if ( changes.RebuildCombatTargets )
+			_projectionIndex.InvalidateRuntimeDependency( "combat-lifecycle", "global" );
+		IReadOnlyList<ConnectionId> affectedInventoryViewers = Array.Empty<ConnectionId>();
+		if ( changes.RebuildLiveInventory )
+		{
+			affectedInventoryViewers = _projectionIndex.RefreshViewers( changes.Inventories, _access.GetViewers );
+			ApplyLiveInventory( changes, applied );
+		}
+		if ( changes.RebuildLiveConnections || changes.RebuildCombatTargets )
+		{
+			var liveConnections = new HashSet<ConnectionId>( changes.Connections );
+			foreach ( var character in changes.Characters )
+				if ( _projectionIndex.ConnectionForCharacter( character ) is ConnectionId connection )
+					liveConnections.Add( connection );
+			foreach ( var connection in liveConnections ) RefreshLiveConnection( connection );
+		}
+		if ( changes.Broadcast )
+		{
+			PublishAll();
+			return;
+		}
+		var recipients = HL2RPPresentationPlanner.ResolveRecipients(
+			changes, _projectionIndex.ConnectionForCharacter, _projectionIndex.ConnectionsForAccount,
+			_projectionIndex.Viewers, _projectionIndex.SceneViewers )
+			.Concat( affectedInventoryViewers )
+			.Distinct()
+			.OrderBy( value => value.Value )
+			.ToArray();
+		PublishConnections( recipients );
 	}
 
 	private void SendCharacterList( Connection connection, AccountId accountId ) =>
@@ -1662,9 +2318,34 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 	{
 		if ( _disposed ) return;
 		var publication = _presentationInvalidation.BeginPublication( _clock.UtcNow );
+		PublishConnections( _clients.Keys );
+		_presentationInvalidation.AcknowledgePublished( publication );
+	}
+
+	private void PublishDuePresentation( DateTimeOffset nowUtc )
+	{
+		if ( _disposed ) return;
+		var publication = _presentationInvalidation.BeginPublication( nowUtc );
+		if ( publication.RequiresBroadcast )
+			PublishConnections( _clients.Keys, invalidateRuntime: true );
+		else
+			PublishConnections( publication.ConnectionGenerations.Keys, invalidateRuntime: true );
+		_presentationInvalidation.AcknowledgePublished( publication );
+	}
+
+	private void PublishConnections(
+		IEnumerable<ConnectionId> connectionIds,
+		bool invalidateRuntime = false )
+	{
+		if ( _disposed ) return;
+		var recipients = connectionIds.Distinct().ToArray();
+		var coveredInvalidations = _presentationInvalidation.BeginConnectionPublication( recipients );
 		var revision = Math.Max( ++_presentationRevision, _context.Persistence.Health.Sequence );
-		foreach ( var pair in _clients.ToArray() )
+		foreach ( var connectionId in recipients )
 		{
+			if ( invalidateRuntime ) _projectionIndex.InvalidateRuntime( connectionId );
+			if ( !_clients.TryGetValue( connectionId, out var binding ) ) continue;
+			var pair = new KeyValuePair<ConnectionId, ClientBinding>( connectionId, binding );
 			var character = FindActiveCharacter( pair.Key );
 			var publicSnapshot = PublicSnapshot( pair.Key, pair.Value, character );
 			PlayerPrivateSnapshot? privateSnapshot = null;
@@ -1675,25 +2356,114 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 			};
 			if ( character is not null )
 			{
-				privateSnapshot = BuildPrivateSnapshot( character, MainInventory( character.Id )?.Id );
-				inventories = BuildInventories( pair.Key, character.Id );
-				views = views.Concat( BuildSchemaViews( pair.Key, character, revision ) ).ToArray();
+				var mainInventoryId = MainInventory( character.Id )?.Id;
+				privateSnapshot = _projectionIndex.GetOrCreateSlice(
+					pair.Key,
+					HL2RPProjectionSliceKind.PrivatePlayer,
+					() => new HL2RPProjectionSlice<PlayerPrivateSnapshot>(
+						BuildPrivateSnapshot( character, mainInventoryId ),
+						PrivateProjectionDocuments( character.Id, mainInventoryId ),
+						new[] { HL2RPProjectionIndex.RuntimeDependency( "connection", pair.Key.ToString() ) } ) );
+				inventories = _projectionIndex.GetOrCreateSlice(
+					pair.Key,
+					HL2RPProjectionSliceKind.Inventories,
+					() => BuildInventoryProjectionSlice( pair.Key, character.Id ) );
+				var cachedViews = _projectionIndex.GetOrCreateSlice(
+					pair.Key,
+					HL2RPProjectionSliceKind.SchemaViews,
+					() => BuildSchemaProjectionSlice( pair.Key, character ) );
+				views = views.Concat( cachedViews.Select( view => new SchemaViewSnapshot(
+					view.PanelId, revision, view.Fields, view.Rows ) ) ).ToArray();
 			}
 			_context.Transport.SendClientState(
 				pair.Value.Connection,
 				publicSnapshot,
 				privateSnapshot,
-				BuildRoster( pair.Key, revision ),
+				_projectionIndex.GetOrCreateSlice(
+					pair.Key,
+					HL2RPProjectionSliceKind.Roster,
+					() => BuildRosterProjectionSlice( pair.Key ) ).WithRevision( revision ),
 				views,
 				inventories,
 				BuildActionProgress( pair.Key ) );
 		}
-		_presentationInvalidation.AcknowledgePublished( publication );
+		_presentationInvalidation.AcknowledgePublished( coveredInvalidations );
+	}
+
+	private IReadOnlyList<DocumentAddress> PrivateProjectionDocuments(
+		CharacterId characterId,
+		InventoryId? mainInventoryId )
+	{
+		var documents = new List<DocumentAddress>
+		{
+			new( DomainCollections.Characters, DomainKeys.Character( characterId ) )
+		};
+		if ( mainInventoryId is InventoryId inventoryId )
+			documents.Add( new DocumentAddress( DomainCollections.Inventories, DomainKeys.Inventory( inventoryId ) ) );
+		return documents;
+	}
+
+	private HL2RPProjectionSlice<IReadOnlyList<InventorySnapshot>> BuildInventoryProjectionSlice(
+		ConnectionId connectionId,
+		CharacterId characterId )
+	{
+		var value = BuildInventories( connectionId, characterId );
+		_projectionIndex.ObserveVisibleInventories(
+			connectionId, value.Select( inventory => inventory.InventoryId ) );
+		var documents = new HashSet<DocumentAddress>
+		{
+			new( DomainCollections.Characters, DomainKeys.Character( characterId ) )
+		};
+		foreach ( var inventory in value )
+		{
+			documents.Add( new DocumentAddress(
+				DomainCollections.Inventories, DomainKeys.Inventory( inventory.InventoryId ) ) );
+			foreach ( var item in inventory.Items )
+				documents.Add( new DocumentAddress( DomainCollections.Items, DomainKeys.Item( item.ItemId ) ) );
+		}
+		foreach ( var session in _sessions?.ActiveSessions.Where( value =>
+			value.ConnectionId == connectionId && value.Target.Kind == InteractionTargetKind.SceneEntity ) ??
+			Array.Empty<InteractionSession>() )
+			documents.Add( new DocumentAddress( DomainCollections.SceneEntities,
+				DomainKeys.SceneEntity( new SceneEntityId( session.Target.Id ) ) ) );
+		return new HL2RPProjectionSlice<IReadOnlyList<InventorySnapshot>>(
+			value, documents.ToArray(),
+			new[] { HL2RPProjectionIndex.RuntimeDependency( "connection", connectionId.ToString() ) } );
+	}
+
+	private HL2RPProjectionSlice<IReadOnlyList<SchemaViewSnapshot>> BuildSchemaProjectionSlice(
+		ConnectionId connectionId,
+		CharacterRecord character )
+	{
+		var value = BuildSchemaViews( connectionId, character, 0 );
+		var documents = new HashSet<DocumentAddress>
+		{
+			new( DomainCollections.Characters, DomainKeys.Character( character.Id ) )
+		};
+		var civicSubject = _civicSubjects.Resolve(
+			connectionId, character.Id,
+			candidate => _repositories.Characters.Find( DomainKeys.Character( candidate ) ) is not null );
+		documents.Add( new DocumentAddress( DomainCollections.Characters, DomainKeys.Character( civicSubject ) ) );
+		if ( _projectionIndex.FirstSceneEntity( "city" ) is PersistentSceneEntityRecord city )
+			documents.Add( new DocumentAddress( DomainCollections.SceneEntities, DomainKeys.SceneEntity( city.Id ) ) );
+		foreach ( var reference in _projectionIndex.CharacterReferenceKeys( character.Id ) )
+			documents.Add( new DocumentAddress( DomainCollections.CharacterReferences, reference ) );
+		foreach ( var session in _sessions?.ActiveSessions.Where( session =>
+			session.ConnectionId == connectionId && session.Target.Kind == InteractionTargetKind.SceneEntity ) ??
+			Array.Empty<InteractionSession>() )
+		{
+			var scene = new SceneEntityId( session.Target.Id );
+			documents.Add( new DocumentAddress( DomainCollections.SceneEntities, DomainKeys.SceneEntity( scene ) ) );
+			foreach ( var reference in _projectionIndex.CharacterReferenceAddressesForScene( scene ) ) documents.Add( reference );
+		}
+		return new HL2RPProjectionSlice<IReadOnlyList<SchemaViewSnapshot>>(
+			value, documents.ToArray(),
+			new[] { HL2RPProjectionIndex.RuntimeDependency( "connection", connectionId.ToString() ) } );
 	}
 
 	private ActionProgressSnapshot? BuildActionProgress( ConnectionId connectionId )
 	{
-		if ( _activeRestraintActions.TryGetValue( connectionId, out var action ) )
+		if ( _activeRestraintActions.TryGet( connectionId, out var action ) )
 			return new ActionProgressSnapshot(
 				action.Ticket.TicketId.Value,
 				new ActionId( HL2RPIds.Actions.Restrain ),
@@ -1701,7 +2471,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 				action.Ticket.CompletesAtUtc - RestraintService.RestraintDuration,
 				RestraintService.RestraintDuration,
 				true );
-		if ( _activePistolActions.TryGetValue( connectionId, out var pistol ) )
+		if ( _activePistolActions.TryGet( connectionId, out var pistol ) )
 			return new ActionProgressSnapshot(
 				pistol.InstanceId,
 				new ActionId( HL2RPIds.Actions.Fire ),
@@ -1766,7 +2536,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 			values[$"interaction.{session.Kind.ToString().ToLowerInvariant()}_session"] = SnapshotValue.String( session.Id.Value.ToString( "D" ) );
 		var connection = _clients.FirstOrDefault( value => value.Value.CharacterId == character.Id ).Key;
 		values["action.active"] = SnapshotValue.Boolean(
-			_activeRestraintActions.ContainsKey( connection ) || _activePistolActions.ContainsKey( connection ) );
+			_activeRestraintActions.Contains( connection ) || _activePistolActions.Contains( connection ) );
 		if ( _itemActionPresentations.TryGetValue( connection, out var itemPresentation ) &&
 			itemPresentation.CharacterId == character.Id )
 		{
@@ -1786,13 +2556,26 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 		return new PlayerPrivateSnapshot( character.Id, character.Balance, mainInventoryId, values, baseline.Permissions );
 	}
 
-	private PlayerRosterSnapshot BuildRoster( ConnectionId recipient, long revision )
+	private HL2RPProjectionSlice<PlayerRosterSnapshot> BuildRosterProjectionSlice( ConnectionId recipient )
 	{
 		var rows = new List<PlayerRosterRowSnapshot>();
+		var documents = new HashSet<DocumentAddress>();
 		var viewer = FindActiveCharacter( recipient );
+		if ( viewer is not null )
+			documents.Add( new DocumentAddress( DomainCollections.Characters, DomainKeys.Character( viewer.Id ) ) );
 		foreach ( var pair in _clients.OrderBy( value => value.Key.Value ) )
 		{
 			var character = FindActiveCharacter( pair.Key );
+			if ( character is not null )
+			{
+				documents.Add( new DocumentAddress(
+					DomainCollections.Characters, DomainKeys.Character( character.Id ) ) );
+				if ( viewer is not null && viewer.Id != character.Id &&
+					character.Faction.Value is not (HL2RPIds.Factions.CivilProtection or HL2RPIds.Factions.Overwatch) )
+					documents.Add( new DocumentAddress(
+						DomainCollections.CharacterReferences,
+						$"recognition-{viewer.Id}-{character.Id}" ) );
+			}
 			var isDead = character is not null && _combatLifecycle?.GetState( character.Id ) is not null;
 			var fields = new Dictionary<string, SnapshotValue>( StringComparer.Ordinal )
 			{
@@ -1807,7 +2590,13 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 			};
 			rows.Add( new PlayerRosterRowSnapshot( pair.Key, character?.Id, fields ) );
 		}
-		return new PlayerRosterSnapshot( revision, rows );
+		return new HL2RPProjectionSlice<PlayerRosterSnapshot>(
+			new PlayerRosterSnapshot( 0, rows ), documents.ToArray(),
+			new[]
+			{
+				HL2RPProjectionIndex.RuntimeDependency( "roster-membership", "global" ),
+				HL2RPProjectionIndex.RuntimeDependency( "combat-lifecycle", "global" )
+			} );
 	}
 
 	private string DisplayNameFor( CharacterRecord? viewer, CharacterRecord subject )
@@ -1818,17 +2607,18 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 		var snapshots = new List<InventorySnapshot>();
 		var character = _repositories.Characters.Find( DomainKeys.Character( characterId ) )?.Value;
 		if ( character is null ) return snapshots;
-		foreach ( var document in _repositories.Inventories.All() )
+		foreach ( var document in _projectionIndex.VisibleInventories(
+			connectionId, characterId,
+			inventoryId => _access.Has( connectionId, characterId, inventoryId, InventoryCapability.View ) ) )
 		{
 			var inventory = document.Value;
-			if ( !_access.Has( connectionId, characterId, inventory.Id, InventoryCapability.View ) ) continue;
 			var kind = inventory.Owner == InventoryOwner.Character( characterId )
 				? InventoryViewKind.Main
 				: inventory.Owner.Kind == InventoryOwnerKind.SceneEntity
 					? InventoryViewKind.Storage
 					: inventory.Owner.Kind == InventoryOwnerKind.Character ? InventoryViewKind.Search : InventoryViewKind.Bag;
 			var inventoryItems = inventory.Placements
-				.Select( placement => _repositories.Items.Find( DomainKeys.Item( placement.ItemId ) )?.Value )
+				.Select( placement => _projectionIndex.TryGetItem( placement.ItemId, out var item ) ? item : null )
 				.Where( item => item is not null )
 				.ToDictionary( item => item!.Id, item => item! );
 			var items = new List<InventoryItemSnapshot>();
@@ -1908,8 +2698,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 		var routed = _executableActions.CreateSnapshot(
 			item.Definition, new ActionId( action ), action.Replace( '_', ' ' ) );
 		var health = _combatHealth.Require( character.Id );
-		var nestedBags = _repositories.Inventories.All().Count( candidate =>
-			candidate.Value.Owner == InventoryOwner.ParentItem( item.Id ) );
+		var nestedBags = _projectionIndex.NestedInventoryCount( item.Id );
 		return HL2RPItemActionAvailability.Project( routed, new HL2RPItemActionAvailabilityContext
 		{
 			Character = character,
@@ -1988,8 +2777,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 			vendor.Value,
 			_access.Has( connectionId, character.Id, inventory.Id,
 				InventoryCapability.View | InventoryCapability.TransferOut | InventoryCapability.Sell ),
-			_repositories.Inventories.All().Any( candidate =>
-				candidate.Value.Owner == InventoryOwner.ParentItem( item.Id ) ),
+			_projectionIndex.NestedInventoryCount( item.Id ) > 0,
 			PermitInspector.HasValidPermit(
 				_repositories, character.Id, vendor.Value.RequiredPermit, _clock.UtcNow ),
 			policy.Succeeded );
@@ -2056,27 +2844,24 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 		if ( document is null || document.Kind != "door" ) return null;
 		var decoded = HL2RPFeaturePersistence.Decode( document.State, HL2RPPersistence.DoorState );
 		if ( decoded.Failed ) return null;
-		var owners = _repositories.CharacterReferences.All()
-			.Where( value => value.Value.Category == "door_ownership" && value.Value.SceneEntityId == id )
-			.Select( value => value.Value.CharacterId )
-			.ToArray();
-		var ownerStatus = owners.Length switch
+		var owners = _projectionIndex.DoorOwners( id );
+		var ownerStatus = owners.Count switch
 		{
 			0 => "unowned",
 			1 when owners[0] == character.Id => "self",
 			1 => "other",
 			_ => "conflict"
 		};
-		var canClaim = owners.Length == 0 && !decoded.Value.CombineLocked;
-		var claimReason = canClaim ? string.Empty : owners.Length switch
+		var canClaim = owners.Count == 0 && !decoded.Value.CombineLocked;
+		var claimReason = canClaim ? string.Empty : owners.Count switch
 		{
 			> 1 => "Door ownership is ambiguous.",
 			1 when owners[0] == character.Id => "You already own this door.",
 			1 => "This door is owned by another character.",
 			_ => "A Combine-locked door cannot be claimed."
 		};
-		var canRelease = owners.Length == 1 && owners[0] == character.Id;
-		var releaseReason = canRelease ? string.Empty : owners.Length switch
+		var canRelease = owners.Count == 1 && owners[0] == character.Id;
+		var releaseReason = canRelease ? string.Empty : owners.Count switch
 		{
 			> 1 => "Door ownership is ambiguous.",
 			1 => "Only the current owner may release this door.",
@@ -2132,20 +2917,14 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 	private SchemaViewSnapshot ObjectiveView( CharacterRecord character, long revision )
 	{
 		var rows = new List<IReadOnlyDictionary<string, SnapshotValue>>();
-		var city = _repositories.SceneEntities.All().Select( value => value.Value ).FirstOrDefault( value => value.Kind == "city" );
+		var city = _projectionIndex.FirstSceneEntity( "city" );
 		if ( city is not null )
 		{
 			try
 			{
 				var state = HL2RPPersistence.CityState.Deserialize( city.State.Data, city.State.TypeVersion );
-				foreach ( var objective in state.Objectives ) rows.Add( new Dictionary<string, SnapshotValue>( StringComparer.Ordinal )
-				{
-					[HL2RPPresentationFields.Objectives.ObjectiveId] = SnapshotValue.Choice( objective.Id ),
-					[HL2RPPresentationFields.Objectives.Title] = SnapshotValue.String( objective.Text.Split( '\n' )[0] ),
-					[HL2RPPresentationFields.Objectives.Detail] = SnapshotValue.String( string.Join( "\n", objective.Text.Split( '\n' ).Skip( 1 ) ) ),
-					[HL2RPPresentationFields.Objectives.UpdatedAtUnixMilliseconds] = SnapshotValue.Integer( objective.UpdatedAtUtc.ToUnixTimeMilliseconds() ),
-					[HL2RPPresentationFields.Objectives.Completed] = SnapshotValue.Boolean( objective.Completed )
-				} );
+				foreach ( var objective in HL2RPObjectiveProjection.Rows( state ) )
+					rows.Add( new Dictionary<string, SnapshotValue>( objective, StringComparer.Ordinal ) );
 			}
 			catch ( Exception ) { rows.Clear(); }
 		}
@@ -2261,29 +3040,51 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 
 	private void RestoreWorldItems()
 	{
-		foreach ( var world in _worldItems.LoadWorldItems() ) RestoreWorldItem( world.ItemId );
+		foreach ( var world in _worldItems.LoadWorldItems() )
+			LogWorldItemBoundaryError( world.ItemId, "startup_restore", RestoreWorldItem( world.ItemId ) );
 	}
 
-	private void RestoreWorldItem( ItemId itemId )
+	private OperationError? RestoreWorldItem( ItemId itemId )
 	{
-		if ( _worldObjects.ContainsKey( itemId ) ) return;
+		if ( _worldObjects.ContainsKey( itemId ) ) return null;
 		var world = _repositories.WorldItems.Find( DomainKeys.WorldItem( itemId ) )?.Value;
 		var item = _repositories.Items.Find( DomainKeys.Item( itemId ) )?.Value;
 		if ( world is null || item is null || !_context.Schema.Items.TryGet( item.Definition.Value, out var definition ) ||
-			string.IsNullOrWhiteSpace( definition!.WorldModel ) || !_worldModels.IsValidModel( definition.WorldModel ) ) return;
-		var gameObject = new GameObject( true, $"HL2RP World Item {itemId}" );
-		gameObject.WorldPosition = new Vector3( world.Transform.PositionX, world.Transform.PositionY, world.Transform.PositionZ );
-		gameObject.WorldRotation = new Rotation(
-			world.Transform.RotationX, world.Transform.RotationY,
-			world.Transform.RotationZ, world.Transform.RotationW );
-		gameObject.WorldTransform = gameObject.WorldTransform.WithScale( 0.5f );
-		var renderer = gameObject.AddComponent<ModelRenderer>();
-		renderer.Model = Model.Load( definition.WorldModel );
-		var collider = gameObject.AddComponent<BoxCollider>();
-		collider.Scale = new Vector3( 24f, 24f, 24f );
-		gameObject.AddComponent<HL2RPWorldItemPressable>().HostBind( itemId );
-		gameObject.NetworkSpawn();
-		_worldObjects[itemId] = gameObject;
+			string.IsNullOrWhiteSpace( definition!.WorldModel ) || !_worldModels.IsValidModel( definition.WorldModel ) ) return null;
+		GameObject? gameObject = null;
+		try
+		{
+			gameObject = new GameObject( true, $"HL2RP World Item {itemId}" );
+			gameObject.WorldPosition = new Vector3( world.Transform.PositionX, world.Transform.PositionY, world.Transform.PositionZ );
+			gameObject.WorldRotation = new Rotation(
+				world.Transform.RotationX, world.Transform.RotationY,
+				world.Transform.RotationZ, world.Transform.RotationW );
+			gameObject.WorldTransform = gameObject.WorldTransform.WithScale( 0.5f );
+			var renderer = gameObject.AddComponent<ModelRenderer>();
+			renderer.Model = Model.Load( definition.WorldModel );
+			var collider = gameObject.AddComponent<BoxCollider>();
+			collider.Scale = new Vector3( 24f, 24f, 24f );
+			gameObject.AddComponent<HL2RPWorldItemPressable>().HostBind( itemId );
+			gameObject.NetworkSpawn();
+			_worldObjects[itemId] = gameObject;
+			return null;
+		}
+		catch ( Exception exception )
+		{
+			try { if ( gameObject is not null && gameObject.IsValid() ) gameObject.Destroy(); }
+			catch ( Exception ) { }
+			_worldObjects.Remove( itemId );
+			return new OperationError(
+				ErrorCode.InternalError,
+				$"Committed world item could not be materialized: {exception.Message}" );
+		}
+	}
+
+	private static void LogWorldItemBoundaryError( ItemId itemId, string stage, OperationError? error )
+	{
+		if ( error is not null )
+			Log.Warning( $"HL2RP_WORLD_ITEM_DEGRADED item={itemId.Value:D} stage={stage} " +
+				$"code={error.Code} message={error.Message}" );
 	}
 
 	private async ValueTask RunVerificationProbeAsync()
@@ -2369,7 +3170,20 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 			Log.Info( $"HL2RP_PROBE_RECOVERED sequence={_context.Persistence.Health.Sequence} digest={digest}" );
 		}
 		else throw new InvalidOperationException( "Unknown verification probe." );
-		if ( HexagonRuntimeSystem.Current is not null ) _ = await HexagonRuntimeSystem.Current.ShutdownAsync();
+		// The probe runs inside the maintenance supervisor. Starting shutdown is
+		// synchronous, but awaiting it here would deadlock when application disposal
+		// waits for this maintenance tick to return.
+		if ( HexagonRuntimeSystem.Current is not null )
+			_ = HexagonRuntimeSystem.Current.ShutdownAsync();
+	}
+
+	private void SetBindingCharacter( ConnectionId connectionId, CharacterId? characterId )
+	{
+		var binding = _clients[connectionId];
+		if ( binding.CharacterId == characterId ) return;
+		_clients[connectionId] = binding with { CharacterId = characterId };
+		_projectionIndex.ObserveCharacterBindingChanged( connectionId, binding.CharacterId, characterId );
+		RefreshLiveConnection( connectionId );
 	}
 
 	private InventoryActor LoadConnectedProbeCharacter(
@@ -2398,7 +3212,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 			Capabilities = CharacterCapabilities,
 			Kind = InventoryGrantKind.Character
 		} );
-		_clients[connectionId] = binding with { CharacterId = character.Id };
+		SetBindingCharacter( connectionId, character.Id );
 		return new InventoryActor( connectionId, binding.AccountId, character.Id );
 	}
 
@@ -2529,16 +3343,40 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 		DateTimeOffset ReadyAtUtc,
 		CancellationTokenSource Cancellation );
 
+	private sealed class CommandProjectionDelta
+	{
+		public HashSet<InventoryId> Inventories { get; } = new();
+		public HashSet<ItemId> Items { get; } = new();
+		public HashSet<SceneEntityId> SceneEntities { get; } = new();
+		public HashSet<DocumentAddress> Documents { get; } = new();
+		public HashSet<ConnectionId> Connections { get; } = new();
+		public HashSet<CharacterId> Characters { get; } = new();
+		public List<CommitReceipt> Receipts { get; } = new();
+		public bool Broadcast { get; set; }
+		public bool RebuildLiveInventory { get; set; }
+		public bool RebuildCombatTargets { get; set; }
+		public bool HasPersistentChanges => Receipts.Count > 0 || Inventories.Count > 0 ||
+			Items.Count > 0 || SceneEntities.Count > 0 || Documents.Count > 0 ||
+			Connections.Count > 0 || Characters.Count > 0 || Broadcast ||
+			RebuildLiveInventory || RebuildCombatTargets;
+
+		public void Observe( CommitReceipt receipt )
+		{
+			ArgumentNullException.ThrowIfNull( receipt );
+			if ( !Receipts.Any( existing => existing.Sequence == receipt.Sequence ) ) Receipts.Add( receipt );
+			Documents.UnionWith( receipt.Documents.Select( value => value.Address ) );
+		}
+
+		public void Observe( IHL2RPCommittedOperation operation ) => Observe( operation.Commit );
+	}
+
 	private sealed class HL2RPCombatLifecycleBoundary : ICombatLifecycleBoundary
 	{
 		private readonly HL2RPHostApplication _owner;
 		public HL2RPCombatLifecycleBoundary( HL2RPHostApplication owner ) => _owner = owner;
 		public void ClearSessions( InventoryActor actor )
 		{
-			if ( _owner._activeRestraintActions.Remove( actor.ConnectionId, out var restraintAction ) )
-				restraintAction.Cancellation.Cancel();
-			if ( _owner._activePistolActions.Remove( actor.ConnectionId, out var pistolAction ) )
-				pistolAction.Cancellation.Cancel();
+			_owner.CancelTimedActionsForLifecycle( actor.ConnectionId, actor.CharacterId );
 			_owner._access.RevokeCharacter( actor.ConnectionId, actor.CharacterId );
 			_owner._interactions?.CharacterChanged( actor.ConnectionId, actor.CharacterId );
 			_owner._combatIntent?.ClearCharacter( actor.CharacterId );
@@ -2548,19 +3386,49 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 				var stripped = binding.Player.HostStripPlayableBody();
 				if ( stripped.Failed ) Log.Error( $"Failed to strip dead player body: {stripped.Error!.Message}" );
 			}
-			_owner.PublishCombatTargets();
+			_owner.RefreshLiveConnection( actor.ConnectionId );
 		}
 		public void PublishDeath( DeathTransitionReceipt transition )
 		{
 			_owner._presentationInvalidation.TrackDeathDeadline(
 				transition.Respawn.CharacterId, transition.Respawn.RespawnAvailableAtUtc );
 			if ( transition.DroppedPistol is not null )
-				_owner.RestoreWorldItem( transition.DroppedPistol.ItemId );
-			_owner.PublishAll();
+				LogWorldItemBoundaryError(
+					transition.DroppedPistol.ItemId,
+					"death_drop_restore",
+					_owner.RestoreWorldItem( transition.DroppedPistol.ItemId ) );
+			// The command outcome owns publication so the fire and optional death
+			// receipts produce one assembled snapshot for the resulting revision.
 		}
 		// The host finishes body, grant, and health restoration before publishing a
 		// respawn. Publishing from inside CombatLifecycleService would expose an
 		// alive snapshot before those authorities are restored.
 		public void PublishRespawn( DeathRespawnState state ) { }
+	}
+
+	private sealed class HL2RPScannerCommitSink : IScannerCommitSink
+	{
+		private readonly HL2RPHostApplication _owner;
+		public HL2RPScannerCommitSink( HL2RPHostApplication owner ) => _owner = owner;
+
+		public void Observe( ScannerPilotCleanupReceipt receipt )
+		{
+			try
+			{
+				LogScannerBoundaryError( receipt.BoundaryError );
+				_owner.PublishChanges(
+					new HL2RPPresentationChangeSet
+					{
+						Connections = new[] { receipt.Session.Actor.ConnectionId },
+						SceneEntities = new[] { receipt.Session.ScannerId }
+					},
+					receipt.Commit );
+			}
+			catch ( Exception exception )
+			{
+				Log.Error( exception,
+					$"HL2RP scanner cleanup receipt {receipt.CommitSequence} could not be projected." );
+			}
+		}
 	}
 }

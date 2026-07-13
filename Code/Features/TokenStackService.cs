@@ -12,7 +12,8 @@ public sealed record TokenStackReceipt(
 	ItemId PrimaryItemId,
 	ItemId? SecondaryItemId,
 	long PrimaryAmount,
-	long CommitSequence );
+	long CommitSequence,
+	CommitReceipt Commit ) : IHL2RPCommittedOperation;
 
 public sealed class TokenStackService
 {
@@ -76,6 +77,8 @@ public sealed class TokenStackService
 			}
 		};
 		var staged = new Dictionary<ItemId, DefinitionId> { [secondary.Id] = secondary.Definition };
+		var layoutDependencies = HL2RPUnitOfWork.CaptureInventoryLayout(
+			_repositories, proof.Value.Inventory.Value );
 		var fit = _layout.FindFirstFit( proof.Value.Inventory.Value, secondary, staged );
 		if ( fit.Failed )
 			return OperationResult<TokenStackReceipt>.Failure( fit.Error!.Code, fit.Error.Message );
@@ -89,6 +92,9 @@ public sealed class TokenStackService
 			return OperationResult<TokenStackReceipt>.Failure(
 				inventoryAfter.Error!.Code, inventoryAfter.Error.Message );
 		var unitOfWork = _repositories.Provider.BeginUnitOfWork();
+		unitOfWork.Require( proof.Value.Access );
+		HL2RPUnitOfWork.RequireActorState( unitOfWork, _repositories, proof.Value.Character );
+		HL2RPUnitOfWork.RequireInventoryLayout( unitOfWork, _repositories, layoutDependencies );
 		var primaryEditor = unitOfWork.Edit( _repositories.Items, proof.Value.Item );
 		var inventoryEditor = unitOfWork.Edit( _repositories.Inventories, proof.Value.Inventory );
 		if ( primaryEditor is null || inventoryEditor is null )
@@ -109,7 +115,8 @@ public sealed class TokenStackService
 			stackItemId,
 			secondary.Id,
 			proof.Value.State.Amount - amount,
-			committed.Value!.Sequence );
+			committed.Value!.Sequence,
+			committed.Value );
 		Publish( actor, receipt );
 		return OperationResult<TokenStackReceipt>.Success( receipt );
 	}
@@ -149,6 +156,9 @@ public sealed class TokenStackService
 				.ToArray()
 		};
 		var unitOfWork = _repositories.Provider.BeginUnitOfWork();
+		unitOfWork.Require( primary.Value.Access );
+		unitOfWork.Require( secondary.Value.Access );
+		HL2RPUnitOfWork.RequireActorState( unitOfWork, _repositories, primary.Value.Character );
 		var primaryEditor = unitOfWork.Edit( _repositories.Items, primary.Value.Item );
 		var inventoryEditor = unitOfWork.Edit( _repositories.Inventories, primary.Value.Inventory );
 		if ( primaryEditor is null || inventoryEditor is null )
@@ -169,7 +179,8 @@ public sealed class TokenStackService
 			primaryItemId,
 			secondaryItemId,
 			total,
-			committed.Value!.Sequence );
+			committed.Value!.Sequence,
+			committed.Value );
 		Publish( actor, receipt );
 		return OperationResult<TokenStackReceipt>.Success( receipt );
 	}
@@ -187,11 +198,12 @@ public sealed class TokenStackService
 		if ( character.Value.AccountId != actor.AccountId || inventory.Value.Find( itemId ) is null ||
 			item.Value.Definition.Value != HL2RPIds.Items.TokenStack )
 			return OperationResult<StackProof>.Failure( ErrorCode.Unauthorized, "Token stack membership proof failed." );
-		if ( !_access.Has(
+		var access = _access.Prove(
 			actor.ConnectionId,
 			actor.CharacterId,
 			inventoryId,
-			InventoryCapability.View | InventoryCapability.Move | InventoryCapability.Use ) )
+			InventoryCapability.View | InventoryCapability.Move | InventoryCapability.Use );
+		if ( access is null )
 			return OperationResult<StackProof>.Failure( ErrorCode.Unauthorized, "Token stack capability is missing." );
 		if ( !item.Value.Traits.TryGetValue( "tokens", out var payload ) )
 			return OperationResult<StackProof>.Failure( ErrorCode.PersistedTypeInvalid, "Token stack state is missing." );
@@ -200,7 +212,7 @@ public sealed class TokenStackService
 			return OperationResult<StackProof>.Failure(
 				state.Failed ? state.Error!.Code : ErrorCode.Conflict,
 				state.Failed ? state.Error!.Message : "Token stack amount is invalid." );
-		return OperationResult<StackProof>.Success( new StackProof( inventory, item, state.Value ) );
+		return OperationResult<StackProof>.Success( new StackProof( character, inventory, item, state.Value, access ) );
 	}
 
 	private OperationResult EvaluatePolicy(
@@ -237,7 +249,9 @@ public sealed class TokenStackService
 	}
 
 	private sealed record StackProof(
+		DocumentSnapshot<CharacterRecord> Character,
 		DocumentSnapshot<InventoryRecord> Inventory,
 		DocumentSnapshot<ItemRecord> Item,
-		TokenStackItemState State );
+		TokenStackItemState State,
+		InventoryAccessProof Access );
 }

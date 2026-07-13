@@ -247,6 +247,49 @@ public sealed class CommunicationsAuthorityTests
 	}
 
 	[TestMethod]
+	public async Task InterleavedAccessRevocationRejectsRequestWithoutFactOrCooldown()
+	{
+		await using var environment = await FeatureTestEnvironment.CreateAsync();
+		var actor = environment.Actor();
+		var character = environment.Character( actor );
+		var device = Device( powered: true );
+		var inventory = environment.Inventory(
+			actor.CharacterId, new[] { new InventoryPlacement( device.Id, 0, 0 ) } );
+		await environment.SeedAsync( unit =>
+		{
+			unit.Create( environment.Repositories.Characters, DomainKeys.Character( character.Id ), character );
+			unit.Create( environment.Repositories.Items, DomainKeys.Item( device.Id ), device );
+			unit.Create( environment.Repositories.Inventories, DomainKeys.Inventory( inventory.Id ), inventory );
+		} );
+		environment.Grant( actor, inventory.Id, InventoryCapability.View | InventoryCapability.Use );
+		var requests = new RecordingHandler<RequestFact>();
+		var service = new RequestDeviceService(
+			environment.Repositories,
+			environment.Access,
+			environment.Clock,
+			FeatureTestEnvironment.AllowPolicy(),
+			requests.Bus() );
+		var itemBefore = environment.Repositories.Items.Find( DomainKeys.Item( device.Id ) )!;
+		environment.Provider.InterleaveNextCommit( () =>
+		{
+			environment.Access.RevokeConnection( actor.ConnectionId );
+			return Task.CompletedTask;
+		} );
+
+		var result = await service.SendAsync(
+			actor, inventory.Id, device.Id, "This authority becomes stale" );
+
+		Assert.AreEqual( ErrorCode.Conflict, result.Error!.Code );
+		Assert.IsEmpty( requests.Events );
+		var persisted = environment.Repositories.Items.Find( DomainKeys.Item( device.Id ) )!;
+		Assert.AreEqual( itemBefore.Revision, persisted.Revision );
+		var state = HL2RPFeaturePersistence.Decode(
+			persisted.Value.Traits["request_device"], HL2RPPersistence.RequestDevice );
+		Assert.IsTrue( state.Succeeded, state.Error?.Message );
+		Assert.IsNull( state.Value.LastRequestAtUtc );
+	}
+
+	[TestMethod]
 	public void RequestAndDispatchUseCurrentRoleAuthorityNotPossessedDevicesOrRadios()
 	{
 		var sender = new InventoryActor( ConnectionId.New(), new AccountId( 50 ), CharacterId.New() );

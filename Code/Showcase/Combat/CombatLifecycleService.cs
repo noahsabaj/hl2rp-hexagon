@@ -28,7 +28,9 @@ public sealed record DeathRespawnState(
 public sealed record DeathTransitionReceipt(
 	DeathRespawnState Respawn,
 	WorldItemRecord? DroppedPistol,
-	long CommitSequence);
+	long CommitSequence,
+	CommitReceipt? Commit = null,
+	OperationError? BoundaryError = null);
 
 public interface ICombatLifecycleBoundary
 {
@@ -151,6 +153,7 @@ public sealed class CombatLifecycleService
 
 		WorldItemRecord? worldItem = null;
 		long sequence = 0;
+		CommitReceipt? commitReceipt = null;
 		if (equipped.Count == 1)
 		{
 			var pistol = equipped[0];
@@ -189,15 +192,39 @@ public sealed class CombatLifecycleService
 			var committed = await HL2RPUnitOfWork.CommitAndDisposeAsync(unitOfWork, cancellationToken);
 			if (!committed.Succeeded) return CombatPersistence.Failure<DeathTransitionReceipt>(committed.Error!);
 			sequence = committed.Value!.Sequence;
+			commitReceipt = committed.Value;
 		}
 
 		var now = _clock.UtcNow;
 		var respawn = new DeathRespawnState(actor.AccountId, actor.CharacterId, now,
 			now + _respawnDelay, cause.Trim());
-		var receipt = new DeathTransitionReceipt(respawn, worldItem, sequence);
+		var receipt = new DeathTransitionReceipt(respawn, worldItem, sequence, commitReceipt);
 		_deaths.Add(actor.CharacterId, respawn);
-		_boundary.ClearSessions(actor);
-		_boundary.PublishDeath(receipt);
+		OperationError? boundaryError = null;
+		try
+		{
+			_boundary.ClearSessions(actor);
+		}
+		catch (Exception exception)
+		{
+			boundaryError = new OperationError(
+				ErrorCode.InternalError,
+				$"Death committed, but combat-session cleanup failed: {exception.Message}");
+		}
+		try
+		{
+			_boundary.PublishDeath(receipt);
+		}
+		catch (Exception exception)
+		{
+			var message = $"Death committed, but presentation failed: {exception.Message}";
+			boundaryError = boundaryError is null
+				? new OperationError(ErrorCode.InternalError, message)
+				: new OperationError(
+					ErrorCode.InternalError,
+					$"{boundaryError.Message} {message}");
+		}
+		if (boundaryError is not null) receipt = receipt with { BoundaryError = boundaryError };
 		return OperationResult<DeathTransitionReceipt>.Success(receipt);
 	}
 

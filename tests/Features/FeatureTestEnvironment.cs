@@ -114,6 +114,27 @@ internal sealed class FeatureTestEnvironment : IAsyncDisposable
 		stage( unitOfWork );
 		var committed = await unitOfWork.CommitAsync();
 		if ( !committed.Succeeded ) throw new InvalidOperationException( committed.Error!.Message );
+		var missingOwnerIndexes = Repositories.Inventories.All()
+			.Select( document => document.Value )
+			.Where( inventory => inventory.Owner.Kind is InventoryOwnerKind.Character or InventoryOwnerKind.ParentItem )
+			.Select( inventory => new OwnerInventoryRecord
+			{
+				Owner = inventory.Owner,
+				Role = inventory.Owner.Kind == InventoryOwnerKind.Character ? "main" : "bag",
+				InventoryId = inventory.Id
+			} )
+			.GroupBy( index => DomainKeys.OwnerInventory( index.Owner, index.Role ), StringComparer.Ordinal )
+			.Select( group => group.First() )
+			.Where( index => Repositories.OwnerInventories.Find(
+				DomainKeys.OwnerInventory( index.Owner, index.Role ) ) is null )
+			.ToArray();
+		if ( missingOwnerIndexes.Length == 0 ) return;
+		await using var indexUnit = Provider.BeginUnitOfWork();
+		foreach ( var index in missingOwnerIndexes )
+			indexUnit.Create( Repositories.OwnerInventories,
+				DomainKeys.OwnerInventory( index.Owner, index.Role ), index );
+		var indexed = await indexUnit.CommitAsync();
+		if ( !indexed.Succeeded ) throw new InvalidOperationException( indexed.Error!.Message );
 	}
 
 	public void Grant( InventoryActor actor, InventoryId inventory, InventoryCapability capabilities ) =>
@@ -124,6 +145,21 @@ internal sealed class FeatureTestEnvironment : IAsyncDisposable
 			InventoryId = inventory,
 			Capabilities = capabilities,
 			Kind = InventoryGrantKind.Character
+		} );
+
+	public void GrantSession(
+		InventoryActor actor,
+		InventoryId inventory,
+		InventoryCapability capabilities,
+		InteractionSessionId sessionId ) =>
+		Access.Grant( new InventoryGrant
+		{
+			ConnectionId = actor.ConnectionId,
+			CharacterId = actor.CharacterId,
+			InventoryId = inventory,
+			Capabilities = capabilities,
+			Kind = InventoryGrantKind.InteractionSession,
+			SessionId = sessionId
 		} );
 
 	public static PolicyPipeline<HL2RPFeaturePolicyContext> AllowPolicy() => new(
@@ -153,13 +189,21 @@ internal sealed class MutableClock : IHexClock
 
 internal sealed class FakeSceneSessionResolver : ISceneSessionResolver
 {
-	private readonly Dictionary<InteractionSessionId, BoundSceneSession> _bindings = new();
+	private readonly Dictionary<InteractionSessionId, FakeBinding> _bindings = new();
+	private long _revision;
 
 	public InteractionSessionId Bind( SceneEntityId sceneEntityId, InteractionSessionKind kind = InteractionSessionKind.Vendor )
 	{
 		var id = InteractionSessionId.New();
-		_bindings[id] = new BoundSceneSession( id, kind, sceneEntityId );
+		_bindings[id] = new FakeBinding( kind, sceneEntityId, checked(++_revision) );
 		return id;
+	}
+
+	public bool Revoke( InteractionSessionId id )
+	{
+		if ( !_bindings.Remove( id ) ) return false;
+		_revision = checked(_revision + 1);
+		return true;
 	}
 
 	public OperationResult<BoundSceneSession> Resolve(
@@ -167,8 +211,45 @@ internal sealed class FakeSceneSessionResolver : ISceneSessionResolver
 		InteractionSessionId sessionId,
 		InteractionSessionKind expectedKind ) =>
 		_bindings.TryGetValue( sessionId, out var binding ) && binding.Kind == expectedKind
-			? OperationResult<BoundSceneSession>.Success( binding )
+			? OperationResult<BoundSceneSession>.Success( new BoundSceneSession(
+				sessionId,
+				binding.Kind,
+				binding.SceneEntityId,
+				new FakeSceneSessionProof( this, sessionId, binding.Revision ) ) )
 			: OperationResult<BoundSceneSession>.Failure( ErrorCode.Unauthorized, "stale session" );
+
+	private bool IsCurrent( InteractionSessionId id, long revision ) =>
+		_bindings.TryGetValue( id, out var binding ) && binding.Revision == revision;
+
+	private sealed record FakeBinding(
+		InteractionSessionKind Kind,
+		SceneEntityId SceneEntityId,
+		long Revision );
+
+	private sealed class FakeSceneSessionProof : ICommitPrecondition
+	{
+		private readonly FakeSceneSessionResolver _owner;
+		private readonly InteractionSessionId _id;
+		private readonly long _revision;
+
+		public FakeSceneSessionProof(
+			FakeSceneSessionResolver owner,
+			InteractionSessionId id,
+			long revision )
+		{
+			_owner = owner;
+			_id = id;
+			_revision = revision;
+		}
+
+		public PersistenceInvariantIssue? Validate( CommitPreconditionContext context ) =>
+			_owner.IsCurrent( _id, _revision )
+				? null
+				: new PersistenceInvariantIssue(
+					"interaction.session.stale",
+					$"interaction-session/{_id}",
+					"Interaction session changed after the action was planned." );
+	}
 }
 
 internal sealed class RecordingHandler<TEvent> : IEventHandler<TEvent>
@@ -192,6 +273,10 @@ internal sealed class FaultPersistenceProvider : IPersistenceProvider
 	public PersistedTypeRegistry Types => _inner.Types;
 	public PersistenceHealth Health => _inner.Health;
 	public bool IsInitialized => _inner.IsInitialized;
+	public PersistenceProviderState State => _inner.State;
+	public Guid StoreId => _inner.StoreId;
+	public Guid WriterEpoch => _inner.WriterEpoch;
+	public long CompactionGeneration => _inner.CompactionGeneration;
 	public void FailNextCommit() => _failNextCommit = true;
 	public void InterleaveNextCommit( Func<Task> action ) =>
 		_beforeNextCommit = action ?? throw new ArgumentNullException( nameof(action) );
@@ -202,8 +287,8 @@ internal sealed class FaultPersistenceProvider : IPersistenceProvider
 	public IUnitOfWork BeginUnitOfWork() => new FaultUnitOfWork( this, _inner.BeginUnitOfWork() );
 	public ValueTask<PersistenceResult<long>> CheckpointAsync( CancellationToken cancellationToken = default ) =>
 		_inner.CheckpointAsync( cancellationToken );
-	public ValueTask DrainAsync( CancellationToken cancellationToken = default ) =>
-		_inner.DrainAsync( cancellationToken );
+	public ValueTask<PersistenceShutdownResult> ShutdownAsync( CancellationToken cancellationToken = default ) =>
+		_inner.ShutdownAsync( cancellationToken );
 	public ValueTask DisposeAsync() => _inner.DisposeAsync();
 
 	private bool ConsumeFailure()
@@ -242,6 +327,7 @@ internal sealed class FaultPersistenceProvider : IPersistenceProvider
 		public void Save<T>( DocumentEditor<T> editor ) where T : class => _inner.Save( editor );
 		public void Delete<T>( IPersistenceRepository<T> repository, DocumentSnapshot<T> observed ) where T : class =>
 			_inner.Delete( repository, observed );
+		public void Require( ICommitPrecondition precondition ) => _inner.Require( precondition );
 		public async ValueTask<PersistenceResult<CommitReceipt>> CommitAsync(
 			CancellationToken cancellationToken = default )
 		{

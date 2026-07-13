@@ -132,15 +132,14 @@ public sealed class BagInteractionService
 			sourceInventoryId,
 			InventoryCapability.View | InventoryCapability.Use ) )
 			return OperationResult<InventoryRecord>.Failure( ErrorCode.Unauthorized, "Bag use capability is missing." );
-		var children = _repositories.Inventories.All()
-			.Where( inventory => inventory.Value.Owner == InventoryOwner.ParentItem( bagItemId ) )
-			.Select( inventory => inventory.Value )
-			.ToArray();
-		return children.Length == 1
-			? OperationResult<InventoryRecord>.Success( children[0] )
+		var ownerIndex = _repositories.OwnerInventories.Find(
+			DomainKeys.OwnerInventory( InventoryOwner.ParentItem( bagItemId ), "bag" ) );
+		var child = ownerIndex is null ? null : _repositories.Inventories.Find(
+			DomainKeys.Inventory( ownerIndex.Value.InventoryId ) )?.Value;
+		return child is not null && child.Owner == InventoryOwner.ParentItem( bagItemId )
+			? OperationResult<InventoryRecord>.Success( child )
 			: OperationResult<InventoryRecord>.Failure(
-				children.Length == 0 ? ErrorCode.NotFound : ErrorCode.Conflict,
-				"Bag must own exactly one nested inventory." );
+				ErrorCode.NotFound, "Bag must own exactly one indexed nested inventory." );
 	}
 
 	private void OnSessionRevoked( InteractionSession session )

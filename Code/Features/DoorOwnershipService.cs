@@ -11,7 +11,8 @@ public sealed record DoorOwnershipReceipt(
 	SceneEntityId DoorEntityId,
 	CharacterId CharacterId,
 	bool Claimed,
-	long CommitSequence );
+	long CommitSequence,
+	CommitReceipt Commit ) : IHL2RPCommittedOperation;
 
 /// <summary>
 /// The sole personal-door ownership boundary. Ownership lives only in the indexed
@@ -23,6 +24,7 @@ public sealed class DoorOwnershipService
 	private const string ReferenceCategory = "door_ownership";
 
 	private readonly DomainRepositories _repositories;
+	private readonly CharacterReferenceMutationService _references;
 	private readonly ISceneSessionResolver _sessions;
 	private readonly IHexClock _clock;
 	private readonly PolicyPipeline<HL2RPFeaturePolicyContext> _policy;
@@ -38,6 +40,7 @@ public sealed class DoorOwnershipService
 		PostCommitEventBus<AdminAuditFact>? audit = null )
 	{
 		_repositories = repositories;
+		_references = new CharacterReferenceMutationService( repositories );
 		_sessions = sessions;
 		_clock = clock;
 		_policy = policy;
@@ -70,17 +73,16 @@ public sealed class DoorOwnershipService
 		if ( claim && resolved.Value.State.CombineLocked )
 			return OperationResult<DoorOwnershipReceipt>.Failure(
 				ErrorCode.PolicyDenied, "A Combine-locked door cannot be personally claimed." );
-		var references = _repositories.CharacterReferences.All()
-			.Where( reference => reference.Value.Category == ReferenceCategory &&
-				reference.Value.SceneEntityId == resolved.Value.Door.Value.Id )
-			.ToArray();
-		if ( references.Length > 1 )
+		var referenceKey = ReferenceKey( resolved.Value.Door.Value.Id );
+		var reference = _repositories.CharacterReferences.Find( referenceKey );
+		if ( reference is not null && (reference.Value.Category != ReferenceCategory ||
+			reference.Value.SceneEntityId != resolved.Value.Door.Value.Id) )
 			return OperationResult<DoorOwnershipReceipt>.Failure(
-				ErrorCode.Conflict, "Door has ambiguous ownership references." );
-		if ( claim && references.Length == 1 )
+				ErrorCode.Conflict, "Canonical door ownership reference is malformed." );
+		if ( claim && reference is not null )
 			return OperationResult<DoorOwnershipReceipt>.Failure(
 				ErrorCode.Conflict, "Door is already owned." );
-		if ( !claim && (references.Length == 0 || references[0].Value.CharacterId != actor.CharacterId) )
+		if ( !claim && (reference is null || reference.Value.CharacterId != actor.CharacterId) )
 			return OperationResult<DoorOwnershipReceipt>.Failure(
 				ErrorCode.Unauthorized, "Only the current owner may release this door." );
 		var operation = claim ? HL2RPFeatureOperation.ClaimDoor : HL2RPFeatureOperation.ReleaseDoor;
@@ -94,9 +96,13 @@ public sealed class DoorOwnershipService
 			return OperationResult<DoorOwnershipReceipt>.Failure(
 				policy.Error!.Code, policy.Error.Message );
 		var unitOfWork = _repositories.Provider.BeginUnitOfWork();
+		unitOfWork.Require( resolved.Value.SessionProof );
+		HL2RPUnitOfWork.RequireActorState( unitOfWork, _repositories, resolved.Value.Character );
+		unitOfWork.RequireUnchanged( _repositories.SceneEntities, resolved.Value.Door );
+		OperationResult staged;
 		if ( claim )
 		{
-			var reference = new CharacterReferenceRecord
+			var ownershipReference = new CharacterReferenceRecord
 			{
 				Category = ReferenceCategory,
 				CharacterId = actor.CharacterId,
@@ -105,14 +111,17 @@ public sealed class DoorOwnershipService
 					HL2RPPersistence.DoorOwnership,
 					new DoorOwnershipReferenceState { AcquiredAtUtc = _clock.UtcNow } )
 			};
-			unitOfWork.Create(
-				_repositories.CharacterReferences,
-				ReferenceKey( resolved.Value.Door.Value.Id ),
-				reference );
+			staged = _references.StageUpsert( unitOfWork, referenceKey, ownershipReference );
 		}
 		else
 		{
-			unitOfWork.Delete( _repositories.CharacterReferences, references[0] );
+			staged = _references.StageDelete( unitOfWork, referenceKey );
+		}
+		if ( staged.Failed )
+		{
+			await HL2RPUnitOfWork.DisposeAsync( unitOfWork );
+			return OperationResult<DoorOwnershipReceipt>.Failure(
+				staged.Error!.Code, staged.Error.Message );
 		}
 		var committed = await HL2RPUnitOfWork.CommitAndDisposeAsync( unitOfWork, cancellationToken );
 		if ( !committed.Succeeded )
@@ -121,7 +130,8 @@ public sealed class DoorOwnershipService
 			resolved.Value.Door.Value.Id,
 			actor.CharacterId,
 			claim,
-			committed.Value!.Sequence );
+			committed.Value!.Sequence,
+			committed.Value );
 		_events.Publish( receipt );
 		HL2RPFeaturePersistence.PublishAudit(
 			_audit,
@@ -148,7 +158,8 @@ public sealed class DoorOwnershipService
 			return OperationResult<ResolvedDoor>.Failure( ErrorCode.NotFound, "Bound door state was not found." );
 		var state = HL2RPFeaturePersistence.Decode( door.Value.State, HL2RPPersistence.DoorState );
 		return state.Succeeded
-			? OperationResult<ResolvedDoor>.Success( new ResolvedDoor( door, state.Value ) )
+			? OperationResult<ResolvedDoor>.Success( new ResolvedDoor(
+				character, door, state.Value, session.Value.CommitProof ) )
 			: OperationResult<ResolvedDoor>.Failure( state.Error!.Code, state.Error.Message );
 	}
 
@@ -156,6 +167,8 @@ public sealed class DoorOwnershipService
 		$"door-ownership-{doorEntityId}";
 
 	private sealed record ResolvedDoor(
+		DocumentSnapshot<CharacterRecord> Character,
 		DocumentSnapshot<PersistentSceneEntityRecord> Door,
-		DoorEntityState State );
+		DoorEntityState State,
+		ICommitPrecondition SessionProof );
 }

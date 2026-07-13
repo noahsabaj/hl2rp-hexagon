@@ -6,9 +6,12 @@ using Hexagon.V2.Kernel;
 using Hexagon.V2.Kernel.Definitions;
 using Hexagon.V2.Kernel.Events;
 using Hexagon.V2.Kernel.Policies;
+using Hexagon.V2.Networking;
 using HL2RP.V2.Domain;
 using HL2RP.V2.Features;
+using HL2RP.V2.Runtime;
 using HL2RP.V2.Schema;
+using HL2RP.UI;
 
 namespace HL2RP.V2.Tests.Features;
 
@@ -72,6 +75,14 @@ public sealed class CivicCommunicationDocumentTests
 			unitOfWork.Create( environment.Repositories.Characters, DomainKeys.Character( viewer.Id ), viewer );
 			unitOfWork.Create( environment.Repositories.Characters, DomainKeys.Character( subject.Id ), subject );
 			unitOfWork.Create(
+				environment.Repositories.CharacterLifecycleGuards,
+				DomainKeys.CharacterLifecycleGuard( viewer.Id ),
+				new CharacterLifecycleGuardRecord { CharacterId = viewer.Id, ReferenceRevision = 0 } );
+			unitOfWork.Create(
+				environment.Repositories.CharacterLifecycleGuards,
+				DomainKeys.CharacterLifecycleGuard( subject.Id ),
+				new CharacterLifecycleGuardRecord { CharacterId = subject.Id, ReferenceRevision = 0 } );
+			unitOfWork.Create(
 				environment.Repositories.SceneEntities,
 				DomainKeys.SceneEntity( cityId ),
 				new PersistentSceneEntityRecord
@@ -94,19 +105,21 @@ public sealed class CivicCommunicationDocumentTests
 			FeatureTestEnvironment.AllowPolicy() );
 
 		var introduced = await recognition.IntroduceAsync( actor, subject.Id );
-		var replaced = await objectives.ReplaceAsync(
-			actor,
-			cityId,
-			new[]
+		var parsed = HL2RPObjectiveCommand.Parse( new HL2RPCommandArguments(
+			new Dictionary<string, SnapshotValue>
 			{
-				new CityObjectiveState
-				{
-					Id = "maintain_order",
-					Text = "Maintain civic order.",
-					Completed = false,
-					UpdatedAtUtc = environment.Clock.UtcNow
-				}
-			} );
+				["objective"] = SnapshotValue.String( string.Empty ),
+				["title"] = SnapshotValue.String( "  Maintain civic order.  " ),
+				["detail"] = SnapshotValue.String( "Report disruptions.\r\nAwait inspection." ),
+				["completed"] = SnapshotValue.Boolean( false )
+			} ) );
+		Assert.IsTrue( parsed.Succeeded, parsed.Error?.Message );
+		var generatedGuid = Guid.Parse( "80b5981b-25a4-4982-a625-4619dc599e6d" );
+		var objectiveId = HL2RPObjectiveCommand.ResolveId( parsed.Value, () => generatedGuid );
+		var candidate = HL2RPObjectiveState.Upsert(
+			Array.Empty<CityObjectiveState>(), objectiveId, parsed.Value.Content,
+			parsed.Value.Completed, environment.Clock.UtcNow );
+		var replaced = await objectives.ReplaceAsync( actor, cityId, candidate );
 
 		Assert.IsTrue( introduced.Succeeded, introduced.Error?.Message );
 		Assert.AreEqual( "Known Citizen", introduced.Value.IntroducedName );
@@ -118,7 +131,27 @@ public sealed class CivicCommunicationDocumentTests
 		var city = environment.Repositories.SceneEntities.Find( DomainKeys.SceneEntity( cityId ) )!.Value;
 		var state = HL2RPPersistence.CityState.Deserialize( city.State.Data, city.State.TypeVersion );
 		Assert.HasCount( 1, state.Objectives );
-		Assert.AreEqual( "maintain_order", state.Objectives[0].Id );
+		Assert.AreEqual( $"objective.{generatedGuid:N}", state.Objectives[0].Id );
+		Assert.AreEqual( "Maintain civic order.", state.Objectives[0].Title );
+		Assert.AreEqual( "Report disruptions.\nAwait inspection.", state.Objectives[0].Detail );
+		var rows = HL2RPObjectiveProjection.Rows( state );
+		Assert.HasCount( 1, rows );
+		Assert.AreEqual( state.Objectives[0].Id,
+			rows[0][HL2RPPresentationFields.Objectives.ObjectiveId].StringValue );
+		Assert.AreEqual( state.Objectives[0].Title,
+			rows[0][HL2RPPresentationFields.Objectives.Title].StringValue );
+		Assert.AreEqual( state.Objectives[0].Detail,
+			rows[0][HL2RPPresentationFields.Objectives.Detail].StringValue );
+		var snapshot = new SchemaViewSnapshot(
+			HL2RPIds.Panels.Objectives,
+			42,
+			new Dictionary<string, SnapshotValue>
+			{
+				[HL2RPPresentationFields.Objectives.CanEdit] = SnapshotValue.Boolean( true )
+			},
+			rows );
+		Assert.AreEqual( 42, snapshot.Revision );
+		Assert.HasCount( 1, snapshot.Rows );
 	}
 
 	[TestMethod]

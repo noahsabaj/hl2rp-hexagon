@@ -164,6 +164,76 @@ public sealed class CommerceServiceTests
 	}
 
 	[TestMethod]
+	public async Task InterleavedVendorSessionRevocationRejectsPurchaseWithIndependentInventoryGrant()
+	{
+		await using var environment = await FeatureTestEnvironment.CreateAsync();
+		var seed = await SeedVendorAsync( environment );
+		var events = new RecordingHandler<CommerceReceipt>();
+		var service = CreateService( environment, FeatureTestEnvironment.AllowPolicy(), events );
+		environment.Provider.InterleaveNextCommit( () =>
+		{
+			Assert.IsTrue( environment.Sessions.Revoke( seed.SessionId ) );
+			return Task.CompletedTask;
+		} );
+
+		var result = await service.BuyAsync(
+			seed.Actor,
+			seed.SessionId,
+			seed.Inventory.Id,
+			new DefinitionId( HL2RPIds.Items.Water ),
+			1 );
+
+		Assert.AreEqual( ErrorCode.Conflict, result.Error!.Code );
+		Assert.AreEqual( 100L, FindCharacter( environment, seed.Actor.CharacterId ).Balance );
+		Assert.AreEqual( 5, FindVendor( environment, seed.VendorId ).Stock[0].Quantity );
+		Assert.HasCount( 1, FindInventory( environment, seed.Inventory.Id ).Placements );
+		Assert.HasCount( 1, environment.Repositories.Items.All() );
+		Assert.IsEmpty( events.Events );
+	}
+
+	[TestMethod]
+	public async Task InterleavedPermitRevocationRejectsPurchaseThatConsultedNestedAuthorizationState()
+	{
+		await using var environment = await FeatureTestEnvironment.CreateAsync();
+		var seed = await SeedVendorAsync( environment );
+		var permitId = seed.Inventory.Placements[0].ItemId;
+		var events = new RecordingHandler<CommerceReceipt>();
+		var service = CreateService( environment, FeatureTestEnvironment.AllowPolicy(), events );
+		environment.Provider.InterleaveNextCommit( async () =>
+		{
+			var permit = environment.Repositories.Items.Find( DomainKeys.Item( permitId ) )!;
+			var state = HL2RPPersistence.BusinessPermit.Deserialize(
+				permit.Value.Traits["permit"].Data,
+				permit.Value.Traits["permit"].TypeVersion );
+			var traits = new Dictionary<string, TypedPayload>( permit.Value.Traits, StringComparer.Ordinal )
+			{
+				["permit"] = HL2RPPersistence.Payload(
+					HL2RPPersistence.BusinessPermit, state with { Revoked = true } )
+			};
+			await using var revoke = environment.Provider.BeginUnitOfWork();
+			var editor = revoke.Edit( environment.Repositories.Items, permit )!;
+			editor.Replace( permit.Value with { Traits = traits } );
+			revoke.Save( editor );
+			var committed = await revoke.CommitAsync();
+			Assert.IsTrue( committed.Succeeded, committed.Error?.Message );
+		} );
+
+		var result = await service.BuyAsync(
+			seed.Actor,
+			seed.SessionId,
+			seed.Inventory.Id,
+			new DefinitionId( HL2RPIds.Items.Water ),
+			1 );
+
+		Assert.AreEqual( ErrorCode.Conflict, result.Error!.Code );
+		Assert.AreEqual( 100L, FindCharacter( environment, seed.Actor.CharacterId ).Balance );
+		Assert.AreEqual( 5, FindVendor( environment, seed.VendorId ).Stock[0].Quantity );
+		Assert.HasCount( 1, FindInventory( environment, seed.Inventory.Id ).Placements );
+		Assert.HasCount( 1, environment.Repositories.Items.All() );
+		Assert.IsEmpty( events.Events );
+	}
+
+	[TestMethod]
 	public async Task MachineDerivesProductFromBoundEntityAndEnforcesCooldown()
 	{
 		await using var environment = await FeatureTestEnvironment.CreateAsync();

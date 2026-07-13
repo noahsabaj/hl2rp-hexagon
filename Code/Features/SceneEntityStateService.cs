@@ -12,12 +12,14 @@ namespace HL2RP.V2.Features;
 public sealed record DoorStateChangedEvent(
 	SceneEntityId SceneEntityId,
 	DoorEntityState State,
-	long CommitSequence );
+	long CommitSequence,
+	CommitReceipt Commit ) : IHL2RPCommittedOperation;
 
 public sealed record ForcefieldStateChangedEvent(
 	SceneEntityId SceneEntityId,
 	ForcefieldEntityState State,
-	long CommitSequence );
+	long CommitSequence,
+	CommitReceipt Commit ) : IHL2RPCommittedOperation;
 
 /// <summary>
 /// Transactional mutation boundary for scene state that has live physical
@@ -68,9 +70,15 @@ public sealed class HL2RPSceneEntityBehaviorService
 		if ( policy.Failed ) return Failure<DoorStateChangedEvent>( policy.Error! );
 
 		var next = loaded.Value.State with { IsOpen = !loaded.Value.State.IsOpen };
-		var committed = await CommitAsync( loaded.Value.Document, HL2RPPersistence.Payload( HL2RPPersistence.DoorState, next ), cancellationToken );
+		var committed = await CommitAsync(
+			loaded.Value.Character,
+			loaded.Value.Document,
+			HL2RPPersistence.Payload( HL2RPPersistence.DoorState, next ),
+			session.Value.CommitProof,
+			cancellationToken );
 		if ( !committed.Succeeded ) return HL2RPFeaturePersistence.Failure<DoorStateChangedEvent>( committed.Error! );
-		var receipt = new DoorStateChangedEvent( loaded.Value.Document.Value.Id, next, committed.Value!.Sequence );
+		var receipt = new DoorStateChangedEvent(
+			loaded.Value.Document.Value.Id, next, committed.Value!.Sequence, committed.Value );
 		_doorEvents.Publish( receipt );
 		PublishAudit( actor, HL2RPFeatureOperation.ToggleDoor, receipt.SceneEntityId, receipt.CommitSequence );
 		return OperationResult<DoorStateChangedEvent>.Success( receipt );
@@ -87,9 +95,15 @@ public sealed class HL2RPSceneEntityBehaviorService
 		if ( policy.Failed ) return Failure<ForcefieldStateChangedEvent>( policy.Error! );
 
 		var next = loaded.Value.State with { Enabled = !loaded.Value.State.Enabled };
-		var committed = await CommitAsync( loaded.Value.Document, HL2RPPersistence.Payload( HL2RPPersistence.ForcefieldState, next ), cancellationToken );
+		var committed = await CommitAsync(
+			loaded.Value.Character,
+			loaded.Value.Document,
+			HL2RPPersistence.Payload( HL2RPPersistence.ForcefieldState, next ),
+			null,
+			cancellationToken );
 		if ( !committed.Succeeded ) return HL2RPFeaturePersistence.Failure<ForcefieldStateChangedEvent>( committed.Error! );
-		var receipt = new ForcefieldStateChangedEvent( sceneEntityId, next, committed.Value!.Sequence );
+		var receipt = new ForcefieldStateChangedEvent(
+			sceneEntityId, next, committed.Value!.Sequence, committed.Value );
 		_forcefieldEvents.Publish( receipt );
 		PublishAudit( actor, HL2RPFeatureOperation.ToggleForcefield, sceneEntityId, receipt.CommitSequence );
 		return OperationResult<ForcefieldStateChangedEvent>.Success( receipt );
@@ -105,14 +119,10 @@ public sealed class HL2RPSceneEntityBehaviorService
 			HL2RPIds.Factions.CivilProtection or HL2RPIds.Factions.Overwatch;
 		if ( state.CombineLocked && !combine )
 			return OperationResult.Failure( ErrorCode.Unauthorized, "A Combine-locked door requires a CP or Overwatch role." );
-		var owners = _repositories.CharacterReferences.All()
-			.Where( value => value.Value.Category == DoorOwnershipCategory &&
-				value.Value.SceneEntityId == doorId )
-			.Select( value => value.Value.CharacterId )
-			.ToArray();
-		if ( owners.Length > 1 )
-			return OperationResult.Failure( ErrorCode.Conflict, "Door has ambiguous ownership references." );
-		if ( owners.Length == 1 && owners[0] != actor.CharacterId && !combine )
+		var owner = _repositories.CharacterReferences.Find( $"door-ownership-{doorId}" );
+		if ( owner is not null && (owner.Value.Category != DoorOwnershipCategory || owner.Value.SceneEntityId != doorId) )
+			return OperationResult.Failure( ErrorCode.Conflict, "Canonical door ownership reference is malformed." );
+		if ( owner is not null && owner.Value.CharacterId != actor.CharacterId && !combine )
 			return OperationResult.Failure( ErrorCode.Unauthorized, "Only the owner or Combine may operate this door." );
 		return OperationResult.Success();
 	}
@@ -138,11 +148,15 @@ public sealed class HL2RPSceneEntityBehaviorService
 	}
 
 	private async ValueTask<PersistenceResult<CommitReceipt>> CommitAsync(
+		DocumentSnapshot<CharacterRecord> character,
 		DocumentSnapshot<PersistentSceneEntityRecord> document,
 		TypedPayload state,
+		ICommitPrecondition? sessionProof,
 		CancellationToken cancellationToken )
 	{
 		var unit = _repositories.Provider.BeginUnitOfWork();
+		if ( sessionProof is not null ) unit.Require( sessionProof );
+		HL2RPUnitOfWork.RequireActorState( unit, _repositories, character );
 		var editor = unit.Edit( _repositories.SceneEntities, document );
 		if ( editor is null )
 		{

@@ -3,24 +3,39 @@
 using System.Threading;
 using System.Threading.Tasks;
 using Hexagon.V2.Kernel.Events;
+using Hexagon.V2.Persistence;
 
 namespace HL2RP.V2.Features;
 
 public sealed record CivicMutationReceipt(
 	CharacterId CharacterId,
 	CivicRecordState CivicRecord,
-	long CommitSequence );
+	long CommitSequence,
+	CommitReceipt Commit ) : IHL2RPCommittedOperation;
 
 public sealed record IntroductionReceipt(
 	CharacterId ViewerCharacterId,
 	CharacterId SubjectCharacterId,
 	string IntroducedName,
-	long CommitSequence );
+	long CommitSequence,
+	CommitReceipt Commit ) : IHL2RPCommittedOperation;
 
 public sealed record CityObjectivesReceipt(
 	SceneEntityId CityEntityId,
 	IReadOnlyList<CityObjectiveState> Objectives,
-	long CommitSequence );
+	CommitReceipt CommitReceipt ) : IHL2RPCommittedOperation
+{
+	public long CommitSequence => CommitReceipt.Sequence;
+	CommitReceipt IHL2RPCommittedOperation.Commit => CommitReceipt;
+}
+
+public sealed record CityObjectiveChangeReceipt(
+	string ObjectiveId,
+	CityObjectiveChangeKind Kind,
+	CityObjectivesReceipt State ) : IHL2RPCommittedOperation
+{
+	public CommitReceipt Commit => State.CommitReceipt;
+}
 
 public interface ICharacterEncounterAuthorizer
 {
@@ -203,7 +218,8 @@ public sealed class CivicService
 		var committed = await HL2RPUnitOfWork.CommitAndDisposeAsync( unitOfWork, cancellationToken );
 		if ( !committed.Succeeded )
 			return HL2RPFeaturePersistence.Failure<CivicMutationReceipt>( committed.Error! );
-		var receipt = new CivicMutationReceipt( targetCharacterId, changed.Value.CivicRecord, committed.Value!.Sequence );
+		var receipt = new CivicMutationReceipt(
+			targetCharacterId, changed.Value.CivicRecord, committed.Value!.Sequence, committed.Value );
 		_events.Publish( receipt );
 		HL2RPFeaturePersistence.PublishAudit(
 			_audit, actor, operation, targetCharacterId.ToString(), _clock.UtcNow, committed.Value.Sequence );
@@ -222,6 +238,7 @@ public sealed class CivicService
 public sealed class RecognitionService
 {
 	private readonly DomainRepositories _repositories;
+	private readonly CharacterReferenceMutationService _references;
 	private readonly IHexClock _clock;
 	private readonly ICharacterEncounterAuthorizer _encounters;
 	private readonly PolicyPipeline<HL2RPFeaturePolicyContext> _policy;
@@ -237,6 +254,7 @@ public sealed class RecognitionService
 		PostCommitEventBus<AdminAuditFact>? audit = null )
 	{
 		_repositories = repositories;
+		_references = new CharacterReferenceMutationService( repositories );
 		_clock = clock;
 		_encounters = encounters ?? throw new ArgumentNullException( nameof(encounters) );
 		_policy = policy;
@@ -283,27 +301,19 @@ public sealed class RecognitionService
 			State = HL2RPPersistence.Payload( HL2RPPersistence.Recognition, state )
 		};
 		var unitOfWork = _repositories.Provider.BeginUnitOfWork();
-		var existing = _repositories.CharacterReferences.Find( key );
-		if ( existing is null )
+		var staged = _references.StageUpsert( unitOfWork, key, reference );
+		if ( staged.Failed )
 		{
-			unitOfWork.Create( _repositories.CharacterReferences, key, reference );
-		}
-		else
-		{
-			var editor = unitOfWork.Edit( _repositories.CharacterReferences, existing );
-			if ( editor is null )
-			{
-				await HL2RPUnitOfWork.DisposeAsync( unitOfWork );
-				return OperationResult<IntroductionReceipt>.Failure( ErrorCode.Conflict, "Recognition changed." );
-			}
-			editor.Replace( reference );
-			unitOfWork.Save( editor );
+			await HL2RPUnitOfWork.DisposeAsync( unitOfWork );
+			return OperationResult<IntroductionReceipt>.Failure(
+				staged.Error!.Code, staged.Error.Message );
 		}
 		var committed = await HL2RPUnitOfWork.CommitAndDisposeAsync( unitOfWork, cancellationToken );
 		if ( !committed.Succeeded )
 			return HL2RPFeaturePersistence.Failure<IntroductionReceipt>( committed.Error! );
 		var receipt = new IntroductionReceipt(
-			actor.CharacterId, subjectCharacterId, subject.Value.Name, committed.Value!.Sequence );
+			actor.CharacterId, subjectCharacterId, subject.Value.Name,
+			committed.Value!.Sequence, committed.Value );
 		_events.Publish( receipt );
 		HL2RPFeaturePersistence.PublishAudit(
 			_audit,
@@ -311,7 +321,7 @@ public sealed class RecognitionService
 			HL2RPFeatureOperation.Introduce,
 			subjectCharacterId.ToString(),
 			_clock.UtcNow,
-			committed.Value.Sequence );
+			committed.Value!.Sequence );
 		return OperationResult<IntroductionReceipt>.Success( receipt );
 	}
 }
@@ -345,30 +355,66 @@ public sealed class CityObjectiveService
 		CancellationToken cancellationToken = default )
 	{
 		ArgumentNullException.ThrowIfNull( objectives );
-		if ( objectives.Count > 32 || objectives.Any( objective =>
-			string.IsNullOrWhiteSpace( objective.Id ) || string.IsNullOrWhiteSpace( objective.Text ) ||
-			objective.Text.Length > 512 || objective.Text.Any( char.IsControl ) || objective.UpdatedAtUtc == default ) ||
-			objectives.Select( objective => objective.Id ).Distinct( StringComparer.Ordinal ).Count() != objectives.Count )
+		var validObjectives = CityObjectiveContract.Validate( objectives );
+		if ( validObjectives.Failed )
 			return OperationResult<CityObjectivesReceipt>.Failure(
-				ErrorCode.InvalidArgument, "City objectives are duplicated, empty or exceed limits." );
-		try
-		{
-			foreach ( var objective in objectives ) StableIdentifier.Require( objective.Id, nameof(objectives) );
-		}
-		catch ( ArgumentException )
-		{
+				validObjectives.Error!.Code, validObjectives.Error.Message );
+		var context = LoadAuthorized( actor, cityEntityId );
+		if ( context.Failed )
 			return OperationResult<CityObjectivesReceipt>.Failure(
-				ErrorCode.InvalidArgument, "City objective ID is invalid." );
-		}
+				context.Error!.Code, context.Error.Message );
+		return await CommitAsync(
+			actor, cityEntityId, context.Value.Document, objectives, cancellationToken );
+	}
+
+	/// <summary>
+	/// Applies a single objective command against the same document revision that
+	/// is committed. This prevents a route-level read followed by whole-list replace
+	/// from silently overwriting a concurrent objective change.
+	/// </summary>
+	public async ValueTask<OperationResult<CityObjectiveChangeReceipt>> ApplyAsync(
+		InventoryActor actor,
+		SceneEntityId cityEntityId,
+		CityObjectiveChange change,
+		Func<Guid> newId,
+		CancellationToken cancellationToken = default )
+	{
+		ArgumentNullException.ThrowIfNull( change );
+		ArgumentNullException.ThrowIfNull( newId );
+		var context = LoadAuthorized( actor, cityEntityId );
+		if ( context.Failed )
+			return OperationResult<CityObjectiveChangeReceipt>.Failure(
+				context.Error!.Code, context.Error.Message );
+		var applied = CityObjectiveContract.Apply(
+			context.Value.State.Objectives, change, _clock.UtcNow, newId );
+		if ( applied.Failed )
+			return OperationResult<CityObjectiveChangeReceipt>.Failure(
+				applied.Error!.Code, applied.Error.Message );
+		var committed = await CommitAsync(
+			actor, cityEntityId, context.Value.Document, applied.Value.Objectives, cancellationToken );
+		return committed.Succeeded
+			? OperationResult<CityObjectiveChangeReceipt>.Success( new CityObjectiveChangeReceipt(
+				applied.Value.ObjectiveId, applied.Value.Kind, committed.Value ) )
+			: OperationResult<CityObjectiveChangeReceipt>.Failure(
+				committed.Error!.Code, committed.Error.Message );
+	}
+
+	private OperationResult<CityObjectiveCommitContext> LoadAuthorized(
+		InventoryActor actor,
+		SceneEntityId cityEntityId )
+	{
 		var actorCharacter = _repositories.Characters.Find( DomainKeys.Character( actor.CharacterId ) );
 		if ( actorCharacter is null || actorCharacter.Value.AccountId != actor.AccountId )
-			return OperationResult<CityObjectivesReceipt>.Failure( ErrorCode.Unauthorized, "Actor binding is invalid." );
+			return OperationResult<CityObjectiveCommitContext>.Failure(
+				ErrorCode.Unauthorized, "Actor binding is invalid." );
 		var document = _repositories.SceneEntities.Find( DomainKeys.SceneEntity( cityEntityId ) );
 		if ( document is null || document.Value.Kind != "city" )
-			return OperationResult<CityObjectivesReceipt>.Failure( ErrorCode.NotFound, "City state was not found." );
+			return OperationResult<CityObjectiveCommitContext>.Failure(
+				ErrorCode.NotFound, "City state was not found." );
 		var decoded = HL2RPFeaturePersistence.Decode( document.Value.State, HL2RPPersistence.CityState );
 		if ( decoded.Failed )
-			return OperationResult<CityObjectivesReceipt>.Failure( decoded.Error!.Code, decoded.Error.Message );
+			return OperationResult<CityObjectiveCommitContext>.Failure(
+				decoded.Error!.Code, decoded.Error.Message );
 		var policy = _policy.Evaluate( new HL2RPFeaturePolicyContext
 		{
 			Actor = actor,
@@ -376,7 +422,23 @@ public sealed class CityObjectiveService
 			SceneEntityId = cityEntityId
 		} );
 		if ( policy.Failed )
-			return OperationResult<CityObjectivesReceipt>.Failure( policy.Error!.Code, policy.Error.Message );
+			return OperationResult<CityObjectiveCommitContext>.Failure(
+				policy.Error!.Code, policy.Error.Message );
+		return OperationResult<CityObjectiveCommitContext>.Success(
+			new CityObjectiveCommitContext( document, decoded.Value ) );
+	}
+
+	private async ValueTask<OperationResult<CityObjectivesReceipt>> CommitAsync(
+		InventoryActor actor,
+		SceneEntityId cityEntityId,
+		DocumentSnapshot<PersistentSceneEntityRecord> document,
+		IReadOnlyList<CityObjectiveState> objectives,
+		CancellationToken cancellationToken )
+	{
+		var validObjectives = CityObjectiveContract.Validate( objectives );
+		if ( validObjectives.Failed )
+			return OperationResult<CityObjectivesReceipt>.Failure(
+				validObjectives.Error!.Code, validObjectives.Error.Message );
 		var after = document.Value with
 		{
 			State = HL2RPPersistence.Payload(
@@ -395,7 +457,8 @@ public sealed class CityObjectiveService
 		var committed = await HL2RPUnitOfWork.CommitAndDisposeAsync( unitOfWork, cancellationToken );
 		if ( !committed.Succeeded )
 			return HL2RPFeaturePersistence.Failure<CityObjectivesReceipt>( committed.Error! );
-		var receipt = new CityObjectivesReceipt( cityEntityId, objectives.ToArray(), committed.Value!.Sequence );
+		var receipt = new CityObjectivesReceipt(
+			cityEntityId, objectives.ToArray(), committed.Value! );
 		_events.Publish( receipt );
 		HL2RPFeaturePersistence.PublishAudit(
 			_audit,
@@ -403,7 +466,11 @@ public sealed class CityObjectiveService
 			HL2RPFeatureOperation.SetCityObjectives,
 			cityEntityId.ToString(),
 			_clock.UtcNow,
-			committed.Value.Sequence );
+			committed.Value!.Sequence );
 		return OperationResult<CityObjectivesReceipt>.Success( receipt );
 	}
+
+	private sealed record CityObjectiveCommitContext(
+		DocumentSnapshot<PersistentSceneEntityRecord> Document,
+		CityEntityState State );
 }

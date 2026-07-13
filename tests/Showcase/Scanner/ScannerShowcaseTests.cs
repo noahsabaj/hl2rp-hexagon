@@ -2,10 +2,13 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using Hexagon.V2.Application;
 using Hexagon.V2.Domain;
 using Hexagon.V2.Kernel;
+using Hexagon.V2.Persistence;
+using HL2RP.V2.Domain;
 using HL2RP.V2.Schema;
 using HL2RP.V2.Showcase.Scanner;
 
@@ -26,37 +29,41 @@ public sealed class ScannerShowcaseTests
 		var service = fixture.CreateService(environment);
 		var entered = await service.EnterAsync(pilot.Actor, scannerId);
 		Assert.IsTrue(entered.Succeeded, entered.Error?.Message);
+		Assert.AreEqual(entered.Value.Commit.Sequence, entered.Value.CommitSequence);
+		Assert.IsTrue(entered.Value.Commit.Documents.Any(value =>
+			value.Address == new DocumentAddress(DomainCollections.SceneEntities, DomainKeys.SceneEntity(scannerId))));
+		var pilotSession = entered.Value.Session;
 		Assert.AreEqual(1, fixture.Body.EnterCount);
 
 		var forged = await service.ApplyInputAsync(pilot.Actor with { ConnectionId = ConnectionId.New() },
-			new ScannerInputIntent(entered.Value.SessionId, 1, 1, 0, 0, 0, 0));
+			new ScannerInputIntent(pilotSession.SessionId, 1, 1, 0, 0, 0, 0));
 		Assert.AreEqual(ErrorCode.Unauthorized, forged.Error!.Code);
 		var first = await service.ApplyInputAsync(pilot.Actor,
-			new ScannerInputIntent(entered.Value.SessionId, 1, 1, 0, 0, 0.5f, -0.5f));
+			new ScannerInputIntent(pilotSession.SessionId, 1, 1, 0, 0, 0.5f, -0.5f));
 		Assert.IsTrue(first.Succeeded, first.Error?.Message);
 		Assert.AreEqual(125f, first.Value.Motion.VelocityX);
 		Assert.AreEqual(37.5f, first.Value.Motion.YawRate);
 		Assert.AreEqual(240f, first.Value.Motion.MaximumAcceleration);
 		Assert.AreEqual(scannerId, fixture.Limits.LastResolvedScannerId);
 		var stale = await service.ApplyInputAsync(pilot.Actor,
-			new ScannerInputIntent(entered.Value.SessionId, 1, 0, 0, 0, 0, 0));
+			new ScannerInputIntent(pilotSession.SessionId, 1, 0, 0, 0, 0, 0));
 		Assert.AreEqual(ErrorCode.Unauthorized, stale.Error!.Code);
 		environment.Clock.Advance(TimeSpan.FromMilliseconds(49));
 		var tooFast = await service.ApplyInputAsync(pilot.Actor,
-			new ScannerInputIntent(entered.Value.SessionId, 2, 0, 0, 0, 0, 0));
+			new ScannerInputIntent(pilotSession.SessionId, 2, 0, 0, 0, 0, 0));
 		Assert.AreEqual(ErrorCode.PolicyDenied, tooFast.Error!.Code);
 		environment.Clock.Advance(TimeSpan.FromMilliseconds(1));
 		var second = await service.ApplyInputAsync(pilot.Actor,
-			new ScannerInputIntent(entered.Value.SessionId, 2, 0, 1, 0, 0, 0));
+			new ScannerInputIntent(pilotSession.SessionId, 2, 0, 1, 0, 0, 0));
 		Assert.IsTrue(second.Succeeded, second.Error?.Message);
 		var uncapped = await service.ApplyInputAsync(pilot.Actor,
-			new ScannerInputIntent(entered.Value.SessionId, 3, 1, 1, 0, 0, 0));
+			new ScannerInputIntent(pilotSession.SessionId, 3, 1, 1, 0, 0, 0));
 		Assert.AreEqual(ErrorCode.PolicyDenied, uncapped.Error!.Code);
 
 		environment.Clock.Advance(ScannerPilotService.MinimumInputInterval);
 		environment.Provider.FailNextCommit();
 		var failed = await service.ApplyInputAsync(pilot.Actor,
-			new ScannerInputIntent(entered.Value.SessionId, 3, 0, 0, 1, 0, 0));
+			new ScannerInputIntent(pilotSession.SessionId, 3, 0, 0, 1, 0, 0));
 		Assert.IsTrue(failed.Failed);
 		Assert.AreEqual(2L, environment.ReadScanner(scannerId).LastAcceptedInputSequence);
 		Assert.HasCount(2, fixture.Motion.Applied);
@@ -72,10 +79,13 @@ public sealed class ScannerShowcaseTests
 		await environment.SeedScannerAsync(scannerId);
 		var fixture = new ScannerFixture(environment, pilot.Actor, scannerId);
 		var service = fixture.CreateService(environment);
-		var session = (await service.EnterAsync(pilot.Actor, scannerId)).Value;
+		var entered = (await service.EnterAsync(pilot.Actor, scannerId)).Value;
+		var session = entered.Session;
 
 		var spotlight = await service.ToggleSpotlightAsync(pilot.Actor, session.SessionId);
-		Assert.IsTrue(spotlight.Succeeded && spotlight.Value);
+		Assert.IsTrue(spotlight.Succeeded && spotlight.Value.Enabled);
+		Assert.AreEqual(spotlight.Value.Commit.Sequence, spotlight.Value.CommitSequence);
+		Assert.AreEqual(scannerId, spotlight.Value.ScannerId);
 		Assert.IsTrue(environment.ReadScanner(scannerId).SpotlightEnabled);
 		Assert.AreEqual(1, fixture.Effects.SpotlightCount);
 		Assert.IsTrue(service.Flash(pilot.Actor, session.SessionId).Succeeded);
@@ -93,6 +103,44 @@ public sealed class ScannerShowcaseTests
 	}
 
 	[TestMethod]
+	public async Task PostCommitEngineBoundaryFailuresReturnEveryDurableScannerReceipt()
+	{
+		await using var environment = await ShowcaseTestEnvironment.CreateAsync();
+		var pilot = await environment.SeedCharacterAsync(309, HL2RPIds.Factions.CivilProtection,
+			HL2RPIds.Classes.Scanner);
+		var scannerId = SceneEntityId.New();
+		await environment.SeedScannerAsync(scannerId);
+		var fixture = new ScannerFixture(environment, pilot.Actor, scannerId);
+		fixture.Body.ThrowOnEnter = true;
+		fixture.Motion.ThrowOnApply = true;
+		fixture.Effects.ThrowOnSpotlight = true;
+		fixture.Effects.ThrowOnPhoto = true;
+		var service = fixture.CreateService(environment);
+
+		var entered = await service.EnterAsync(pilot.Actor, scannerId);
+		Assert.IsTrue(entered.Succeeded, entered.Error?.Message);
+		Assert.IsNotNull(entered.Value.BoundaryError);
+		var input = await service.ApplyInputAsync(pilot.Actor,
+			new ScannerInputIntent(entered.Value.Session.SessionId, 1, 1, 0, 0, 0, 0));
+		Assert.IsTrue(input.Succeeded, input.Error?.Message);
+		Assert.IsNotNull(input.Value.BoundaryError);
+		var spotlight = await service.ToggleSpotlightAsync(pilot.Actor, entered.Value.Session.SessionId);
+		Assert.IsTrue(spotlight.Succeeded, spotlight.Error?.Message);
+		Assert.IsNotNull(spotlight.Value.BoundaryError);
+		var photo = await service.TakePhotoAsync(pilot.Actor, entered.Value.Session.SessionId);
+		Assert.IsTrue(photo.Succeeded, photo.Error?.Message);
+		Assert.IsNotNull(photo.Value.BoundaryError);
+		Assert.IsTrue(new IHL2RPCommittedOperation[] { entered.Value, input.Value, spotlight.Value, photo.Value }
+			.All(value => value.Commit.Documents.Count > 0));
+		fixture.Body.ThrowOnRestore = true;
+		var exited = await service.ExitAsync(pilot.Actor, entered.Value.Session.SessionId);
+		Assert.IsTrue(exited.Succeeded, exited.Error?.Message);
+		Assert.HasCount(1, fixture.CommitSink.Receipts);
+		Assert.IsNotNull(fixture.CommitSink.Receipts[0].BoundaryError);
+		Assert.IsNull(environment.ReadScanner(scannerId).PilotCharacterId);
+	}
+
+	[TestMethod]
 	public async Task ExitDisconnectAndDestructionAlwaysRestoreBodyIncludingCommitFailure()
 	{
 		await using var environment = await ShowcaseTestEnvironment.CreateAsync();
@@ -102,17 +150,21 @@ public sealed class ScannerShowcaseTests
 		await environment.SeedScannerAsync(scannerId);
 		var fixture = new ScannerFixture(environment, pilot.Actor, scannerId);
 		var service = fixture.CreateService(environment);
-		var first = (await service.EnterAsync(pilot.Actor, scannerId)).Value;
+		var first = (await service.EnterAsync(pilot.Actor, scannerId)).Value.Session;
 		await service.DisconnectAsync(pilot.Actor.ConnectionId);
 		Assert.AreEqual(1, fixture.Body.RestoreCount);
 		Assert.IsNull(environment.ReadScanner(scannerId).PilotCharacterId);
+		Assert.HasCount(1, fixture.CommitSink.Receipts);
+		Assert.AreEqual("disconnect", fixture.CommitSink.Receipts[0].Reason);
 
-		var second = (await service.EnterAsync(pilot.Actor, scannerId)).Value;
+		var second = (await service.EnterAsync(pilot.Actor, scannerId)).Value.Session;
 		await service.DestroyedAsync(scannerId);
 		Assert.AreEqual(2, fixture.Body.RestoreCount);
 		Assert.IsNull(environment.ReadScanner(scannerId).PilotCharacterId);
+		Assert.HasCount(2, fixture.CommitSink.Receipts);
+		Assert.AreEqual("destroyed", fixture.CommitSink.Receipts[1].Reason);
 
-		var third = (await service.EnterAsync(pilot.Actor, scannerId)).Value;
+		var third = (await service.EnterAsync(pilot.Actor, scannerId)).Value.Session;
 		environment.Provider.FailNextCommit();
 		var failedExit = await service.ExitAsync(pilot.Actor, third.SessionId);
 		Assert.IsTrue(failedExit.Succeeded, failedExit.Error?.Message);
@@ -121,6 +173,10 @@ public sealed class ScannerShowcaseTests
 		Assert.AreEqual(0, service.PendingCleanupCount);
 		Assert.AreEqual(0, service.TerminatingSessionCount);
 		Assert.IsNull(environment.ReadScanner(scannerId).PilotCharacterId);
+		Assert.HasCount(3, fixture.CommitSink.Receipts);
+		Assert.AreEqual("exit", fixture.CommitSink.Receipts[2].Reason);
+		Assert.IsTrue(fixture.CommitSink.Receipts.All(value =>
+			value.CommitSequence == value.Commit.Sequence && value.Session.ScannerId == scannerId));
 		var staleInput = await service.ApplyInputAsync(pilot.Actor,
 			new ScannerInputIntent(third.SessionId, 1, 0, 0, 0, 0, 0));
 		Assert.AreEqual(ErrorCode.Unauthorized, staleInput.Error!.Code);
@@ -148,6 +204,121 @@ public sealed class ScannerShowcaseTests
 		Assert.IsNull(environment.ReadScanner(scannerId).PilotCharacterId);
 		Assert.AreEqual(0, service.PendingCleanupCount);
 		Assert.AreEqual(0, service.TerminatingSessionCount);
+		Assert.HasCount(1, fixture.CommitSink.Receipts);
+		Assert.AreEqual("range_or_los_failed", fixture.CommitSink.Receipts[0].Reason);
+	}
+
+	[TestMethod]
+	public async Task RevocationAfterInputCommitReturnsTheDurableReceiptAndSuppressesStaleMotion()
+	{
+		await using var environment = await ShowcaseTestEnvironment.CreateAsync();
+		var pilot = await environment.SeedCharacterAsync(308, HL2RPIds.Factions.CivilProtection,
+			HL2RPIds.Classes.Scanner);
+		var scannerId = SceneEntityId.New();
+		await environment.SeedScannerAsync(scannerId);
+		var fixture = new ScannerFixture(environment, pilot.Actor, scannerId);
+		var service = fixture.CreateService(environment);
+		var session = (await service.EnterAsync(pilot.Actor, scannerId)).Value.Session;
+		environment.Provider.AfterNextSuccessfulCommit(() =>
+			fixture.Authority.TargetInvalidated(InteractionTarget.SceneEntity(scannerId), "post_commit_revoke"));
+
+		var input = await service.ApplyInputAsync(pilot.Actor,
+			new ScannerInputIntent(session.SessionId, 1, 1, 0, 0, 0, 0));
+		await service.DrainCleanupAsync();
+
+		Assert.IsTrue(input.Succeeded, input.Error?.Message);
+		Assert.AreEqual(input.Value.Commit.Sequence, input.Value.CommitSequence);
+		Assert.IsEmpty(fixture.Motion.Applied,
+			"World motion must not run after the scanner session was revoked.");
+		Assert.IsNull(environment.ReadScanner(scannerId).PilotCharacterId);
+		Assert.HasCount(1, fixture.CommitSink.Receipts);
+		Assert.AreEqual("post_commit_revoke", fixture.CommitSink.Receipts[0].Reason);
+	}
+
+	[TestMethod]
+	public async Task RevocationAfterPilotCommitCompensatesDurableEntryWithoutEnteringBody()
+	{
+		await using var environment = await ShowcaseTestEnvironment.CreateAsync();
+		var pilot = await environment.SeedCharacterAsync(310, HL2RPIds.Factions.CivilProtection,
+			HL2RPIds.Classes.Scanner);
+		var scannerId = SceneEntityId.New();
+		await environment.SeedScannerAsync(scannerId);
+		var fixture = new ScannerFixture(environment, pilot.Actor, scannerId);
+		var service = fixture.CreateService(environment);
+		environment.Provider.AfterNextSuccessfulCommit(() =>
+		{
+			var session = fixture.Sessions.ActiveSessions.Single();
+			Assert.IsTrue(fixture.Sessions.Revoke(session.Id, "post_commit_entry_revoke"));
+		});
+
+		var entered = await service.EnterAsync(pilot.Actor, scannerId);
+		await service.DrainCleanupAsync();
+
+		Assert.IsTrue(entered.Succeeded, entered.Error?.Message);
+		Assert.AreEqual(entered.Value.Commit.Sequence, entered.Value.CommitSequence);
+		Assert.AreEqual(0, fixture.Body.EnterCount,
+			"A body transition must not run after the session was revoked.");
+		Assert.IsNull(environment.ReadScanner(scannerId).PilotCharacterId,
+			"The acknowledged pilot write must be compensated after post-commit revocation.");
+		Assert.IsEmpty(service.ActiveSessions);
+		Assert.AreEqual(0, service.PendingCleanupCount);
+		Assert.AreEqual(0, service.TerminatingSessionCount);
+		Assert.HasCount(1, fixture.CommitSink.Receipts);
+		Assert.AreEqual("post_commit_entry_revoke", fixture.CommitSink.Receipts[0].Reason);
+	}
+
+	[TestMethod]
+	public async Task RevocationAfterSpotlightCommitSuppressesStaleEffectAndLeavesSpotlightOff()
+	{
+		await using var environment = await ShowcaseTestEnvironment.CreateAsync();
+		var pilot = await environment.SeedCharacterAsync(311, HL2RPIds.Factions.CivilProtection,
+			HL2RPIds.Classes.Scanner);
+		var scannerId = SceneEntityId.New();
+		await environment.SeedScannerAsync(scannerId);
+		var fixture = new ScannerFixture(environment, pilot.Actor, scannerId);
+		var service = fixture.CreateService(environment);
+		var session = (await service.EnterAsync(pilot.Actor, scannerId)).Value.Session;
+		environment.Provider.AfterNextSuccessfulCommit(() =>
+			fixture.Sessions.Revoke(session.SessionId, "post_commit_spotlight_revoke"));
+
+		var spotlight = await service.ToggleSpotlightAsync(pilot.Actor, session.SessionId);
+		await service.DrainCleanupAsync();
+
+		Assert.IsTrue(spotlight.Succeeded, spotlight.Error?.Message);
+		Assert.AreEqual(spotlight.Value.Commit.Sequence, spotlight.Value.CommitSequence);
+		Assert.IsFalse(fixture.Effects.SpotlightEnabled,
+			"A stale post-commit continuation must not turn the world spotlight back on.");
+		Assert.IsNull(environment.ReadScanner(scannerId).PilotCharacterId);
+		Assert.IsFalse(environment.ReadScanner(scannerId).SpotlightEnabled);
+		Assert.IsEmpty(service.ActiveSessions);
+		Assert.HasCount(1, fixture.CommitSink.Receipts);
+		Assert.AreEqual("post_commit_spotlight_revoke", fixture.CommitSink.Receipts[0].Reason);
+	}
+
+	[TestMethod]
+	public async Task RevocationBeforePilotCommitRejectsEntryWithoutStateOrWorldEffects()
+	{
+		await using var environment = await ShowcaseTestEnvironment.CreateAsync();
+		var pilot = await environment.SeedCharacterAsync(309, HL2RPIds.Factions.CivilProtection,
+			HL2RPIds.Classes.Scanner);
+		var scannerId = SceneEntityId.New();
+		await environment.SeedScannerAsync(scannerId);
+		var fixture = new ScannerFixture(environment, pilot.Actor, scannerId);
+		var service = fixture.CreateService(environment);
+		environment.Provider.InterleaveNextCommit(() =>
+		{
+			var session = fixture.Sessions.ActiveSessions.Single();
+			Assert.IsTrue(fixture.Sessions.Revoke(session.Id, "pre_commit_revoke"));
+			return Task.CompletedTask;
+		});
+
+		var result = await service.EnterAsync(pilot.Actor, scannerId);
+
+		Assert.AreEqual(ErrorCode.Conflict, result.Error!.Code);
+		Assert.IsNull(environment.ReadScanner(scannerId).PilotCharacterId);
+		Assert.AreEqual(0, fixture.Body.EnterCount);
+		Assert.IsEmpty(service.ActiveSessions);
+		Assert.IsEmpty(fixture.CommitSink.Receipts);
 	}
 
 	[TestMethod]
@@ -161,7 +332,7 @@ public sealed class ScannerShowcaseTests
 		var fixture = new ScannerFixture(environment, pilot.Actor, scannerId);
 		fixture.CleanupDelay.Block = true;
 		var service = fixture.CreateService(environment);
-		var entered = (await service.EnterAsync(pilot.Actor, scannerId)).Value;
+		var entered = (await service.EnterAsync(pilot.Actor, scannerId)).Value.Session;
 		environment.Provider.ConflictNextCommits(ScannerPilotService.CleanupMaximumAttempts + 2);
 
 		var exit = service.ExitAsync(pilot.Actor, entered.SessionId).AsTask();
@@ -181,6 +352,7 @@ public sealed class ScannerShowcaseTests
 		Assert.AreEqual(0, service.TerminatingSessionCount);
 		Assert.AreEqual(0, service.PendingCleanupCount);
 		Assert.AreEqual(1, fixture.Body.RestoreCount);
+		Assert.HasCount(1, fixture.CommitSink.Receipts);
 		Assert.IsTrue((await service.EnterAsync(pilot.Actor, scannerId)).Succeeded,
 			"Successful retry must release the scanner for a new pilot session.");
 	}
@@ -195,7 +367,7 @@ public sealed class ScannerShowcaseTests
 		await environment.SeedScannerAsync(scannerId);
 		var fixture = new ScannerFixture(environment, pilot.Actor, scannerId);
 		var service = fixture.CreateService(environment);
-		var entered = (await service.EnterAsync(pilot.Actor, scannerId)).Value;
+		var entered = (await service.EnterAsync(pilot.Actor, scannerId)).Value.Session;
 		environment.Provider.FailNextCommit();
 		environment.Provider.ForceFatalHealth(true);
 
@@ -206,6 +378,7 @@ public sealed class ScannerShowcaseTests
 		Assert.AreEqual(0, service.PendingCleanupCount);
 		Assert.AreEqual(pilot.Actor.CharacterId, environment.ReadScanner(scannerId).PilotCharacterId);
 		Assert.AreEqual(1, fixture.Body.RestoreCount);
+		Assert.IsEmpty(fixture.CommitSink.Receipts);
 
 		environment.Provider.ForceFatalHealth(false);
 		var recovered = await service.ExitAsync(pilot.Actor, entered.SessionId);
@@ -214,6 +387,7 @@ public sealed class ScannerShowcaseTests
 		Assert.IsNull(environment.ReadScanner(scannerId).PilotCharacterId);
 		Assert.AreEqual(0, service.TerminatingSessionCount);
 		Assert.AreEqual(1, fixture.Body.RestoreCount);
+		Assert.HasCount(1, fixture.CommitSink.Receipts);
 	}
 
 	[TestMethod]
@@ -235,7 +409,7 @@ public sealed class ScannerShowcaseTests
 		var droneFixture = new ScannerFixture(environment, pilot.Actor, droneId);
 		droneFixture.Limits.Value = new ScannerMotionLimits(125f, float.NaN, 75f);
 		var droneService = droneFixture.CreateService(environment);
-		var session = (await droneService.EnterAsync(pilot.Actor, droneId)).Value;
+		var session = (await droneService.EnterAsync(pilot.Actor, droneId)).Value.Session;
 		var input = await droneService.ApplyInputAsync(pilot.Actor,
 			new ScannerInputIntent(session.SessionId, 1, 1, 0, 0, 0, 0));
 
@@ -287,10 +461,11 @@ public sealed class ScannerShowcaseTests
 		public FakeMotionLimits Limits { get; } = new();
 		public FakeCleanupDelay CleanupDelay { get; } = new();
 		public FakeEffects Effects { get; } = new();
+		public FakeScannerCommitSink CommitSink { get; } = new();
 
 		public ScannerPilotService CreateService(ShowcaseTestEnvironment environment) => new(
 			environment.Repositories, Authority, Sessions, environment.Clock, Body, Motion, Limits, Effects,
-			new FakePoses(), () => Guid.NewGuid(), CleanupDelay.DelayAsync);
+			new FakePoses(), CommitSink, () => Guid.NewGuid(), CleanupDelay.DelayAsync);
 	}
 
 	private sealed class FakeWorld : IServerInteractionWorld
@@ -344,14 +519,29 @@ public sealed class ScannerShowcaseTests
 	{
 		public int EnterCount { get; private set; }
 		public int RestoreCount { get; private set; }
-		public void EnterPilot(InventoryActor actor, SceneEntityId scannerId) => EnterCount++;
-		public void Restore(InventoryActor actor, SceneEntityId scannerId, string reason) => RestoreCount++;
+		public bool ThrowOnEnter { get; set; }
+		public bool ThrowOnRestore { get; set; }
+		public void EnterPilot(InventoryActor actor, SceneEntityId scannerId)
+		{
+			EnterCount++;
+			if (ThrowOnEnter) throw new InvalidOperationException("Injected scanner body failure.");
+		}
+		public void Restore(InventoryActor actor, SceneEntityId scannerId, string reason)
+		{
+			RestoreCount++;
+			if (ThrowOnRestore) throw new InvalidOperationException("Injected scanner restore failure.");
+		}
 	}
 
 	private sealed class FakeMotion : IScannerMotionBoundary
 	{
 		public List<ScannerMotionCommand> Applied { get; } = new();
-		public void Apply(SceneEntityId scannerId, ScannerMotionCommand command) => Applied.Add(command);
+		public bool ThrowOnApply { get; set; }
+		public void Apply(SceneEntityId scannerId, ScannerMotionCommand command)
+		{
+			Applied.Add(command);
+			if (ThrowOnApply) throw new InvalidOperationException("Injected scanner motion failure.");
+		}
 	}
 
 	private sealed class FakeMotionLimits : IScannerMotionLimitsProvider
@@ -388,11 +578,29 @@ public sealed class ScannerShowcaseTests
 	private sealed class FakeEffects : IScannerEffectsBoundary
 	{
 		public int SpotlightCount { get; private set; }
+		public bool SpotlightEnabled { get; private set; }
 		public int FlashCount { get; private set; }
 		public int PhotoCount { get; private set; }
-		public void SetSpotlight(SceneEntityId scannerId, bool enabled) => SpotlightCount++;
+		public bool ThrowOnSpotlight { get; set; }
+		public bool ThrowOnPhoto { get; set; }
+		public void SetSpotlight(SceneEntityId scannerId, bool enabled)
+		{
+			SpotlightCount++;
+			SpotlightEnabled = enabled;
+			if (ThrowOnSpotlight) throw new InvalidOperationException("Injected scanner spotlight failure.");
+		}
 		public void Flash(SceneEntityId scannerId) => FlashCount++;
-		public void PublishPhoto(SceneEntityId scannerId, ScannerPhotoMetadata metadata) => PhotoCount++;
+		public void PublishPhoto(SceneEntityId scannerId, ScannerPhotoMetadata metadata)
+		{
+			PhotoCount++;
+			if (ThrowOnPhoto) throw new InvalidOperationException("Injected scanner photo failure.");
+		}
+	}
+
+	private sealed class FakeScannerCommitSink : IScannerCommitSink
+	{
+		public List<ScannerPilotCleanupReceipt> Receipts { get; } = new();
+		public void Observe(ScannerPilotCleanupReceipt receipt) => Receipts.Add(receipt);
 	}
 
 	private sealed class FakePoses : ITrustedScannerPoseProvider

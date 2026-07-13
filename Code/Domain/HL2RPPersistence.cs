@@ -97,12 +97,8 @@ public static class HL2RPPersistence
 	public static IPersistedTypeCodec<CityEntityState> CityState { get; } =
 		new JsonPersistedTypeCodec<CityEntityState>(
 			new PersistedTypeKey( HL2RPIds.PersistedTypes.CityState ),
-			2,
-			PublishCityState,
-			upgrades: new Dictionary<int, Func<JsonElement, JsonElement>>
-			{
-				[1] = UpgradeCityStateV1
-			} );
+			3,
+			PublishCityState );
 
 	public static IReadOnlyList<IPersistedTypeCodec> Codecs { get; } = new IPersistedTypeCodec[]
 	{
@@ -187,21 +183,12 @@ public static class HL2RPPersistence
 		Photos = PersistedValuePublication.ReadOnlyList( value.Photos )
 	};
 
-	private static CityEntityState PublishCityState( CityEntityState value ) => value with
+	private static CityEntityState PublishCityState( CityEntityState value )
 	{
-		Objectives = PersistedValuePublication.ReadOnlyList( value.Objectives )
-	};
-
-	private static JsonElement UpgradeCityStateV1( JsonElement payload )
-	{
-		var root = JsonNode.Parse( payload.GetRawText() )?.AsObject()
-			?? throw new JsonException( "City state v1 payload must be an object." );
-		if ( root["objectives"] is JsonArray objectives )
-		{
-			foreach ( var objective in objectives.OfType<JsonObject>() )
-				objective["updatedAtUtc"] = DateTimeOffset.UnixEpoch;
-		}
-		return JsonSerializer.SerializeToElement( root );
+		var objectives = PersistedValuePublication.ReadOnlyList( value.Objectives );
+		var valid = CityObjectiveContract.Validate( objectives );
+		if ( valid.Failed ) throw new InvalidOperationException( valid.Error!.Message );
+		return value with { Objectives = objectives };
 	}
 
 	private static JsonElement UpgradeMachineStateV1( JsonElement payload )

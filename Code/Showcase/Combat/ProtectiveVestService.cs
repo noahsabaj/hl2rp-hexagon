@@ -95,7 +95,8 @@ public sealed class ProtectiveVestService
 		if (character.Value.AccountId != actor.AccountId)
 			return OperationResult<ProtectiveVestDamageReceipt>.Failure(ErrorCode.Unauthorized,
 				"Active character does not belong to the authenticated actor.");
-		if (!_access.Has(actor.ConnectionId, actor.CharacterId, inventoryId, InventoryCapability.View))
+		var access = _access.Prove(actor.ConnectionId, actor.CharacterId, inventoryId, InventoryCapability.View);
+		if (access is null)
 			return OperationResult<ProtectiveVestDamageReceipt>.Failure(ErrorCode.Unauthorized,
 				"Protective vest view capability is missing.");
 		if (inventory.Value.Find(vestItemId) is null ||
@@ -109,6 +110,9 @@ public sealed class ProtectiveVestService
 		if (plan.Failed) return Failure(plan.Error!);
 
 		var unitOfWork = _repositories.Provider.BeginUnitOfWork();
+		unitOfWork.Require(access);
+		HL2RPUnitOfWork.RequireActorState(unitOfWork, _repositories, character);
+		unitOfWork.RequireUnchanged(_repositories.Inventories, inventory);
 		var editor = unitOfWork.Edit(_repositories.Items, vest);
 		if (editor is null)
 		{

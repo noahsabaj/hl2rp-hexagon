@@ -99,7 +99,15 @@ internal sealed class ShowcaseTestEnvironment : IAsyncDisposable
 		};
 		await using var unitOfWork = Provider.BeginUnitOfWork();
 		unitOfWork.Create(Repositories.Characters, DomainKeys.Character(actor.CharacterId), character);
+		unitOfWork.Create(
+			Repositories.CharacterLifecycleGuards,
+			DomainKeys.CharacterLifecycleGuard(actor.CharacterId),
+			new CharacterLifecycleGuardRecord { CharacterId = actor.CharacterId, ReferenceRevision = 0 });
 		unitOfWork.Create(Repositories.Inventories, DomainKeys.Inventory(inventoryId), inventory);
+		unitOfWork.Create(
+			Repositories.OwnerInventories,
+			DomainKeys.OwnerInventory(inventory.Owner, "main"),
+			new OwnerInventoryRecord { Owner = inventory.Owner, Role = "main", InventoryId = inventory.Id });
 		foreach (var item in items)
 			unitOfWork.Create(Repositories.Items, DomainKeys.Item(item.Id), item);
 		var committed = await unitOfWork.CommitAsync();
@@ -242,6 +250,8 @@ internal sealed class FaultInjectingProvider : IPersistenceProvider
 	private int _remainingCommitFailures;
 	private PersistenceErrorCode _commitFailureCode = PersistenceErrorCode.DurabilityFailed;
 	private bool _forceFatalHealth;
+	private Action? _afterNextSuccessfulCommit;
+	private Func<Task>? _beforeNextCommit;
 
 	public FaultInjectingProvider(IPersistenceProvider inner) =>
 		_inner = inner ?? throw new ArgumentNullException(nameof(inner));
@@ -251,6 +261,10 @@ internal sealed class FaultInjectingProvider : IPersistenceProvider
 		? _inner.Health with { Status = PersistenceHealthStatus.Fatal, Detail = "Injected fatal health." }
 		: _inner.Health;
 	public bool IsInitialized => _inner.IsInitialized;
+	public PersistenceProviderState State => _inner.State;
+	public Guid StoreId => _inner.StoreId;
+	public Guid WriterEpoch => _inner.WriterEpoch;
+	public long CompactionGeneration => _inner.CompactionGeneration;
 
 	public void FailNextCommit()
 	{
@@ -266,6 +280,10 @@ internal sealed class FaultInjectingProvider : IPersistenceProvider
 	}
 
 	public void ForceFatalHealth(bool fatal) => _forceFatalHealth = fatal;
+	public void AfterNextSuccessfulCommit(Action callback) =>
+		_afterNextSuccessfulCommit = callback ?? throw new ArgumentNullException(nameof(callback));
+	public void InterleaveNextCommit(Func<Task> callback) =>
+		_beforeNextCommit = callback ?? throw new ArgumentNullException(nameof(callback));
 	public ValueTask InitializeAsync(CancellationToken cancellationToken = default) =>
 		_inner.InitializeAsync(cancellationToken);
 	public IPersistenceRepository<T> Repository<T>(string collection) where T : class =>
@@ -273,7 +291,8 @@ internal sealed class FaultInjectingProvider : IPersistenceProvider
 	public IUnitOfWork BeginUnitOfWork() => new FaultUnitOfWork(this, _inner.BeginUnitOfWork());
 	public ValueTask<PersistenceResult<long>> CheckpointAsync(CancellationToken cancellationToken = default) =>
 		_inner.CheckpointAsync(cancellationToken);
-	public ValueTask DrainAsync(CancellationToken cancellationToken = default) => _inner.DrainAsync(cancellationToken);
+	public ValueTask<PersistenceShutdownResult> ShutdownAsync(CancellationToken cancellationToken = default) =>
+		_inner.ShutdownAsync(cancellationToken);
 	public ValueTask DisposeAsync() => _inner.DisposeAsync();
 
 	private bool TryConsumeFailure(out PersistenceErrorCode code)
@@ -306,11 +325,24 @@ internal sealed class FaultInjectingProvider : IPersistenceProvider
 		public void Save<T>(DocumentEditor<T> editor) where T : class => _inner.Save(editor);
 		public void Delete<T>(IPersistenceRepository<T> repository, DocumentSnapshot<T> observed) where T : class =>
 			_inner.Delete(repository, observed);
-		public ValueTask<PersistenceResult<CommitReceipt>> CommitAsync(CancellationToken cancellationToken = default)
+		public void Require(ICommitPrecondition precondition) => _inner.Require(precondition);
+		public async ValueTask<PersistenceResult<CommitReceipt>> CommitAsync(CancellationToken cancellationToken = default)
 		{
-			if (!_provider.TryConsumeFailure(out var code)) return _inner.CommitAsync(cancellationToken);
-			return ValueTask.FromResult(PersistenceResult<CommitReceipt>.Failure(new PersistenceError(
-				code, "Injected commit failure.")));
+			if (_provider._beforeNextCommit is Func<Task> beforeCommit)
+			{
+				_provider._beforeNextCommit = null;
+				await beforeCommit();
+			}
+			if (_provider.TryConsumeFailure(out var code))
+				return PersistenceResult<CommitReceipt>.Failure(new PersistenceError(
+					code, "Injected commit failure."));
+			var committed = await _inner.CommitAsync(cancellationToken);
+			if (committed.Succeeded && _provider._afterNextSuccessfulCommit is Action callback)
+			{
+				_provider._afterNextSuccessfulCommit = null;
+				callback();
+			}
+			return committed;
 		}
 		public ValueTask DisposeAsync() => _inner.DisposeAsync();
 	}

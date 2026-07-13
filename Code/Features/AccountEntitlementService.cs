@@ -7,6 +7,16 @@ using System.Threading.Tasks;
 
 namespace HL2RP.V2.Features;
 
+public sealed record HL2RPAccountEntitlementMutationReceipt(
+	HL2RPAccountEntitlementSnapshot Snapshot,
+	CommitReceipt Commit ) : IHL2RPCommittedOperation
+{
+	public AccountId AccountId => Snapshot.AccountId;
+	public HL2RPWhitelist Flags => Snapshot.Flags;
+	public DocumentRevision Revision => Snapshot.Revision;
+	public bool IsPersisted => Snapshot.IsPersisted;
+}
+
 /// <summary>
 /// Canonical repository-backed account entitlement authority. The verification
 /// account is an in-memory overlay and can never be written to the entitlement
@@ -80,7 +90,7 @@ public sealed class HL2RPAccountEntitlementService : IHL2RPWhitelistService
 				accountId, document.Value.Flags, document.Revision, true ) );
 	}
 
-	public ValueTask<OperationResult<HL2RPAccountEntitlementSnapshot>> GrantAsync(
+	public ValueTask<OperationResult<HL2RPAccountEntitlementMutationReceipt>> GrantAsync(
 		HL2RPEntitlementAdministrator administrator,
 		AccountId targetAccountId,
 		HL2RPWhitelist flag,
@@ -88,7 +98,7 @@ public sealed class HL2RPAccountEntitlementService : IHL2RPWhitelistService
 		CancellationToken cancellationToken = default ) =>
 		MutateAsync( administrator, targetAccountId, flag, expectedRevision, grant: true, cancellationToken );
 
-	public ValueTask<OperationResult<HL2RPAccountEntitlementSnapshot>> RevokeAsync(
+	public ValueTask<OperationResult<HL2RPAccountEntitlementMutationReceipt>> RevokeAsync(
 		HL2RPEntitlementAdministrator administrator,
 		AccountId targetAccountId,
 		HL2RPWhitelist flag,
@@ -96,7 +106,7 @@ public sealed class HL2RPAccountEntitlementService : IHL2RPWhitelistService
 		CancellationToken cancellationToken = default ) =>
 		MutateAsync( administrator, targetAccountId, flag, expectedRevision, grant: false, cancellationToken );
 
-	private async ValueTask<OperationResult<HL2RPAccountEntitlementSnapshot>> MutateAsync(
+	private async ValueTask<OperationResult<HL2RPAccountEntitlementMutationReceipt>> MutateAsync(
 		HL2RPEntitlementAdministrator administrator,
 		AccountId targetAccountId,
 		HL2RPWhitelist flag,
@@ -181,7 +191,8 @@ public sealed class HL2RPAccountEntitlementService : IHL2RPWhitelistService
 			OccurredAtUtc = _clock.UtcNow,
 			CommitSequence = receipt.Sequence
 		} );
-		return OperationResult<HL2RPAccountEntitlementSnapshot>.Success( snapshot );
+		return OperationResult<HL2RPAccountEntitlementMutationReceipt>.Success(
+			new HL2RPAccountEntitlementMutationReceipt( snapshot, receipt ) );
 	}
 
 	private static OperationResult ValidateDocument(
@@ -204,6 +215,6 @@ public sealed class HL2RPAccountEntitlementService : IHL2RPWhitelistService
 		_ => ErrorCode.InternalError
 	};
 
-	private static OperationResult<HL2RPAccountEntitlementSnapshot> Failure( ErrorCode code, string message ) =>
-		OperationResult<HL2RPAccountEntitlementSnapshot>.Failure( code, message );
+	private static OperationResult<HL2RPAccountEntitlementMutationReceipt> Failure( ErrorCode code, string message ) =>
+		OperationResult<HL2RPAccountEntitlementMutationReceipt>.Failure( code, message );
 }

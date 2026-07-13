@@ -44,21 +44,26 @@ public sealed class CivicIdentityModule : IHexModule
 		builder.RegisterPermission( new PermissionDefinition( HL2RPIds.Permissions.ManageEntitlements ) );
 		builder.RegisterCommand( new CommandDefinition(
 			HL2RPIds.Commands.CivicData,
-			HL2RPIds.Permissions.CivicData ) );
-		builder.RegisterCommand( new CommandDefinition( HL2RPIds.Commands.Introduce ) );
-		builder.RegisterCommand( new CommandDefinition( HL2RPIds.Commands.DoorOwnership ) );
+			HL2RPIds.Permissions.CivicData,
+			Cost: CommandCostClass.Cheap ) );
+		builder.RegisterCommand( new CommandDefinition( HL2RPIds.Commands.Introduce, Cost: CommandCostClass.Standard ) );
+		builder.RegisterCommand( new CommandDefinition( HL2RPIds.Commands.DoorOwnership, Cost: CommandCostClass.Standard ) );
 		builder.RegisterCommand( new CommandDefinition(
 			HL2RPIds.Commands.AdministrationAudit,
-			HL2RPIds.Permissions.AuditedAdministration ) );
+			HL2RPIds.Permissions.AuditedAdministration,
+			Cost: CommandCostClass.Cheap ) );
 		builder.RegisterCommand( new CommandDefinition(
 			HL2RPIds.Commands.EntitlementQuery,
-			HL2RPIds.Permissions.ManageEntitlements ) );
+			HL2RPIds.Permissions.ManageEntitlements,
+			Cost: CommandCostClass.Cheap ) );
 		builder.RegisterCommand( new CommandDefinition(
 			HL2RPIds.Commands.EntitlementGrant,
-			HL2RPIds.Permissions.ManageEntitlements ) );
+			HL2RPIds.Permissions.ManageEntitlements,
+			Cost: CommandCostClass.Expensive ) );
 		builder.RegisterCommand( new CommandDefinition(
 			HL2RPIds.Commands.EntitlementRevoke,
-			HL2RPIds.Permissions.ManageEntitlements ) );
+			HL2RPIds.Permissions.ManageEntitlements,
+			Cost: CommandCostClass.Expensive ) );
 		builder.RegisterInitializer( new CharacterInitializerDefinition(
 			HL2RPCitizenIdInitializer.InitializerId,
 			typeof(HL2RPCitizenIdInitializer),
@@ -159,10 +164,12 @@ public sealed class CombineModule : IHexModule
 			HL2RPIds.Actions.Install ) );
 		builder.RegisterCommand( new CommandDefinition(
 			HL2RPIds.Commands.CityObjectives,
-			HL2RPIds.Permissions.CityObjectives ) );
+			HL2RPIds.Permissions.CityObjectives,
+			Cost: CommandCostClass.Expensive ) );
 		builder.RegisterCommand( new CommandDefinition(
 			HL2RPIds.Commands.Priority,
-			HL2RPIds.Permissions.Priority ) );
+			HL2RPIds.Permissions.Priority,
+			Cost: CommandCostClass.Standard ) );
 		builder.RegisterPanel( CivicIdentityModule.Panel<CombineOverlayPanelDescriptor>(
 			HL2RPIds.Panels.CombineOverlay ) );
 		builder.RegisterPanel( CivicIdentityModule.Panel<ObjectivesPanelDescriptor>(
@@ -211,7 +218,7 @@ public sealed class CommunicationsModule : IHexModule
 			1,
 			1,
 			HL2RPIds.Actions.Request ) );
-		builder.RegisterCommand( new CommandDefinition( HL2RPIds.Commands.RadioFrequency ) );
+		builder.RegisterCommand( new CommandDefinition( HL2RPIds.Commands.RadioFrequency, Cost: CommandCostClass.Standard ) );
 		builder.RegisterPanel( CivicIdentityModule.Panel<ChatPanelDescriptor>( HL2RPIds.Panels.Chat ) );
 		builder.RegisterPanel( CivicIdentityModule.Panel<RadioTuningPanelDescriptor>(
 			HL2RPIds.Panels.RadioTuning ) );
@@ -250,9 +257,9 @@ public sealed class CommerceModule : IHexModule
 		builder.RegisterItem( CivicIdentityModule.Item(
 			HL2RPIds.Items.TokenStack, "Token Stack", "Physical Combine ration tokens.", "Currency",
 			true, "models/dev/box.vmdl", 1, 1, HL2RPIds.Actions.Split, HL2RPIds.Actions.Combine ) );
-		builder.RegisterCommand( new CommandDefinition( HL2RPIds.Commands.CommerceBuy ) );
-		builder.RegisterCommand( new CommandDefinition( HL2RPIds.Commands.CommerceSell ) );
-		builder.RegisterCommand( new CommandDefinition( HL2RPIds.Commands.PermitPurchase ) );
+		builder.RegisterCommand( new CommandDefinition( HL2RPIds.Commands.CommerceBuy, Cost: CommandCostClass.Standard ) );
+		builder.RegisterCommand( new CommandDefinition( HL2RPIds.Commands.CommerceSell, Cost: CommandCostClass.Standard ) );
+		builder.RegisterCommand( new CommandDefinition( HL2RPIds.Commands.PermitPurchase, Cost: CommandCostClass.Standard ) );
 		builder.RegisterPanel( CivicIdentityModule.Panel<InventoryPanelDescriptor>( HL2RPIds.Panels.Inventory ) );
 		builder.RegisterPanel( CivicIdentityModule.Panel<StoragePanelDescriptor>( HL2RPIds.Panels.Storage ) );
 		builder.RegisterPanel( CivicIdentityModule.Panel<DoorPanelDescriptor>( HL2RPIds.Panels.Door ) );
@@ -279,7 +286,7 @@ public sealed class DocumentsModule : IHexModule
 		builder.RegisterItem( CivicIdentityModule.Item(
 			HL2RPIds.Items.BusinessPermit, "Business Permit", "A typed permit authorizing a regulated business category.", "Documents",
 			false, null, 1, 1, HL2RPIds.Actions.PresentPermit ) );
-		builder.RegisterCommand( new CommandDefinition( HL2RPIds.Commands.NoteWrite ) );
+		builder.RegisterCommand( new CommandDefinition( HL2RPIds.Commands.NoteWrite, Cost: CommandCostClass.Standard ) );
 		builder.RegisterPanel( CivicIdentityModule.Panel<PermitPanelDescriptor>( HL2RPIds.Panels.Permit ) );
 		builder.RegisterPanel( CivicIdentityModule.Panel<NoteEditorPanelDescriptor>( HL2RPIds.Panels.NoteEditor ) );
 	}
@@ -299,7 +306,8 @@ public sealed class RestraintModule : IHexModule
 			false, null, 1, 1, HL2RPIds.Actions.Restrain ) );
 		builder.RegisterCommand( new CommandDefinition(
 			HL2RPIds.Commands.RestraintSet,
-			HL2RPIds.Permissions.Restraint ) );
+			HL2RPIds.Permissions.Restraint,
+			Cost: CommandCostClass.Standard ) );
 		builder.RegisterPanel( CivicIdentityModule.Panel<SearchPanelDescriptor>( HL2RPIds.Panels.Search ) );
 		builder.RegisterPanel( CivicIdentityModule.Panel<RestraintStatusPanelDescriptor>(
 			HL2RPIds.Panels.RestraintStatus ) );
@@ -316,7 +324,8 @@ public sealed class ScannerModule : IHexModule
 		builder.RegisterPermission( new PermissionDefinition( HL2RPIds.Permissions.ScannerPilot ) );
 		builder.RegisterCommand( new CommandDefinition(
 			HL2RPIds.Commands.ScannerIntent,
-			HL2RPIds.Permissions.ScannerPilot ) );
+			HL2RPIds.Permissions.ScannerPilot,
+			Cost: CommandCostClass.Cheap ) );
 		builder.RegisterPanel( CivicIdentityModule.Panel<ScannerOverlayPanelDescriptor>(
 			HL2RPIds.Panels.ScannerOverlay ) );
 	}
@@ -347,7 +356,7 @@ public sealed class CombatModule : IHexModule
 		builder.RegisterItem( CivicIdentityModule.Item(
 			HL2RPIds.Items.ProtectiveVest, "Protective Vest", "A reinforced vest that reduces incoming damage.", "Armor",
 			false, null, 2, 2, HL2RPIds.Actions.Equip, HL2RPIds.Actions.Unequip ) );
-		builder.RegisterCommand( new CommandDefinition( HL2RPIds.Commands.CombatRespawn ) );
+		builder.RegisterCommand( new CommandDefinition( HL2RPIds.Commands.CombatRespawn, Cost: CommandCostClass.Standard ) );
 		builder.RegisterPanel( CivicIdentityModule.Panel<ActionBarPanelDescriptor>( HL2RPIds.Panels.ActionBar ) );
 		builder.RegisterPanel( CivicIdentityModule.Panel<DeathPanelDescriptor>( HL2RPIds.Panels.Death ) );
 	}

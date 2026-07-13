@@ -9,6 +9,7 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <IsPackable>false</IsPackable>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
   </PropertyGroup>
 
   <ItemGroup>
@@ -34,6 +35,13 @@
     <Compile Include="../Code/Features/**/*.cs" Link="Product/Features/%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="../Code/Showcase/**/*.cs" Link="Product/Showcase/%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="../Code/Runtime/HL2RPRuntimeLogic.cs" Link="Product/Runtime/HL2RPRuntimeLogic.cs" />
+	<Compile Include="../Code/Runtime/HL2RPMaintenanceSupervisor.cs" Link="Product/Runtime/HL2RPMaintenanceSupervisor.cs" />
+	<Compile Include="../Code/Runtime/HL2RPObjectiveCommandRouter.cs" Link="Product/Runtime/HL2RPObjectiveCommandRouter.cs" />
+	<Compile Include="../Code/Runtime/HL2RPCharacterLoadAdmission.cs" Link="Product/Runtime/HL2RPCharacterLoadAdmission.cs" />
+	<Compile Include="../Code/Runtime/HL2RPPresentationPlanning.cs" Link="Product/Runtime/HL2RPPresentationPlanning.cs" />
+	<Compile Include="../Code/Runtime/HL2RPProjectionIndex.cs" Link="Product/Runtime/HL2RPProjectionIndex.cs" />
+	<Compile Include="../Code/Runtime/HL2RPTimedActionOwnership.cs" Link="Product/Runtime/HL2RPTimedActionOwnership.cs" />
+	<Compile Include="../Code/Runtime/HL2RPRetryablePersistenceLease.cs" Link="Product/Runtime/HL2RPRetryablePersistenceLease.cs" />
     <Compile Include="../Code/Runtime/HL2RPCreationAvailability.cs" Link="Product/Runtime/HL2RPCreationAvailability.cs" />
     <Compile Include="../Code/UI/HL2RPPresentationFields.cs" Link="Product/UI/HL2RPPresentationFields.cs" />
     <Compile Include="../Code/UI/HL2RPShowcaseProjection.cs" Link="Product/UI/HL2RPShowcaseProjection.cs" />

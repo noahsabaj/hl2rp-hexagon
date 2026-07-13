@@ -28,14 +28,14 @@ public sealed class HL2RPBootstrapOperatorsComponent : Component
 
 internal sealed class HL2RPEntitlementChangedHandler : IEventHandler<HL2RPAccountEntitlementChanged>
 {
-	private readonly Action _changed;
+	private readonly Action<HL2RPAccountEntitlementChanged> _changed;
 
-	public HL2RPEntitlementChangedHandler( Action changed ) =>
+	public HL2RPEntitlementChangedHandler( Action<HL2RPAccountEntitlementChanged> changed ) =>
 		_changed = changed ?? throw new ArgumentNullException( nameof(changed) );
 
 	public void Handle( HL2RPAccountEntitlementChanged notification )
 	{
 		ArgumentNullException.ThrowIfNull( notification );
-		_changed();
+		_changed( notification );
 	}
 }

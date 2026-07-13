@@ -63,6 +63,38 @@ public sealed class RestraintShowcaseTests
 	}
 
 	[TestMethod]
+	public async Task InterleavedAccessRevocationRejectsTimedRestraintCompletionAtomically()
+	{
+		await using var environment = await ShowcaseTestEnvironment.CreateAsync();
+		var tie = ShowcaseTestEnvironment.ZipTie();
+		var officer = await environment.SeedCharacterAsync(
+			205, HL2RPIds.Factions.CivilProtection, HL2RPIds.Classes.Unit, tie);
+		var target = await environment.SeedCharacterAsync(206);
+		var fixture = new InteractionFixture(environment, officer.Actor,
+			InteractionTarget.Character(target.Actor.CharacterId));
+		var service = new RestraintService(environment.Repositories, environment.Access,
+			environment.Layout, fixture.Authority, environment.Clock);
+		var ticket = service.Begin(
+			officer.Actor, target.Actor.CharacterId, officer.InventoryId, tie.Id).Value;
+		environment.Clock.Advance(RestraintService.RestraintDuration);
+		environment.Provider.InterleaveNextCommit(() =>
+		{
+			environment.Access.RevokeConnection(officer.Actor.ConnectionId);
+			return Task.CompletedTask;
+		});
+
+		var result = await service.CompleteAsync(ticket.TicketId, officer.Actor);
+
+		Assert.AreEqual(ErrorCode.Conflict, result.Error!.Code);
+		Assert.IsFalse(service.IsRestrained(target.Actor.CharacterId));
+		Assert.IsNotNull(environment.Repositories.Items.Find(DomainKeys.Item(tie.Id)));
+		Assert.IsNotNull(environment.Repositories.Inventories.Find(
+			DomainKeys.Inventory(officer.InventoryId))!.Value.Find(tie.Id));
+		Assert.IsNull(environment.Repositories.CharacterReferences.Find(
+			RestraintService.DocumentKey(target.Actor.CharacterId)));
+	}
+
+	[TestMethod]
 	public async Task RoleSelfRangeAndSearchCapabilitiesFailClosedAndRevokeOnUnrestrain()
 	{
 		await using var environment = await ShowcaseTestEnvironment.CreateAsync();
@@ -148,10 +180,7 @@ public sealed class RestraintShowcaseTests
 			211, HL2RPIds.Factions.CivilProtection, HL2RPIds.Classes.Unit);
 		var overwatch = await environment.SeedCharacterAsync(212, HL2RPIds.Factions.Overwatch);
 		var target = await environment.SeedCharacterAsync(213);
-		await using (var unit = environment.Provider.BeginUnitOfWork())
-		{
-			unit.Create(
-				environment.Repositories.CharacterReferences,
+		var stored = await new CharacterReferenceMutationService(environment.Repositories).UpsertAsync(
 				RestraintService.DocumentKey(target.Actor.CharacterId),
 				new CharacterReferenceRecord
 				{
@@ -166,9 +195,7 @@ public sealed class RestraintShowcaseTests
 							Active = true
 						})
 				});
-			var committed = await unit.CommitAsync();
-			Assert.IsTrue(committed.Succeeded, committed.Error?.Message);
-		}
+		Assert.IsTrue(stored.Succeeded, stored.Error?.Message);
 
 		var authorities = new CanonicalChatAuthorityDirectory();
 		authorities.Publish(1, new[]
@@ -263,14 +290,9 @@ public sealed class RestraintShowcaseTests
 			target.InventoryId,
 			InventoryCapability.View));
 
-		var restraint = environment.Repositories.CharacterReferences.Find(
-			RestraintService.DocumentKey(target.Actor.CharacterId))!;
-		await using (var release = environment.Provider.BeginUnitOfWork())
-		{
-			release.Delete(environment.Repositories.CharacterReferences, restraint);
-			var committed = await release.CommitAsync();
-			Assert.IsTrue(committed.Succeeded, committed.Error?.Message);
-		}
+		var released = await new CharacterReferenceMutationService(environment.Repositories).DeleteAsync(
+			RestraintService.DocumentKey(target.Actor.CharacterId));
+		Assert.IsTrue(released.Succeeded, released.Error?.Message);
 		var unrestrainedGeneric = civilProtectionAuthority.Begin(
 			civilProtection.Actor.ConnectionId,
 			civilProtection.Actor.AccountId,

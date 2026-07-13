@@ -30,12 +30,19 @@ public sealed class HL2RPPresentationInvalidation
 	private readonly Dictionary<ConnectionId, CharacterId?> _restraintTargets = new();
 	private readonly Dictionary<CharacterId, DateTimeOffset> _deathDeadlines = new();
 	private readonly Dictionary<string, DateTimeOffset> _refreshDeadlines = new( StringComparer.Ordinal );
+	private readonly Dictionary<ConnectionId, long> _connectionGenerations = new();
 	private long _generation;
 	private long _acknowledgedGeneration;
+	private long _connectionGeneration;
 
 	public void Invalidate()
 	{
 		lock ( _sync ) _generation++;
+	}
+
+	public void Invalidate( ConnectionId connectionId )
+	{
+		lock ( _sync ) _connectionGenerations[connectionId] = ++_connectionGeneration;
 	}
 
 	public void TrackDeathDeadline( CharacterId characterId, DateTimeOffset respawnAvailableAtUtc )
@@ -66,23 +73,27 @@ public sealed class HL2RPPresentationInvalidation
 			if ( !_restraintTargets.TryGetValue( connectionId, out var previous ) )
 			{
 				_restraintTargets[connectionId] = characterId;
-				if ( characterId is not null ) _generation++;
+				if ( characterId is not null ) _connectionGenerations[connectionId] = ++_connectionGeneration;
 				return;
 			}
 			if ( previous == characterId ) return;
 			_restraintTargets[connectionId] = characterId;
-			_generation++;
+			_connectionGenerations[connectionId] = ++_connectionGeneration;
 		}
 	}
 
 	public void ForgetConnection( ConnectionId connectionId )
 	{
-		lock ( _sync ) _restraintTargets.Remove( connectionId );
+		lock ( _sync )
+		{
+			_restraintTargets.Remove( connectionId );
+			_connectionGenerations.Remove( connectionId );
+		}
 	}
 
 	public bool IsRefreshDue( DateTimeOffset nowUtc )
 	{
-		lock ( _sync ) return _generation != _acknowledgedGeneration ||
+		lock ( _sync ) return _generation != _acknowledgedGeneration || _connectionGenerations.Count > 0 ||
 			_deathDeadlines.Values.Any( deadline => deadline <= nowUtc ) ||
 			_refreshDeadlines.Values.Any( deadline => deadline <= nowUtc );
 	}
@@ -91,12 +102,37 @@ public sealed class HL2RPPresentationInvalidation
 	{
 		lock ( _sync ) return new HL2RPPresentationPublication(
 			_generation,
+			_generation != _acknowledgedGeneration,
+			new Dictionary<ConnectionId, long>( _connectionGenerations ),
 			_deathDeadlines
 				.Where( pair => pair.Value <= nowUtc )
 				.ToDictionary( pair => pair.Key, pair => pair.Value ),
 			_refreshDeadlines
 				.Where( pair => pair.Value <= nowUtc )
 				.ToDictionary( pair => pair.Key, pair => pair.Value, StringComparer.Ordinal ) );
+	}
+
+	/// <summary>
+	/// Captures only the current generations covered by an immediate targeted
+	/// snapshot. Acknowledgement cannot consume global work, deadlines, other
+	/// recipients, or a newer invalidation raised while the send is in flight.
+	/// </summary>
+	public HL2RPPresentationPublication BeginConnectionPublication(
+		IEnumerable<ConnectionId> connectionIds )
+	{
+		ArgumentNullException.ThrowIfNull( connectionIds );
+		lock ( _sync )
+		{
+			var requested = connectionIds.ToHashSet();
+			return new HL2RPPresentationPublication(
+				_acknowledgedGeneration,
+				false,
+				_connectionGenerations
+					.Where( pair => requested.Contains( pair.Key ) )
+					.ToDictionary( pair => pair.Key, pair => pair.Value ),
+				new Dictionary<CharacterId, DateTimeOffset>(),
+				new Dictionary<string, DateTimeOffset>( StringComparer.Ordinal ) );
+		}
 	}
 
 	/// <summary>
@@ -109,6 +145,9 @@ public sealed class HL2RPPresentationInvalidation
 		lock ( _sync )
 		{
 			_acknowledgedGeneration = Math.Max( _acknowledgedGeneration, publication.Generation );
+			foreach ( var connection in publication.ConnectionGenerations )
+				if ( _connectionGenerations.TryGetValue( connection.Key, out var current ) && current == connection.Value )
+					_connectionGenerations.Remove( connection.Key );
 			foreach ( var deadline in publication.DueDeathDeadlines )
 				if ( _deathDeadlines.TryGetValue( deadline.Key, out var current ) && current == deadline.Value )
 					_deathDeadlines.Remove( deadline.Key );
@@ -119,10 +158,77 @@ public sealed class HL2RPPresentationInvalidation
 	}
 }
 
+/// <summary>
+/// Converts a typed entitlement change into connection-scoped invalidations.
+/// An in-band command claims and publishes the resolved recipients immediately, and
+/// that publication acknowledges their generations. Out-of-band changes remain
+/// queued for the maintenance supervisor without ever becoming a global refresh.
+/// </summary>
+public sealed class HL2RPEntitlementPresentationInvalidation
+{
+	private readonly HL2RPPresentationInvalidation _invalidation;
+	private readonly Func<AccountId, IReadOnlyList<ConnectionId>> _resolveRecipients;
+	private readonly object _sync = new();
+	private readonly HashSet<AccountId> _pendingAccounts = new();
+
+	public HL2RPEntitlementPresentationInvalidation(
+		HL2RPPresentationInvalidation invalidation,
+		Func<AccountId, IReadOnlyList<ConnectionId>> resolveRecipients )
+	{
+		_invalidation = invalidation ?? throw new ArgumentNullException( nameof(invalidation) );
+		_resolveRecipients = resolveRecipients ?? throw new ArgumentNullException( nameof(resolveRecipients) );
+	}
+
+	public void Observe( HL2RPAccountEntitlementChanged change )
+	{
+		ArgumentNullException.ThrowIfNull( change );
+		lock ( _sync ) _pendingAccounts.Add( change.AccountId );
+	}
+
+	/// <summary>
+	/// Claims the callback raised synchronously by an in-band command and turns
+	/// it into connection generations covered by that command's direct send.
+	/// </summary>
+	public IReadOnlyList<ConnectionId> Claim( AccountId accountId )
+	{
+		lock ( _sync ) _pendingAccounts.Remove( accountId );
+		return InvalidateRecipients( accountId );
+	}
+
+	/// <summary>
+	/// Materializes out-of-band account changes on the host maintenance thread,
+	/// where resolving live connection bindings is safe.
+	/// </summary>
+	public IReadOnlyList<ConnectionId> MaterializePending()
+	{
+		AccountId[] accounts;
+		lock ( _sync )
+		{
+			accounts = _pendingAccounts.ToArray();
+			_pendingAccounts.Clear();
+		}
+		var recipients = new HashSet<ConnectionId>();
+		foreach ( var account in accounts ) recipients.UnionWith( InvalidateRecipients( account ) );
+		return recipients.ToArray();
+	}
+
+	private IReadOnlyList<ConnectionId> InvalidateRecipients( AccountId accountId )
+	{
+		var recipients = _resolveRecipients( accountId ).Distinct().ToArray();
+		foreach ( var recipient in recipients ) _invalidation.Invalidate( recipient );
+		return recipients;
+	}
+}
+
 public sealed record HL2RPPresentationPublication(
 	long Generation,
+	bool HasGlobalInvalidation,
+	IReadOnlyDictionary<ConnectionId, long> ConnectionGenerations,
 	IReadOnlyDictionary<CharacterId, DateTimeOffset> DueDeathDeadlines,
-	IReadOnlyDictionary<string, DateTimeOffset> DueRefreshDeadlines );
+	IReadOnlyDictionary<string, DateTimeOffset> DueRefreshDeadlines )
+{
+	public bool RequiresBroadcast => HasGlobalInvalidation || DueDeathDeadlines.Count > 0 || DueRefreshDeadlines.Count > 0;
+}
 
 public sealed class HL2RPPresentationSequence
 {
@@ -181,23 +287,111 @@ public static class HL2RPObjectiveState
 	public static IReadOnlyList<CityObjectiveState> Upsert(
 		IReadOnlyList<CityObjectiveState> objectives,
 		string objectiveId,
-		string text,
+		CityObjectiveContent content,
 		bool completed,
 		DateTimeOffset updatedAtUtc )
 	{
 		ArgumentNullException.ThrowIfNull( objectives );
 		ArgumentException.ThrowIfNullOrWhiteSpace( objectiveId );
-		ArgumentException.ThrowIfNullOrWhiteSpace( text );
+		ArgumentNullException.ThrowIfNull( content );
 		return objectives
 			.Where( value => !string.Equals( value.Id, objectiveId, StringComparison.Ordinal ) )
 			.Append( new CityObjectiveState
 			{
 				Id = objectiveId,
-				Text = text,
+				Title = content.Title,
+				Detail = content.Detail,
 				Completed = completed,
 				UpdatedAtUtc = updatedAtUtc
 			} )
 			.ToArray();
+	}
+}
+
+public static class HL2RPObjectiveCommand
+{
+	public const string UpsertOperation = "upsert";
+	public const string DeleteOperation = "delete";
+
+	public static string ResolveId( CityObjectiveUpdate update, Func<Guid> newId )
+	{
+		ArgumentNullException.ThrowIfNull( update );
+		ArgumentNullException.ThrowIfNull( newId );
+		return update.ObjectiveId ?? $"objective.{newId():N}";
+	}
+
+	public static OperationResult<CityObjectiveUpdate> Parse( HL2RPCommandArguments arguments )
+	{
+		ArgumentNullException.ThrowIfNull( arguments );
+		var objectiveId = arguments.OptionalString( "objective" );
+		var title = arguments.String( "title" );
+		var detail = arguments.String( "detail", true );
+		var completed = arguments.Boolean( "completed" );
+		if ( objectiveId.Failed || title.Failed || detail.Failed || completed.Failed )
+			return OperationResult<CityObjectiveUpdate>.Failure(
+				ErrorCode.InvalidArgument, "Objective arguments are invalid." );
+		var normalizedId = string.IsNullOrWhiteSpace( objectiveId.Value ) ? null : objectiveId.Value;
+		if ( normalizedId is not null )
+		{
+			var validId = CityObjectiveContract.ValidateIdentifier( normalizedId );
+			if ( validId.Failed )
+				return OperationResult<CityObjectiveUpdate>.Failure(
+					ErrorCode.InvalidArgument, "Objective ID is invalid." );
+			normalizedId = validId.Value;
+		}
+		var content = CityObjectiveContract.CreateContent( title.Value, detail.Value );
+		return content.Succeeded
+			? OperationResult<CityObjectiveUpdate>.Success(
+				new CityObjectiveUpdate( normalizedId, content.Value, completed.Value ) )
+			: OperationResult<CityObjectiveUpdate>.Failure( content.Error!.Code, content.Error.Message );
+	}
+
+	public static OperationResult<CityObjectiveChange> ParseChange( HL2RPCommandArguments arguments )
+	{
+		ArgumentNullException.ThrowIfNull( arguments );
+		var operation = arguments.OptionalString( "operation" );
+		if ( operation.Failed )
+			return OperationResult<CityObjectiveChange>.Failure(
+				operation.Error!.Code, operation.Error.Message );
+		var normalizedOperation = string.IsNullOrWhiteSpace( operation.Value )
+			? UpsertOperation
+			: operation.Value.Trim().ToLowerInvariant();
+		if ( normalizedOperation == DeleteOperation )
+		{
+			var objectiveId = arguments.String( "objective" );
+			if ( objectiveId.Failed )
+				return OperationResult<CityObjectiveChange>.Failure(
+					ErrorCode.InvalidArgument, "Objective ID is required for deletion." );
+			var validId = CityObjectiveContract.ValidateIdentifier( objectiveId.Value );
+			return validId.Succeeded
+				? OperationResult<CityObjectiveChange>.Success( CityObjectiveChange.Delete( validId.Value ) )
+				: OperationResult<CityObjectiveChange>.Failure( validId.Error!.Code, validId.Error.Message );
+		}
+		if ( normalizedOperation != UpsertOperation )
+			return OperationResult<CityObjectiveChange>.Failure(
+				ErrorCode.InvalidArgument, "Objective operation must be 'upsert' or 'delete'." );
+		var update = Parse( arguments );
+		return update.Succeeded
+			? OperationResult<CityObjectiveChange>.Success( CityObjectiveChange.Upsert( update.Value ) )
+			: OperationResult<CityObjectiveChange>.Failure( update.Error!.Code, update.Error.Message );
+	}
+}
+
+public static class HL2RPObjectiveProjection
+{
+	public static IReadOnlyList<IReadOnlyDictionary<string, SnapshotValue>> Rows( CityEntityState state )
+	{
+		ArgumentNullException.ThrowIfNull( state );
+		return state.Objectives.Select( objective =>
+			(IReadOnlyDictionary<string, SnapshotValue>)new Dictionary<string, SnapshotValue>( StringComparer.Ordinal )
+			{
+				[HL2RP.UI.HL2RPPresentationFields.Objectives.ObjectiveId] = SnapshotValue.Choice( objective.Id ),
+				[HL2RP.UI.HL2RPPresentationFields.Objectives.Title] = SnapshotValue.String( objective.Title ),
+				[HL2RP.UI.HL2RPPresentationFields.Objectives.Detail] = SnapshotValue.String( objective.Detail ),
+				[HL2RP.UI.HL2RPPresentationFields.Objectives.UpdatedAtUnixMilliseconds] = SnapshotValue.Integer(
+					objective.UpdatedAtUtc.ToUnixTimeMilliseconds() ),
+				[HL2RP.UI.HL2RPPresentationFields.Objectives.Completed] = SnapshotValue.Boolean( objective.Completed )
+			} ).ToArray();
 	}
 }
 
@@ -548,10 +742,8 @@ public static class HL2RPRuntimeProjection
 			return SafeReplicatedLabel( subject );
 		if ( viewer is not null )
 		{
-			var reference = repositories.CharacterReferences.All()
-				.Select( document => document.Value )
-				.SingleOrDefault( value => value.Category == "recognition" &&
-					value.CharacterId == viewer.Id && value.RelatedCharacterId == subject.Id );
+			var reference = repositories.CharacterReferences.Find(
+				$"recognition-{viewer.Id}-{subject.Id}" )?.Value;
 			if ( reference is not null )
 			{
 				try { return HL2RPPersistence.Recognition.Deserialize( reference.State.Data, reference.State.TypeVersion ).IntroducedName; }
@@ -663,6 +855,16 @@ public sealed class HL2RPCommandArguments
 			(!allowEmpty && string.IsNullOrWhiteSpace( value.StringValue )) )
 			return OperationResult<string>.Failure( ErrorCode.InvalidArgument, $"Argument '{key}' must be a string." );
 		return OperationResult<string>.Success( value.StringValue );
+	}
+
+	public OperationResult<string?> OptionalString( string key )
+	{
+		if ( !_values.TryGetValue( key, out var value ) )
+			return OperationResult<string?>.Success( null );
+		return value.Kind is SnapshotValueKind.String or SnapshotValueKind.Choice
+			? OperationResult<string?>.Success( value.StringValue )
+			: OperationResult<string?>.Failure(
+				ErrorCode.InvalidArgument, $"Argument '{key}' must be a string when provided." );
 	}
 
 	public OperationResult<long> Integer( string key ) =>

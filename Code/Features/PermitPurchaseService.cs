@@ -3,6 +3,7 @@
 using System.Threading;
 using System.Threading.Tasks;
 using Hexagon.V2.Kernel.Events;
+using Hexagon.V2.Persistence;
 
 namespace HL2RP.V2.Features;
 
@@ -13,7 +14,8 @@ public sealed record PermitPurchasedReceipt(
 	BusinessPermitKind Kind,
 	long Price,
 	long RemainingBalance,
-	long CommitSequence);
+	long CommitSequence,
+	CommitReceipt Commit) : IHL2RPCommittedOperation;
 
 /// <summary>
 /// Character self-service purchase boundary. Price and ownership are server
@@ -74,20 +76,24 @@ public sealed class PermitPurchaseService
 			return OperationResult<PermitPurchasedReceipt>.Failure(
 				ErrorCode.Unauthorized, "Permit purchaser binding is invalid.");
 
-		var characterInventories = _repositories.Inventories.All()
-			.Where(document => document.Value.Owner == InventoryOwner.Character(actor.CharacterId))
-			.ToArray();
-		if (characterInventories.Length != 1 || characterInventories[0].Value.Id != mainInventoryId)
+		var ownerIndex = _repositories.OwnerInventories.Find( DomainKeys.OwnerInventory(
+			InventoryOwner.Character( actor.CharacterId ), "main" ) );
+		var destination = ownerIndex is null ? null : _repositories.Inventories.Find(
+			DomainKeys.Inventory( ownerIndex.Value.InventoryId ) );
+		if (destination is null || destination.Value.Id != mainInventoryId ||
+			destination.Value.Owner != InventoryOwner.Character( actor.CharacterId ))
 			return OperationResult<PermitPurchasedReceipt>.Failure(
 				ErrorCode.Unauthorized, "Destination is not the purchaser's active main inventory.");
-		var destination = characterInventories[0];
 
 		var requiredAccess = InventoryCapability.View | InventoryCapability.TransferIn;
-		if (!_access.Has(actor.ConnectionId, actor.CharacterId, mainInventoryId, requiredAccess))
+		var access = _access.Prove(actor.ConnectionId, actor.CharacterId, mainInventoryId, requiredAccess);
+		if (access is null)
 			return OperationResult<PermitPurchasedReceipt>.Failure(
 				ErrorCode.Unauthorized, "Main inventory view and transfer capability are required.");
 
-		if (PermitInspector.HasValidPermit(_repositories, actor.CharacterId, kind, _clock.UtcNow))
+		var permitInspection = PermitInspector.Inspect(
+			_repositories, actor.CharacterId, kind, _clock.UtcNow);
+		if (permitInspection.HasValidPermit)
 			return OperationResult<PermitPurchasedReceipt>.Failure(
 				ErrorCode.Conflict, "An equivalent active permit is already owned.");
 		if (character.Value.Balance < _price)
@@ -133,6 +139,8 @@ public sealed class PermitPurchaseService
 					})
 			}
 		};
+		var layoutDependencies = HL2RPUnitOfWork.CaptureInventoryLayout(
+			_repositories, destination.Value);
 		var firstFit = _layout.FindFirstFit(destination.Value, permit);
 		if (firstFit.Failed)
 			return OperationResult<PermitPurchasedReceipt>.Failure(
@@ -143,6 +151,10 @@ public sealed class PermitPurchaseService
 				placed.Error!.Code, placed.Error.Message);
 
 		var unitOfWork = _repositories.Provider.BeginUnitOfWork();
+		unitOfWork.Require(access);
+		HL2RPUnitOfWork.RequireActorState(unitOfWork, _repositories, character);
+		permitInspection.RequireUnchanged(unitOfWork, _repositories);
+		HL2RPUnitOfWork.RequireInventoryLayout(unitOfWork, _repositories, layoutDependencies);
 		var characterEditor = unitOfWork.Edit(_repositories.Characters, character);
 		var inventoryEditor = unitOfWork.Edit(_repositories.Inventories, destination);
 		if (characterEditor is null || inventoryEditor is null)
@@ -168,7 +180,8 @@ public sealed class PermitPurchaseService
 			kind,
 			_price,
 			remainingBalance,
-			committed.Value!.Sequence);
+			committed.Value!.Sequence,
+			committed.Value);
 		_events.Publish(receipt);
 		HL2RPFeaturePersistence.PublishAudit(
 			_audit,

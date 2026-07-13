@@ -54,7 +54,8 @@ public sealed record AdminAuditFact
 public sealed record BoundSceneSession(
 	InteractionSessionId SessionId,
 	InteractionSessionKind Kind,
-	SceneEntityId SceneEntityId );
+	SceneEntityId SceneEntityId,
+	ICommitPrecondition CommitProof );
 
 public interface ISceneSessionResolver
 {
@@ -101,10 +102,15 @@ public sealed class AuthoritativeSceneSessionResolver : ISceneSessionResolver
 		if ( continued.Failed )
 			return OperationResult<BoundSceneSession>.Failure(
 				continued.Error!.Code, continued.Error.Message );
+		var proof = _sessions.Prove( continued.Value );
+		if ( proof is null )
+			return OperationResult<BoundSceneSession>.Failure(
+				ErrorCode.Unauthorized, "Scene interaction session changed during validation." );
 		return OperationResult<BoundSceneSession>.Success( new BoundSceneSession(
 			session.Id,
 			session.Kind,
-			new SceneEntityId( session.Target.Id ) ) );
+			new SceneEntityId( session.Target.Id ),
+			proof ) );
 	}
 }
 

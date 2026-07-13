@@ -8,7 +8,7 @@ using Hexagon.V2.Persistence;
 
 namespace HL2RP.V2.Features;
 
-public sealed record CommerceReceipt
+public sealed record CommerceReceipt : IHL2RPCommittedOperation
 {
 	public required HL2RPFeatureOperation Operation { get; init; }
 	public required SceneEntityId SceneEntityId { get; init; }
@@ -17,6 +17,7 @@ public sealed record CommerceReceipt
 	public required long CurrencyAmount { get; init; }
 	public required long BalanceAfter { get; init; }
 	public required long CommitSequence { get; init; }
+	public required CommitReceipt Commit { get; init; }
 }
 
 public sealed class CommerceService
@@ -75,12 +76,13 @@ public sealed class CommerceService
 		var loaded = LoadActorInventoryEntity( actor, destinationInventoryId, session.Value.SceneEntityId, "vendor" );
 		if ( loaded.Failed )
 			return OperationResult<CommerceReceipt>.Failure( loaded.Error!.Code, loaded.Error.Message );
-		if ( loaded.Value.Inventory.Value.Owner != InventoryOwner.Character( actor.CharacterId ) ||
-			!_access.Has(
+		var access = _access.Prove(
 				actor.ConnectionId,
 				actor.CharacterId,
 				destinationInventoryId,
-				InventoryCapability.View | InventoryCapability.TransferIn ) )
+				InventoryCapability.View | InventoryCapability.TransferIn );
+		if ( loaded.Value.Inventory.Value.Owner != InventoryOwner.Character( actor.CharacterId ) ||
+			access is null )
 			return OperationResult<CommerceReceipt>.Failure( ErrorCode.Unauthorized, "Purchase destination capability is missing." );
 		if ( !_schema.Items.Contains( definition.Value ) )
 			return OperationResult<CommerceReceipt>.Failure( ErrorCode.UnknownDefinition, "Vendor item is not registered." );
@@ -93,11 +95,12 @@ public sealed class CommerceService
 		if ( vendorValidation.Failed )
 			return OperationResult<CommerceReceipt>.Failure(
 				vendorValidation.Error!.Code, vendorValidation.Error.Message );
-		if ( !PermitInspector.HasValidPermit(
+		var permitInspection = PermitInspector.Inspect(
 			_repositories,
 			actor.CharacterId,
 			vendor.Value.RequiredPermit,
-			_clock.UtcNow ) )
+			_clock.UtcNow );
+		if ( !permitInspection.HasValidPermit )
 			return OperationResult<CommerceReceipt>.Failure( ErrorCode.PolicyDenied, "Required business permit is missing or expired." );
 		var stockIndex = FindStock( vendor.Value, definition );
 		if ( stockIndex < 0 )
@@ -126,6 +129,8 @@ public sealed class CommerceService
 		if ( policy.Failed )
 			return OperationResult<CommerceReceipt>.Failure( policy.Error!.Code, policy.Error.Message );
 
+		var layoutDependencies = HL2RPUnitOfWork.CaptureInventoryLayout(
+			_repositories, loaded.Value.Inventory.Value );
 		var finalInventory = loaded.Value.Inventory.Value;
 		var createdItems = new List<ItemRecord>( quantity );
 		var stagedDefinitions = new Dictionary<ItemId, DefinitionId>();
@@ -166,6 +171,10 @@ public sealed class CommerceService
 			createdItems,
 			HL2RPFeatureOperation.VendorBuy,
 			totalPrice,
+			access,
+			session.Value.CommitProof,
+			permitInspection,
+			layoutDependencies,
 			cancellationToken );
 	}
 
@@ -185,16 +194,16 @@ public sealed class CommerceService
 		var item = _repositories.Items.Find( DomainKeys.Item( itemId ) );
 		if ( item is null || loaded.Value.Inventory.Value.Find( itemId ) is null )
 			return OperationResult<CommerceReceipt>.Failure( ErrorCode.NotFound, "Item is not in the claimed inventory." );
-		if ( loaded.Value.Inventory.Value.Owner != InventoryOwner.Character( actor.CharacterId ) ||
-			!_access.Has(
+		var access = _access.Prove(
 				actor.ConnectionId,
 				actor.CharacterId,
 				sourceInventoryId,
-				InventoryCapability.View | InventoryCapability.TransferOut | InventoryCapability.Sell ) )
+				InventoryCapability.View | InventoryCapability.TransferOut | InventoryCapability.Sell );
+		if ( loaded.Value.Inventory.Value.Owner != InventoryOwner.Character( actor.CharacterId ) ||
+			access is null )
 			return OperationResult<CommerceReceipt>.Failure( ErrorCode.Unauthorized, "Sell capability is missing." );
-		if ( _repositories.Inventories.All().Any( inventory =>
-			inventory.Value.Owner.Kind == InventoryOwnerKind.ParentItem &&
-			inventory.Value.Owner.OwnerId == itemId.Value ) )
+		if ( _repositories.OwnerInventories.Find( DomainKeys.OwnerInventory(
+			InventoryOwner.ParentItem( itemId ), "bag" ) ) is not null )
 			return OperationResult<CommerceReceipt>.Failure( ErrorCode.PolicyDenied, "Container items cannot be sold with nested inventory." );
 		var vendor = HL2RPFeaturePersistence.Decode(
 			loaded.Value.Entity.Value.State,
@@ -205,11 +214,12 @@ public sealed class CommerceService
 		if ( vendorValidation.Failed )
 			return OperationResult<CommerceReceipt>.Failure(
 				vendorValidation.Error!.Code, vendorValidation.Error.Message );
-		if ( !PermitInspector.HasValidPermit(
+		var permitInspection = PermitInspector.Inspect(
 			_repositories,
 			actor.CharacterId,
 			vendor.Value.RequiredPermit,
-			_clock.UtcNow ) )
+			_clock.UtcNow );
+		if ( !permitInspection.HasValidPermit )
 			return OperationResult<CommerceReceipt>.Failure( ErrorCode.PolicyDenied, "Required business permit is missing or expired." );
 		var stockIndex = FindStock( vendor.Value, item.Value.Definition );
 		if ( stockIndex < 0 )
@@ -243,6 +253,10 @@ public sealed class CommerceService
 				vendor.Value with { Stock = stockAfter } )
 		};
 		var unitOfWork = _repositories.Provider.BeginUnitOfWork();
+		unitOfWork.Require( session.Value.CommitProof );
+		unitOfWork.Require( access );
+		HL2RPUnitOfWork.RequireActorState( unitOfWork, _repositories, loaded.Value.Character );
+		permitInspection.RequireUnchanged( unitOfWork, _repositories );
 		var characterEditor = unitOfWork.Edit( _repositories.Characters, loaded.Value.Character );
 		var inventoryEditor = unitOfWork.Edit( _repositories.Inventories, loaded.Value.Inventory );
 		var entityEditor = unitOfWork.Edit( _repositories.SceneEntities, loaded.Value.Entity );
@@ -269,7 +283,8 @@ public sealed class CommerceService
 			ItemIds = new[] { itemId },
 			CurrencyAmount = payout,
 			BalanceAfter = credited.Value.Balance,
-			CommitSequence = committed.Value!.Sequence
+			CommitSequence = committed.Value!.Sequence,
+			Commit = committed.Value
 		};
 		Publish( actor, receipt );
 		return OperationResult<CommerceReceipt>.Success( receipt );
@@ -289,12 +304,13 @@ public sealed class CommerceService
 			return OperationResult<CommerceReceipt>.Failure( loaded.Error!.Code, loaded.Error.Message );
 		if ( loaded.Value.Entity.Value.Kind is not "ration_dispenser" and not "vending_machine" )
 			return OperationResult<CommerceReceipt>.Failure( ErrorCode.PolicyDenied, "Session target is not a supported machine." );
-		if ( loaded.Value.Inventory.Value.Owner != InventoryOwner.Character( actor.CharacterId ) ||
-			!_access.Has(
+		var access = _access.Prove(
 				actor.ConnectionId,
 				actor.CharacterId,
 				destinationInventoryId,
-				InventoryCapability.View | InventoryCapability.TransferIn ) )
+				InventoryCapability.View | InventoryCapability.TransferIn );
+		if ( loaded.Value.Inventory.Value.Owner != InventoryOwner.Character( actor.CharacterId ) ||
+			access is null )
 			return OperationResult<CommerceReceipt>.Failure( ErrorCode.Unauthorized, "Machine destination capability is missing." );
 		var machine = HL2RPFeaturePersistence.Decode(
 			loaded.Value.Entity.Value.State,
@@ -325,6 +341,8 @@ public sealed class CommerceService
 		var item = _items.Create( definition, _ids.NewItemId(), _clock.UtcNow );
 		if ( item.Failed )
 			return OperationResult<CommerceReceipt>.Failure( item.Error!.Code, item.Error.Message );
+		var layoutDependencies = HL2RPUnitOfWork.CaptureInventoryLayout(
+			_repositories, loaded.Value.Inventory.Value );
 		var fit = _layout.FindFirstFit( loaded.Value.Inventory.Value, item.Value );
 		if ( fit.Failed )
 			return OperationResult<CommerceReceipt>.Failure( fit.Error!.Code, fit.Error.Message );
@@ -355,6 +373,10 @@ public sealed class CommerceService
 			new[] { item.Value },
 			HL2RPFeatureOperation.MachinePurchase,
 			machine.Value.UnitPrice,
+			access,
+			session.Value.CommitProof,
+			null,
+			layoutDependencies,
 			cancellationToken );
 	}
 
@@ -367,9 +389,18 @@ public sealed class CommerceService
 		IReadOnlyList<ItemRecord> createdItems,
 		HL2RPFeatureOperation operation,
 		long price,
+		InventoryAccessProof access,
+		ICommitPrecondition sessionProof,
+		PermitInspectionProof? permitInspection,
+		IReadOnlyList<DocumentSnapshot<ItemRecord>> layoutDependencies,
 		CancellationToken cancellationToken )
 	{
 		var unitOfWork = _repositories.Provider.BeginUnitOfWork();
+		unitOfWork.Require( sessionProof );
+		unitOfWork.Require( access );
+		HL2RPUnitOfWork.RequireActorState( unitOfWork, _repositories, loaded.Character );
+		permitInspection?.RequireUnchanged( unitOfWork, _repositories );
+		HL2RPUnitOfWork.RequireInventoryLayout( unitOfWork, _repositories, layoutDependencies );
 		var characterEditor = unitOfWork.Edit( _repositories.Characters, loaded.Character );
 		var inventoryEditor = unitOfWork.Edit( _repositories.Inventories, loaded.Inventory );
 		var entityEditor = unitOfWork.Edit( _repositories.SceneEntities, loaded.Entity );
@@ -397,7 +428,8 @@ public sealed class CommerceService
 			ItemIds = createdItems.Select( item => item.Id ).ToArray(),
 			CurrencyAmount = price,
 			BalanceAfter = characterAfter.Balance,
-			CommitSequence = committed.Value!.Sequence
+			CommitSequence = committed.Value!.Sequence,
+			Commit = committed.Value
 		};
 		Publish( actor, receipt );
 		return OperationResult<CommerceReceipt>.Success( receipt );

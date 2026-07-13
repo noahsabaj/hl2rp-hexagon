@@ -258,50 +258,13 @@ public sealed class CharacterCreationTests
 		var created = await service.CreateAsync( account, Request( HL2RPIds.Factions.Citizen ) );
 		Assert.IsTrue( created.Succeeded, created.Error?.Message );
 		var characterId = created.Value.Character.Id;
-		var relatedCharacter = CharacterId.New();
+		var related = await service.CreateAsync(
+			new AccountId( 43 ), Request( HL2RPIds.Factions.Citizen ) );
+		Assert.IsTrue( related.Succeeded, related.Error?.Message );
+		var relatedCharacter = related.Value.Character.Id;
 		var sceneEntity = SceneEntityId.New();
 		await using ( var unitOfWork = provider.BeginUnitOfWork() )
 		{
-			unitOfWork.Create(
-				repositories.CharacterReferences,
-				"door-owner",
-				new CharacterReferenceRecord
-				{
-					Category = "door_ownership",
-					CharacterId = characterId,
-					SceneEntityId = sceneEntity,
-					State = HL2RPPersistence.Payload(
-						HL2RPPersistence.DoorOwnership,
-						new DoorOwnershipReferenceState { AcquiredAtUtc = Now } )
-				} );
-			unitOfWork.Create(
-				repositories.CharacterReferences,
-				"recognition",
-				new CharacterReferenceRecord
-				{
-					Category = "recognition",
-					CharacterId = relatedCharacter,
-					RelatedCharacterId = characterId,
-					State = HL2RPPersistence.Payload(
-						HL2RPPersistence.Recognition,
-						new RecognitionReferenceState
-						{
-							IntroducedName = "Test Citizen",
-							IntroducedAtUtc = Now
-						} )
-				} );
-			unitOfWork.Create(
-				repositories.CharacterReferences,
-				"restraint",
-				new CharacterReferenceRecord
-				{
-					Category = "restraint",
-					CharacterId = characterId,
-					RelatedCharacterId = relatedCharacter,
-					State = HL2RPPersistence.Payload(
-						HL2RPPersistence.Restraint,
-						new RestraintReferenceState { RestrainedAtUtc = Now, Active = true } )
-				} );
 			unitOfWork.Create(
 				repositories.SceneEntities,
 				DomainKeys.SceneEntity( sceneEntity ),
@@ -316,6 +279,47 @@ public sealed class CharacterCreationTests
 			var committed = await unitOfWork.CommitAsync();
 			Assert.IsTrue( committed.Succeeded, committed.Error?.Message );
 		}
+		var references = new CharacterReferenceMutationService( repositories );
+		var door = await references.UpsertAsync(
+			"door-owner",
+			new CharacterReferenceRecord
+			{
+				Category = "door_ownership",
+				CharacterId = characterId,
+				SceneEntityId = sceneEntity,
+				State = HL2RPPersistence.Payload(
+					HL2RPPersistence.DoorOwnership,
+					new DoorOwnershipReferenceState { AcquiredAtUtc = Now } )
+			} );
+		var recognition = await references.UpsertAsync(
+			"recognition",
+			new CharacterReferenceRecord
+			{
+				Category = "recognition",
+				CharacterId = relatedCharacter,
+				RelatedCharacterId = characterId,
+				State = HL2RPPersistence.Payload(
+					HL2RPPersistence.Recognition,
+					new RecognitionReferenceState
+					{
+						IntroducedName = "Test Citizen",
+						IntroducedAtUtc = Now
+					} )
+			} );
+		var restraint = await references.UpsertAsync(
+			"restraint",
+			new CharacterReferenceRecord
+			{
+				Category = "restraint",
+				CharacterId = characterId,
+				RelatedCharacterId = relatedCharacter,
+				State = HL2RPPersistence.Payload(
+					HL2RPPersistence.Restraint,
+					new RestraintReferenceState { RestrainedAtUtc = Now, Active = true } )
+			} );
+		Assert.IsTrue( door.Succeeded, door.Error?.Message );
+		Assert.IsTrue( recognition.Succeeded, recognition.Error?.Message );
+		Assert.IsTrue( restraint.Succeeded, restraint.Error?.Message );
 
 		var deleted = await service.DeleteAsync( account, characterId );
 

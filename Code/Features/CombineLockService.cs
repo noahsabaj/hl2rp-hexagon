@@ -3,6 +3,7 @@
 using System.Threading;
 using System.Threading.Tasks;
 using Hexagon.V2.Kernel.Events;
+using Hexagon.V2.Persistence;
 
 namespace HL2RP.V2.Features;
 
@@ -10,7 +11,8 @@ public sealed record CombineLockInstalledReceipt(
 	SceneEntityId DoorEntityId,
 	ItemId LockKitItemId,
 	int RemainingInstallations,
-	long CommitSequence );
+	long CommitSequence,
+	CommitReceipt Commit ) : IHL2RPCommittedOperation;
 
 public sealed class CombineLockService
 {
@@ -66,11 +68,12 @@ public sealed class CombineLockService
 			kit.Value.Definition.Value != HL2RPIds.Items.CombineLockKit )
 			return OperationResult<CombineLockInstalledReceipt>.Failure(
 				ErrorCode.Unauthorized, "Lock kit membership proof failed." );
-		if ( !_access.Has(
+		var access = _access.Prove(
 			actor.ConnectionId,
 			actor.CharacterId,
 			sourceInventoryId,
-			InventoryCapability.View | InventoryCapability.Use ) )
+			InventoryCapability.View | InventoryCapability.Use );
+		if ( access is null )
 			return OperationResult<CombineLockInstalledReceipt>.Failure(
 				ErrorCode.Unauthorized, "Lock kit use capability is missing." );
 		if ( door.Value.Kind != "door" )
@@ -110,6 +113,10 @@ public sealed class CombineLockService
 				doorState.Value with { CombineLocked = true } )
 		};
 		var unitOfWork = _repositories.Provider.BeginUnitOfWork();
+		unitOfWork.Require( session.Value.CommitProof );
+		unitOfWork.Require( access );
+		HL2RPUnitOfWork.RequireActorState( unitOfWork, _repositories, character );
+		unitOfWork.RequireUnchanged( _repositories.Inventories, source );
 		var doorEditor = unitOfWork.Edit( _repositories.SceneEntities, door );
 		if ( doorEditor is null )
 		{
@@ -159,7 +166,8 @@ public sealed class CombineLockService
 			session.Value.SceneEntityId,
 			lockKitItemId,
 			remaining,
-			committed.Value!.Sequence );
+			committed.Value!.Sequence,
+			committed.Value );
 		_events.Publish( receipt );
 		HL2RPFeaturePersistence.PublishAudit(
 			_audit,

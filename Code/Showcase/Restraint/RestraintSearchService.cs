@@ -89,9 +89,10 @@ public sealed class CharacterRestraintInteractable : IHexInteractable
 		if (!_restraints.IsRestrained(_characterId))
 			return OperationResult<InteractionOffer>.Failure(ErrorCode.PolicyDenied,
 				"Search requires an actively restrained target.");
-		var inventory = _repositories.Inventories.All()
-			.Select(document => document.Value)
-			.SingleOrDefault(value => value.Owner == InventoryOwner.Character(_characterId));
+		var ownerIndex = _repositories.OwnerInventories.Find( DomainKeys.OwnerInventory(
+			InventoryOwner.Character( _characterId ), "main" ) );
+		var inventory = ownerIndex is null ? null : _repositories.Inventories.Find(
+			DomainKeys.Inventory( ownerIndex.Value.InventoryId ) )?.Value;
 		if (inventory is null)
 			return OperationResult<InteractionOffer>.Failure(ErrorCode.NotFound,
 				"Restrained character inventory was not found.");

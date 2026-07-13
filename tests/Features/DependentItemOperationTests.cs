@@ -32,6 +32,10 @@ public sealed class DependentItemOperationTests
 		await environment.SeedAsync( unitOfWork =>
 		{
 			unitOfWork.Create( environment.Repositories.Characters, DomainKeys.Character( character.Id ), character );
+			unitOfWork.Create(
+				environment.Repositories.CharacterLifecycleGuards,
+				DomainKeys.CharacterLifecycleGuard( character.Id ),
+				new CharacterLifecycleGuardRecord { CharacterId = character.Id, ReferenceRevision = 0 } );
 			unitOfWork.Create( environment.Repositories.Items, DomainKeys.Item( suitcase.Id ), suitcase );
 			unitOfWork.Create( environment.Repositories.Inventories, DomainKeys.Inventory( main.Id ), main );
 			unitOfWork.Create( environment.Repositories.Inventories, DomainKeys.Inventory( bag.Id ), bag );
@@ -124,6 +128,37 @@ public sealed class DependentItemOperationTests
 		Assert.AreEqual( 11L, FindTokenAmount( environment, seed.Primary.Id ) );
 		Assert.IsNull( environment.Repositories.Items.Find( DomainKeys.Item( seed.Secondary.Id ) ) );
 		Assert.IsNull( FindInventory( environment, seed.Inventory.Id ).Find( seed.Secondary.Id ) );
+	}
+
+	[TestMethod]
+	public async Task InterleavedAccessRevocationRejectsTokenSplitWithoutPartialDocumentsOrEvent()
+	{
+		await using var environment = await FeatureTestEnvironment.CreateAsync();
+		var seed = await SeedTokensAsync( environment, 10, 5 );
+		var events = new RecordingHandler<TokenStackReceipt>();
+		var service = new TokenStackService(
+			environment.Repositories,
+			environment.Access,
+			environment.Ids,
+			environment.Layout,
+			environment.Clock,
+			FeatureTestEnvironment.AllowPolicy(),
+			events.Bus() );
+		var itemCount = environment.Repositories.Items.All().Count;
+		environment.Provider.InterleaveNextCommit( () =>
+		{
+			environment.Access.RevokeConnection( seed.Actor.ConnectionId );
+			return Task.CompletedTask;
+		} );
+
+		var result = await service.SplitAsync(
+			seed.Actor, seed.Inventory.Id, seed.Primary.Id, 4 );
+
+		Assert.AreEqual( ErrorCode.Conflict, result.Error!.Code );
+		Assert.AreEqual( 10L, FindTokenAmount( environment, seed.Primary.Id ) );
+		Assert.HasCount( 2, FindInventory( environment, seed.Inventory.Id ).Placements );
+		Assert.HasCount( itemCount, environment.Repositories.Items.All() );
+		Assert.IsEmpty( events.Events );
 	}
 
 	[TestMethod]
@@ -485,6 +520,10 @@ public sealed class DependentItemOperationTests
 		await environment.SeedAsync( unitOfWork =>
 		{
 			unitOfWork.Create( environment.Repositories.Characters, DomainKeys.Character( character.Id ), character );
+			unitOfWork.Create(
+				environment.Repositories.CharacterLifecycleGuards,
+				DomainKeys.CharacterLifecycleGuard( character.Id ),
+				new CharacterLifecycleGuardRecord { CharacterId = character.Id, ReferenceRevision = 0 } );
 			if ( includeCharacterSlot )
 			{
 				unitOfWork.Create(

@@ -89,16 +89,14 @@ public sealed class PersistenceCodecTests
 	}
 
 	[TestMethod]
-	public void CityStateV1MigrationAddsAnExplicitNonFabricatedObjectiveTimestamp()
+	public void CityStateUsesFreshTypedObjectiveFormatAndRejectsLegacyPayloads()
 	{
 		using var document = JsonDocument.Parse(
 			"""{"objectives":[{"id":"objective.legacy","text":"Legacy directive","completed":false}]}""" );
 
-		var migrated = HL2RPPersistence.CityState.Deserialize( document.RootElement, 1 );
-
-		Assert.AreEqual( 2, HL2RPPersistence.CityState.CurrentVersion );
-		Assert.HasCount( 1, migrated.Objectives );
-		Assert.AreEqual( DateTimeOffset.UnixEpoch, migrated.Objectives[0].UpdatedAtUtc );
+		Assert.AreEqual( 3, HL2RPPersistence.CityState.CurrentVersion );
+		Assert.Throws<InvalidOperationException>( () =>
+			HL2RPPersistence.CityState.Deserialize( document.RootElement, 1 ) );
 	}
 
 	[TestMethod]
@@ -328,7 +326,11 @@ public sealed class PersistenceCodecTests
 			{
 				Objectives = new[]
 				{
-					new CityObjectiveState { Id = "test", Text = "Test objective", Completed = false, UpdatedAtUtc = now }
+					new CityObjectiveState
+					{
+						Id = "test", Title = "Test objective", Detail = "Typed detail.",
+						Completed = false, UpdatedAtUtc = now
+					}
 				}
 			}
 		};

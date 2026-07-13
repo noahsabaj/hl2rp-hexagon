@@ -75,8 +75,39 @@ public sealed record ScannerPilotSession(
 	long LastAcceptedSequence,
 	DateTimeOffset? LastInputAtUtc);
 
-public sealed record ScannerInputReceipt(long Sequence, ScannerMotionCommand Motion, long CommitSequence);
-public sealed record ScannerPhotoReceipt(ScannerPhotoMetadata Metadata, DateTimeOffset CooldownUntilUtc, long CommitSequence);
+public sealed record ScannerPilotEntryReceipt(
+	ScannerPilotSession Session,
+	long CommitSequence,
+	CommitReceipt Commit,
+	OperationError? BoundaryError = null) : IHL2RPCommittedOperation;
+public sealed record ScannerSpotlightReceipt(
+	SceneEntityId ScannerId,
+	bool Enabled,
+	long CommitSequence,
+	CommitReceipt Commit,
+	OperationError? BoundaryError = null) : IHL2RPCommittedOperation;
+public sealed record ScannerInputReceipt(
+	long Sequence, ScannerMotionCommand Motion, long CommitSequence, CommitReceipt Commit,
+	OperationError? BoundaryError = null) : IHL2RPCommittedOperation;
+public sealed record ScannerPhotoReceipt(
+	ScannerPhotoMetadata Metadata, DateTimeOffset CooldownUntilUtc,
+	long CommitSequence, CommitReceipt Commit,
+	OperationError? BoundaryError = null) : IHL2RPCommittedOperation;
+public sealed record ScannerPilotCleanupReceipt(
+	ScannerPilotSession Session,
+	string Reason,
+	long CommitSequence,
+	CommitReceipt Commit,
+	OperationError? BoundaryError = null) : IHL2RPCommittedOperation;
+
+/// <summary>
+/// Synchronous post-commit boundary for lifecycle cleanup that has no command result to carry its
+/// provider-issued receipt. Implementations must not throw; the persistence commit is already durable.
+/// </summary>
+public interface IScannerCommitSink
+{
+	void Observe(ScannerPilotCleanupReceipt receipt);
+}
 
 /// <summary>
 /// Host-bound scanner coordinator. Input is normalized intent; speed, ordering,
@@ -99,6 +130,7 @@ public sealed class ScannerPilotService
 	private readonly IScannerMotionLimitsProvider _motionLimits;
 	private readonly IScannerEffectsBoundary _effects;
 	private readonly ITrustedScannerPoseProvider _poses;
+	private readonly IScannerCommitSink _commitSink;
 	private readonly Func<Guid> _createPhotoId;
 	private readonly Func<TimeSpan, Task> _cleanupDelay;
 	private readonly Dictionary<InteractionSessionId, ScannerPilotSession> _active = new();
@@ -116,6 +148,7 @@ public sealed class ScannerPilotService
 		IScannerMotionLimitsProvider motionLimits,
 		IScannerEffectsBoundary effects,
 		ITrustedScannerPoseProvider poses,
+		IScannerCommitSink commitSink,
 		Func<Guid>? createPhotoId = null,
 		Func<TimeSpan, Task>? cleanupDelay = null)
 	{
@@ -128,6 +161,7 @@ public sealed class ScannerPilotService
 		_motionLimits = motionLimits ?? throw new ArgumentNullException(nameof(motionLimits));
 		_effects = effects ?? throw new ArgumentNullException(nameof(effects));
 		_poses = poses ?? throw new ArgumentNullException(nameof(poses));
+		_commitSink = commitSink ?? throw new ArgumentNullException(nameof(commitSink));
 		_createPhotoId = createPhotoId ?? Guid.NewGuid;
 		_cleanupDelay = cleanupDelay ?? Task.Delay;
 		_sessions.SessionRevoked += OnSessionRevoked;
@@ -207,7 +241,7 @@ public sealed class ScannerPilotService
 			await BeginCleanup(active, "cleanup_retry");
 	}
 
-	public async ValueTask<OperationResult<ScannerPilotSession>> EnterAsync(
+	public async ValueTask<OperationResult<ScannerPilotEntryReceipt>> EnterAsync(
 		InventoryActor actor,
 		SceneEntityId scannerId,
 		CancellationToken cancellationToken = default)
@@ -215,63 +249,90 @@ public sealed class ScannerPilotService
 		var character = _repositories.Characters.Find(DomainKeys.Character(actor.CharacterId));
 		var scanner = _repositories.SceneEntities.Find(DomainKeys.SceneEntity(scannerId));
 		if (character is null || scanner is null)
-			return OperationResult<ScannerPilotSession>.Failure(ErrorCode.NotFound,
+			return OperationResult<ScannerPilotEntryReceipt>.Failure(ErrorCode.NotFound,
 				"Pilot character or scanner was not found.");
 		if (character.Value.AccountId != actor.AccountId)
-			return OperationResult<ScannerPilotSession>.Failure(ErrorCode.Unauthorized,
+			return OperationResult<ScannerPilotEntryReceipt>.Failure(ErrorCode.Unauthorized,
 				"Authenticated pilot binding is invalid.");
 		if (scanner.Value.Kind != "scanner_drone")
-			return OperationResult<ScannerPilotSession>.Failure(ErrorCode.PolicyDenied,
+			return OperationResult<ScannerPilotEntryReceipt>.Failure(ErrorCode.PolicyDenied,
 				"Interaction target is not a pilotable scanner drone.");
 		if (character.Value.Class?.Value != HL2RPIds.Classes.Scanner)
-			return OperationResult<ScannerPilotSession>.Failure(ErrorCode.PolicyDenied,
+			return OperationResult<ScannerPilotEntryReceipt>.Failure(ErrorCode.PolicyDenied,
 				"Active character is not assigned to the scanner class.");
 		var state = ScannerPersistence.Decode(scanner.Value.State, HL2RPPersistence.ScannerState);
-		if (state.Failed) return Failure<ScannerPilotSession>(state.Error!);
+		if (state.Failed) return Failure<ScannerPilotEntryReceipt>(state.Error!);
 		if (state.Value.LastAcceptedInputSequence < 0 || state.Value.Photos.Count > MaximumStoredPhotos)
-			return OperationResult<ScannerPilotSession>.Failure(ErrorCode.PersistedTypeInvalid,
+			return OperationResult<ScannerPilotEntryReceipt>.Failure(ErrorCode.PersistedTypeInvalid,
 				"Scanner sequence or photo state is outside registered limits.");
 		bool scannerAddressed;
 		lock (_cleanupSync) scannerAddressed = _active.Values.Any(value => value.ScannerId == scannerId);
 		if (state.Value.PilotCharacterId is not null || scannerAddressed)
-			return OperationResult<ScannerPilotSession>.Failure(ErrorCode.Conflict, "Scanner already has a pilot.");
+			return OperationResult<ScannerPilotEntryReceipt>.Failure(ErrorCode.Conflict, "Scanner already has a pilot.");
 
 		var opened = _authority.Begin(actor.ConnectionId, actor.AccountId, actor.CharacterId,
 			InteractionTarget.SceneEntity(scannerId));
-		if (opened.Failed) return Failure<ScannerPilotSession>(opened.Error!);
+		if (opened.Failed) return Failure<ScannerPilotEntryReceipt>(opened.Error!);
 		if (opened.Value.Session is not InteractionSession session || session.Kind != InteractionSessionKind.Scanner)
 		{
 			if (opened.Value.Session is not null) _authority.Close(opened.Value.Session.Id);
-			return OperationResult<ScannerPilotSession>.Failure(ErrorCode.Unauthorized,
+			return OperationResult<ScannerPilotEntryReceipt>.Failure(ErrorCode.Unauthorized,
 				"Scanner target did not grant a scanner session.");
 		}
+		var sessionProof = _sessions.Prove(session);
+		if (sessionProof is null)
+		{
+			_authority.Close(session.Id);
+			return OperationResult<ScannerPilotEntryReceipt>.Failure(ErrorCode.Unauthorized,
+				"Scanner session changed before pilot state could be staged.");
+		}
 
+		var nextState = state.Value with { PilotCharacterId = actor.CharacterId, SpotlightEnabled = false };
+		var pilot = new ScannerPilotSession(session.Id, actor, scannerId,
+			nextState.LastAcceptedInputSequence, null);
 		var unitOfWork = _repositories.Provider.BeginUnitOfWork();
+		unitOfWork.Require(sessionProof);
+		HL2RPUnitOfWork.RequireActorState(unitOfWork, _repositories, character);
 		var editor = unitOfWork.Edit(_repositories.SceneEntities, scanner);
 		if (editor is null)
 		{
 			await HL2RPUnitOfWork.DisposeAsync(unitOfWork);
 			_authority.Close(session.Id);
-			return OperationResult<ScannerPilotSession>.Failure(ErrorCode.Conflict, "Scanner state changed.");
+			return OperationResult<ScannerPilotEntryReceipt>.Failure(ErrorCode.Conflict, "Scanner state changed.");
 		}
-		var nextState = state.Value with { PilotCharacterId = actor.CharacterId, SpotlightEnabled = false };
 		editor.Replace(editor.Value with
 		{
 			State = HL2RPPersistence.Payload(HL2RPPersistence.ScannerState, nextState)
 		});
 		unitOfWork.Save(editor);
+		lock (_cleanupSync) _active.Add(session.Id, pilot);
 		var committed = await HL2RPUnitOfWork.CommitAndDisposeAsync(unitOfWork, cancellationToken);
 		if (!committed.Succeeded)
 		{
+			lock (_cleanupSync)
+			{
+				if (!_terminating.Contains(session.Id)) _active.Remove(session.Id);
+			}
 			_authority.Close(session.Id);
-			return ScannerPersistence.Failure<ScannerPilotSession>(committed.Error!);
+			return ScannerPersistence.Failure<ScannerPilotEntryReceipt>(committed.Error!);
 		}
 
-		var pilot = new ScannerPilotSession(session.Id, actor, scannerId,
-			nextState.LastAcceptedInputSequence, null);
-		lock (_cleanupSync) _active.Add(session.Id, pilot);
-		_body.EnterPilot(actor, scannerId);
-		return OperationResult<ScannerPilotSession>.Success(pilot);
+		OperationError? boundaryError = null;
+		var cleanupRequired = false;
+		lock (_cleanupSync)
+		{
+			if (_active.ContainsKey(session.Id) && !_terminating.Contains(session.Id) &&
+				sessionProof.IsCurrent())
+				boundaryError = ObserveBoundary(
+					() => _body.EnterPilot(actor, scannerId),
+					"Scanner pilot committed, but player-body transition failed.");
+			else
+				cleanupRequired = true;
+		}
+		if (cleanupRequired)
+			await BeginCleanup(pilot, "post_commit_session_revoked");
+		return OperationResult<ScannerPilotEntryReceipt>.Success(new ScannerPilotEntryReceipt(
+			pilot, committed.Value!.Sequence, committed.Value, boundaryError));
 	}
 
 	public async ValueTask<OperationResult<ScannerInputReceipt>> ApplyInputAsync(
@@ -303,6 +364,7 @@ public sealed class ScannerPilotService
 			return OperationResult<ScannerInputReceipt>.Failure(ErrorCode.Unauthorized,
 				"Persisted scanner pilot or sequence no longer matches the session.");
 		var unitOfWork = _repositories.Provider.BeginUnitOfWork();
+		unitOfWork.Require(continued.Value);
 		var editor = unitOfWork.Edit(_repositories.SceneEntities, scanner.Value.Document);
 		if (editor is null)
 		{
@@ -315,42 +377,57 @@ public sealed class ScannerPilotService
 		var committed = await HL2RPUnitOfWork.CommitAndDisposeAsync(unitOfWork, cancellationToken);
 		if (!committed.Succeeded) return ScannerPersistence.Failure<ScannerInputReceipt>(committed.Error!);
 
+		var stillActive = false;
+		var cleanupRequired = false;
+		OperationError? boundaryError = null;
 		lock (_cleanupSync)
 		{
-			if (_terminating.Contains(intent.SessionId) || !_active.ContainsKey(intent.SessionId))
-				return OperationResult<ScannerInputReceipt>.Failure(ErrorCode.Unauthorized,
-					"Scanner session ended while input was committing.");
-			_active[intent.SessionId] = active.Value with
+			stillActive = !_terminating.Contains(intent.SessionId) &&
+				_active.ContainsKey(intent.SessionId) &&
+				continued.Value.IsCurrent();
+			if (stillActive)
 			{
-				LastAcceptedSequence = intent.Sequence,
-				LastInputAtUtc = now
-			};
+				_active[intent.SessionId] = active.Value with
+				{
+					LastAcceptedSequence = intent.Sequence,
+					LastInputAtUtc = now
+				};
+				boundaryError = ObserveBoundary(
+					() => _motion.Apply(active.Value.ScannerId, normalized.Value),
+					"Scanner input committed, but world motion failed.");
+			}
+			else cleanupRequired = true;
 		}
-		_motion.Apply(active.Value.ScannerId, normalized.Value);
+		// A concurrent lifecycle cleanup can win immediately after this commit. The
+		// input receipt must still be returned because its sequence was durably
+		// acknowledged; only the now-stale world motion is suppressed.
+		if (cleanupRequired)
+			_ = BeginCleanup(active.Value, "post_commit_session_revoked");
 		return OperationResult<ScannerInputReceipt>.Success(new ScannerInputReceipt(
-			intent.Sequence, normalized.Value, committed.Value!.Sequence));
+			intent.Sequence, normalized.Value, committed.Value!.Sequence, committed.Value, boundaryError));
 	}
 
-	public async ValueTask<OperationResult<bool>> ToggleSpotlightAsync(
+	public async ValueTask<OperationResult<ScannerSpotlightReceipt>> ToggleSpotlightAsync(
 		InventoryActor actor,
 		InteractionSessionId sessionId,
 		CancellationToken cancellationToken = default)
 	{
 		var active = ValidateSession(actor, sessionId);
-		if (active.Failed) return Failure<bool>(active.Error!);
+		if (active.Failed) return Failure<ScannerSpotlightReceipt>(active.Error!);
 		var continued = Continue(active.Value);
-		if (continued.Failed) return Failure<bool>(continued.Error!);
+		if (continued.Failed) return Failure<ScannerSpotlightReceipt>(continued.Error!);
 		var scanner = ResolveState(active.Value.ScannerId);
-		if (scanner.Failed) return Failure<bool>(scanner.Error!);
+		if (scanner.Failed) return Failure<ScannerSpotlightReceipt>(scanner.Error!);
 		if (scanner.Value.State.PilotCharacterId != actor.CharacterId)
-			return OperationResult<bool>.Failure(ErrorCode.Unauthorized, "Scanner pilot changed.");
+			return OperationResult<ScannerSpotlightReceipt>.Failure(ErrorCode.Unauthorized, "Scanner pilot changed.");
 		var enabled = !scanner.Value.State.SpotlightEnabled;
 		var unitOfWork = _repositories.Provider.BeginUnitOfWork();
+		unitOfWork.Require(continued.Value);
 		var editor = unitOfWork.Edit(_repositories.SceneEntities, scanner.Value.Document);
 		if (editor is null)
 		{
 			await HL2RPUnitOfWork.DisposeAsync(unitOfWork);
-			return OperationResult<bool>.Failure(ErrorCode.Conflict, "Scanner state changed.");
+			return OperationResult<ScannerSpotlightReceipt>.Failure(ErrorCode.Conflict, "Scanner state changed.");
 		}
 		editor.Replace(editor.Value with
 		{
@@ -359,9 +436,22 @@ public sealed class ScannerPilotService
 		});
 		unitOfWork.Save(editor);
 		var committed = await HL2RPUnitOfWork.CommitAndDisposeAsync(unitOfWork, cancellationToken);
-		if (!committed.Succeeded) return ScannerPersistence.Failure<bool>(committed.Error!);
-		_effects.SetSpotlight(active.Value.ScannerId, enabled);
-		return OperationResult<bool>.Success(enabled);
+		if (!committed.Succeeded) return ScannerPersistence.Failure<ScannerSpotlightReceipt>(committed.Error!);
+		OperationError? boundaryError = null;
+		var cleanupRequired = false;
+		lock (_cleanupSync)
+		{
+			if (_active.ContainsKey(sessionId) && !_terminating.Contains(sessionId) &&
+				continued.Value.IsCurrent())
+				boundaryError = ObserveBoundary(
+					() => _effects.SetSpotlight(active.Value.ScannerId, enabled),
+					"Scanner spotlight committed, but the world effect failed.");
+			else cleanupRequired = true;
+		}
+		if (cleanupRequired)
+			_ = BeginCleanup(active.Value, "post_commit_session_revoked");
+		return OperationResult<ScannerSpotlightReceipt>.Success(new ScannerSpotlightReceipt(
+			active.Value.ScannerId, enabled, committed.Value!.Sequence, committed.Value, boundaryError));
 	}
 
 	public OperationResult Flash(InventoryActor actor, InteractionSessionId sessionId)
@@ -369,8 +459,15 @@ public sealed class ScannerPilotService
 		var active = ValidateSession(actor, sessionId);
 		if (active.Failed) return OperationResult.Failure(active.Error!.Code, active.Error.Message);
 		var continued = Continue(active.Value);
-		if (continued.Failed) return continued;
-		_effects.Flash(active.Value.ScannerId);
+		if (continued.Failed) return OperationResult.Failure(continued.Error!.Code, continued.Error.Message);
+		lock (_cleanupSync)
+		{
+			if (!_active.ContainsKey(sessionId) || _terminating.Contains(sessionId) ||
+				!continued.Value.IsCurrent())
+				return OperationResult.Failure(ErrorCode.Unauthorized,
+					"Scanner session changed before the flash effect could run.");
+			_effects.Flash(active.Value.ScannerId);
+		}
 		return OperationResult.Success();
 	}
 
@@ -418,6 +515,7 @@ public sealed class ScannerPilotService
 			PhotoCooldownUntilUtc = nextCooldown
 		};
 		var unitOfWork = _repositories.Provider.BeginUnitOfWork();
+		unitOfWork.Require(continued.Value);
 		var editor = unitOfWork.Edit(_repositories.SceneEntities, scanner.Value.Document);
 		if (editor is null)
 		{
@@ -428,9 +526,21 @@ public sealed class ScannerPilotService
 		unitOfWork.Save(editor);
 		var committed = await HL2RPUnitOfWork.CommitAndDisposeAsync(unitOfWork, cancellationToken);
 		if (!committed.Succeeded) return ScannerPersistence.Failure<ScannerPhotoReceipt>(committed.Error!);
-		_effects.PublishPhoto(active.Value.ScannerId, metadata);
+		OperationError? boundaryError = null;
+		var cleanupRequired = false;
+		lock (_cleanupSync)
+		{
+			if (_active.ContainsKey(sessionId) && !_terminating.Contains(sessionId) &&
+				continued.Value.IsCurrent())
+				boundaryError = ObserveBoundary(
+					() => _effects.PublishPhoto(active.Value.ScannerId, metadata),
+					"Scanner photo committed, but the world effect failed.");
+			else cleanupRequired = true;
+		}
+		if (cleanupRequired)
+			_ = BeginCleanup(active.Value, "post_commit_session_revoked");
 		return OperationResult<ScannerPhotoReceipt>.Success(new ScannerPhotoReceipt(
-			metadata, nextCooldown, committed.Value!.Sequence));
+			metadata, nextCooldown, committed.Value!.Sequence, committed.Value, boundaryError));
 	}
 
 	public ValueTask<OperationResult> ExitAsync(
@@ -499,14 +609,19 @@ public sealed class ScannerPilotService
 			if (_cleanupOperations.TryGetValue(active.SessionId, out var existing))
 				return existing.Completion.Task;
 			restoreBody = _terminating.Add(active.SessionId);
-			operation = new CleanupOperation(active);
+			operation = new CleanupOperation(active, reason);
 			_cleanupOperations.Add(active.SessionId, operation);
 		}
 
 		if (restoreBody)
 		{
-			_body.Restore(active.Actor, active.ScannerId, reason);
-			_effects.SetSpotlight(active.ScannerId, false);
+			operation.BoundaryError = MergeBoundaryErrors(
+				ObserveBoundary(
+					() => _body.Restore(active.Actor, active.ScannerId, reason),
+					"Scanner cleanup started, but player-body restoration failed."),
+				ObserveBoundary(
+					() => _effects.SetSpotlight(active.ScannerId, false),
+					"Scanner cleanup started, but spotlight reset failed."));
 		}
 		_ = CompleteCleanupAsync(operation);
 		return operation.Completion.Task;
@@ -519,7 +634,8 @@ public sealed class ScannerPilotService
 		{
 			while (true)
 			{
-				result = await ClearPersistedPilotWithRetryAsync(operation.Session);
+				result = await ClearPersistedPilotWithRetryAsync(
+					operation.Session, operation.Reason, operation.BoundaryError);
 				if (result.Succeeded || !CanRetryCleanup(result)) break;
 				await _cleanupDelay(CleanupRetryDelay);
 			}
@@ -549,18 +665,24 @@ public sealed class ScannerPilotService
 			_repositories.Provider.Health.Status != PersistenceHealthStatus.Fatal;
 	}
 
-	private async Task<OperationResult> ClearPersistedPilotWithRetryAsync(ScannerPilotSession active)
+	private async Task<OperationResult> ClearPersistedPilotWithRetryAsync(
+		ScannerPilotSession active,
+		string reason,
+		OperationError? boundaryError)
 	{
 		OperationResult result = OperationResult.Failure(ErrorCode.Conflict, "Scanner cleanup did not run.");
 		for (var attempt = 0; attempt < CleanupMaximumAttempts; attempt++)
 		{
-			result = await ClearPersistedPilotOnceAsync(active);
+			result = await ClearPersistedPilotOnceAsync(active, reason, boundaryError);
 			if (result.Succeeded || !CanRetryCleanup(result)) return result;
 		}
 		return result;
 	}
 
-	private async Task<OperationResult> ClearPersistedPilotOnceAsync(ScannerPilotSession active)
+	private async Task<OperationResult> ClearPersistedPilotOnceAsync(
+		ScannerPilotSession active,
+		string reason,
+		OperationError? boundaryError)
 	{
 		var scanner = ResolveState(active.ScannerId);
 		if (scanner.Failed)
@@ -584,7 +706,10 @@ public sealed class ScannerPilotService
 		});
 		unitOfWork.Save(editor);
 		var committed = await HL2RPUnitOfWork.CommitAndDisposeAsync(unitOfWork);
-		return committed.Succeeded ? OperationResult.Success() : ScannerPersistence.Failure(committed.Error!);
+		if (!committed.Succeeded) return ScannerPersistence.Failure(committed.Error!);
+		_commitSink.Observe(new ScannerPilotCleanupReceipt(
+			active, reason, committed.Value!.Sequence, committed.Value, boundaryError));
+		return OperationResult.Success();
 	}
 
 	private OperationResult<ScannerPilotSession> ValidateSession(
@@ -614,13 +739,18 @@ public sealed class ScannerPilotService
 		}
 	}
 
-	private OperationResult Continue(ScannerPilotSession active)
+	private OperationResult<InteractionSessionProof> Continue(ScannerPilotSession active)
 	{
 		var continued = _authority.Continue(active.SessionId, active.Actor.ConnectionId,
 			active.Actor.AccountId, active.Actor.CharacterId, InteractionTarget.SceneEntity(active.ScannerId));
-		return continued.Succeeded
-			? OperationResult.Success()
-			: OperationResult.Failure(continued.Error!.Code, continued.Error.Message);
+		if (continued.Failed)
+			return OperationResult<InteractionSessionProof>.Failure(
+				continued.Error!.Code, continued.Error.Message);
+		var proof = _sessions.Prove(continued.Value);
+		return proof is not null
+			? OperationResult<InteractionSessionProof>.Success(proof)
+			: OperationResult<InteractionSessionProof>.Failure(
+				ErrorCode.Unauthorized, "Scanner session changed during continuation.");
 	}
 
 	private OperationResult<ResolvedScanner> ResolveState(SceneEntityId scannerId)
@@ -663,20 +793,43 @@ public sealed class ScannerPilotService
 	private static OperationResult<T> Failure<T>(OperationError error) =>
 		OperationResult<T>.Failure(error.Code, error.Message);
 
+	private static OperationError? ObserveBoundary(Action action, string message)
+	{
+		try
+		{
+			action();
+			return null;
+		}
+		catch (Exception exception)
+		{
+			return new OperationError(ErrorCode.InternalError, $"{message} {exception.Message}");
+		}
+	}
+
+	private static OperationError? MergeBoundaryErrors(OperationError? first, OperationError? second)
+	{
+		if (first is null) return second;
+		if (second is null) return first;
+		return new OperationError(ErrorCode.InternalError, $"{first.Message} {second.Message}");
+	}
+
 	private sealed record ResolvedScanner(
 		DocumentSnapshot<PersistentSceneEntityRecord> Document,
 		ScannerEntityState State);
 
 	private sealed class CleanupOperation
 	{
-		public CleanupOperation(ScannerPilotSession session)
+		public CleanupOperation(ScannerPilotSession session, string reason)
 		{
 			Session = session;
+			Reason = reason;
 			Completion = new TaskCompletionSource<OperationResult>(TaskCreationOptions.RunContinuationsAsynchronously);
 		}
 
 		public ScannerPilotSession Session { get; }
+		public string Reason { get; }
 		public TaskCompletionSource<OperationResult> Completion { get; }
+		public OperationError? BoundaryError { get; set; }
 	}
 }
 

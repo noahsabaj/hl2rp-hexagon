@@ -4,13 +4,15 @@ using System.Globalization;
 using System.Threading;
 using System.Threading.Tasks;
 using Hexagon.V2.Kernel.Events;
+using Hexagon.V2.Persistence;
 
 namespace HL2RP.V2.Features;
 
 public sealed record RadioTunedReceipt(
 	ItemId RadioItemId,
 	string Frequency,
-	long CommitSequence );
+	long CommitSequence,
+	CommitReceipt Commit ) : IHL2RPCommittedOperation;
 
 public sealed class RadioTuningService
 {
@@ -64,11 +66,12 @@ public sealed class RadioTuningService
 		if ( character.Value.AccountId != actor.AccountId || inventory.Value.Find( radioItemId ) is null ||
 			item.Value.Definition.Value != HL2RPIds.Items.Radio )
 			return OperationResult<RadioTunedReceipt>.Failure( ErrorCode.Unauthorized, "Radio ownership proof failed." );
-		if ( !_access.Has(
+		var access = _access.Prove(
 			actor.ConnectionId,
 			actor.CharacterId,
 			inventoryId,
-			InventoryCapability.View | InventoryCapability.Use ) )
+			InventoryCapability.View | InventoryCapability.Use );
+		if ( access is null )
 			return OperationResult<RadioTunedReceipt>.Failure( ErrorCode.Unauthorized, "Radio use capability is missing." );
 		if ( !item.Value.Traits.TryGetValue( "radio", out var payload ) )
 			return OperationResult<RadioTunedReceipt>.Failure( ErrorCode.PersistedTypeInvalid, "Radio state is missing." );
@@ -95,6 +98,9 @@ public sealed class RadioTuningService
 		};
 		var after = item.Value with { Traits = traits };
 		var unitOfWork = _repositories.Provider.BeginUnitOfWork();
+		unitOfWork.Require( access );
+		HL2RPUnitOfWork.RequireActorState( unitOfWork, _repositories, character );
+		unitOfWork.RequireUnchanged( _repositories.Inventories, inventory );
 		var editor = unitOfWork.Edit( _repositories.Items, item );
 		if ( editor is null )
 		{
@@ -106,7 +112,8 @@ public sealed class RadioTuningService
 		var committed = await HL2RPUnitOfWork.CommitAndDisposeAsync( unitOfWork, cancellationToken );
 		if ( !committed.Succeeded )
 			return HL2RPFeaturePersistence.Failure<RadioTunedReceipt>( committed.Error! );
-		var receipt = new RadioTunedReceipt( radioItemId, normalized.Value, committed.Value!.Sequence );
+		var receipt = new RadioTunedReceipt(
+			radioItemId, normalized.Value, committed.Value!.Sequence, committed.Value );
 		_events.Publish( receipt );
 		HL2RPFeaturePersistence.PublishAudit(
 			_audit,

@@ -493,13 +493,16 @@ public sealed record CombatFireIntent(
 public sealed record CombatIntentReceipt(
 	PistolFireReceipt Fire,
 	PlayerCombatDamageOutcome? PlayerDamage,
-	DeathTransitionReceipt? Death);
+	DeathTransitionReceipt? Death,
+	OperationError? DegradedDeathTransition = null,
+	PistolStateTransitionReceipt? Raise = null);
 
 /// <summary>
 /// Production fire route for the schema Fire action. Raise completion is host
 /// delayed; ammo and durable target damage commit first. A lethal death/drop is
 /// a second awaited atomic boundary. If that boundary fails, health is restored
-/// to one and the failure is surfaced, so no hidden half-dead body remains.
+/// to one and the already-committed shot remains a successful outcome carrying
+/// a degradation diagnostic, so its receipt can never be hidden behind failure.
 /// </summary>
 public sealed class CombatIntentService
 {
@@ -531,6 +534,8 @@ public sealed class CombatIntentService
 		CancellationToken cancellationToken = default)
 	{
 		ArgumentNullException.ThrowIfNull(intent);
+		PistolStateTransitionReceipt? raise = null;
+		var commitOwned = false;
 		var raised = _pistol.IsHostRaised(intent.Actor, intent.InventoryId, intent.PistolId);
 		if (raised.Failed) return Failure<CombatIntentReceipt>(raised.Error!);
 		if (!raised.Value)
@@ -539,20 +544,28 @@ public sealed class CombatIntentService
 			if (ticket.Failed) return Failure<CombatIntentReceipt>(ticket.Error!);
 			try
 			{
-			var remaining = ticket.Value.ReadyAtUtc - _clock.UtcNow;
-			if (remaining > TimeSpan.Zero) await _delay.DelayAsync(remaining, cancellationToken);
-			if (intent.CanCompleteRaise is not null && !intent.CanCompleteRaise())
-			{
-				_pistol.ClearCharacter(intent.Actor.CharacterId);
-				return OperationResult<CombatIntentReceipt>.Failure(
-					ErrorCode.Conflict, "Pistol raise was cancelled or its actor binding changed.");
-			}
-				var completed = await _pistol.CompleteRaiseAsync(ticket.Value.Id, intent.Actor, cancellationToken);
+				var remaining = ticket.Value.ReadyAtUtc - _clock.UtcNow;
+				if (remaining > TimeSpan.Zero) await _delay.DelayAsync(remaining, cancellationToken);
+				if (intent.CanCompleteRaise is not null)
+				{
+					if (!intent.CanCompleteRaise())
+					{
+						_pistol.ClearCharacter(intent.Actor.CharacterId);
+						return OperationResult<CombatIntentReceipt>.Failure(
+							ErrorCode.Conflict, "Pistol raise was cancelled or its actor binding changed.");
+					}
+					commitOwned = true;
+				}
+				var completed = await _pistol.CompleteRaiseAsync(
+					ticket.Value.Id,
+					intent.Actor,
+					commitOwned ? CancellationToken.None : cancellationToken);
 				if (completed.Failed)
 				{
 					_pistol.CancelRaise(ticket.Value.Id, intent.Actor);
 					return Failure<CombatIntentReceipt>(completed.Error!);
 				}
+				raise = completed.Value;
 			}
 			catch
 			{
@@ -560,20 +573,29 @@ public sealed class CombatIntentService
 				throw;
 			}
 		}
+		if (intent.CanCompleteRaise is not null && !commitOwned)
+		{
+			if (!intent.CanCompleteRaise())
+				return OperationResult<CombatIntentReceipt>.Failure(
+					ErrorCode.Conflict, "Pistol raise was cancelled or its actor binding changed.");
+			commitOwned = true;
+		}
 
 		var fired = await _pistol.FireAsync(
-			new PistolFireIntent(intent.Actor, intent.InventoryId, intent.PistolId), cancellationToken);
+			new PistolFireIntent(intent.Actor, intent.InventoryId, intent.PistolId),
+			commitOwned ? CancellationToken.None : cancellationToken);
 		if (fired.Failed) return Failure<CombatIntentReceipt>(fired.Error!);
 
 		PlayerCombatDamageOutcome? playerDamage = null;
 		DeathTransitionReceipt? death = null;
+		OperationError? degradedDeathTransition = null;
 		if (fired.Value.DamagePlanId != Guid.Empty &&
 			_damage.TryTakeOutcome(fired.Value.DamagePlanId, out var outcome))
 		{
 			playerDamage = outcome;
 			if (outcome.IsLethal)
 			{
-				OperationResult<DeathTransitionReceipt> died;
+				OperationResult<DeathTransitionReceipt>? died = null;
 				try
 				{
 					died = await _lifecycle.DieAsync(
@@ -581,24 +603,28 @@ public sealed class CombatIntentService
 						outcome.Target.InventoryId,
 						outcome.Target.DropTransform,
 						"Pistol wound",
-						cancellationToken);
+						commitOwned ? CancellationToken.None : cancellationToken);
 				}
 				catch
 				{
 					_damage.RestoreAlive(outcome.Target.Actor.CharacterId);
-					throw;
+					degradedDeathTransition = new OperationError(
+						ErrorCode.InternalError,
+						"Shot committed, but death transition failed unexpectedly and target health was restored." );
 				}
-				if (died.Failed)
+				if (died is { } deathResult && deathResult.Failed)
 				{
 					_damage.RestoreAlive(outcome.Target.Actor.CharacterId);
-					return OperationResult<CombatIntentReceipt>.Failure(
-						died.Error!.Code,
-						$"Shot committed, but death transition failed and target health was restored: {died.Error.Message}");
+					degradedDeathTransition = new OperationError(
+						deathResult.Error!.Code,
+						$"Shot committed, but death transition failed and target health was restored: {deathResult.Error.Message}",
+						deathResult.Error.Details);
 				}
-				death = died.Value;
+				else if (died is { } successfulDeath) death = successfulDeath.Value;
 			}
 		}
-		return OperationResult<CombatIntentReceipt>.Success(new CombatIntentReceipt(fired.Value, playerDamage, death));
+		return OperationResult<CombatIntentReceipt>.Success(new CombatIntentReceipt(
+			fired.Value, playerDamage, death, degradedDeathTransition, raise));
 	}
 
 	public OperationResult<DeathRespawnState> Respawn(InventoryActor actor)
@@ -614,6 +640,11 @@ public sealed class CombatIntentService
 
 	public void ClearCharacter(CharacterId characterId) => _pistol.ClearCharacter(characterId);
 
+	public ValueTask<OperationResult<PistolLifecycleClearReceipt>> ClearCharacterAsync(
+		CharacterId characterId,
+		CancellationToken cancellationToken = default) =>
+		_pistol.ClearCharacterAsync(characterId, cancellationToken);
+
 	private static OperationResult<T> Failure<T>(OperationError error) =>
 		OperationResult<T>.Failure(error.Code, error.Message);
 }
@@ -622,7 +653,8 @@ public sealed record HealthVialConsumedReceipt(
 	ItemId VialItemId,
 	long PreviousHealth,
 	long CurrentHealth,
-	long CommitSequence);
+	long CommitSequence,
+	CommitReceipt Commit) : IHL2RPCommittedOperation;
 
 public sealed class HealthVialConsumeService
 {
@@ -667,8 +699,9 @@ public sealed class HealthVialConsumeService
 			vial.Value.Definition.Value != HL2RPIds.Items.HealthVial)
 			return OperationResult<HealthVialConsumedReceipt>.Failure(
 				ErrorCode.Unauthorized, "Health vial membership proof failed.");
-		if (!_access.Has(actor.ConnectionId, actor.CharacterId, inventoryId,
-			InventoryCapability.View | InventoryCapability.Use))
+		var access = _access.Prove(actor.ConnectionId, actor.CharacterId, inventoryId,
+			InventoryCapability.View | InventoryCapability.Use);
+		if (access is null)
 			return OperationResult<HealthVialConsumedReceipt>.Failure(
 				ErrorCode.Unauthorized, "Health vial use capability is missing.");
 		var reservation = _health.Reserve(actor.CharacterId);
@@ -688,6 +721,8 @@ public sealed class HealthVialConsumeService
 		}
 
 		var unitOfWork = _repositories.Provider.BeginUnitOfWork();
+		unitOfWork.Require(access);
+		HL2RPUnitOfWork.RequireActorState(unitOfWork, _repositories, character);
 		var inventoryEditor = unitOfWork.Edit(_repositories.Inventories, inventory);
 		if (inventoryEditor is null)
 		{
@@ -706,7 +741,8 @@ public sealed class HealthVialConsumeService
 		}
 		var healed = _health.CommitHealing(reservation.Value, _healing);
 		return OperationResult<HealthVialConsumedReceipt>.Success(new HealthVialConsumedReceipt(
-			vialItemId, before.CurrentHealth, healed.CurrentHealth, committed.Value!.Sequence));
+			vialItemId, before.CurrentHealth, healed.CurrentHealth,
+			committed.Value!.Sequence, committed.Value));
 	}
 
 	private static OperationResult<T> Failure<T>(OperationError error) =>

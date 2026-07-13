@@ -129,6 +129,15 @@ public sealed class HL2RPSchemaTests
 				HL2RPIds.Commands.CombatRespawn
 			},
 			compiled.Commands.All.Select( command => command.Id ) );
+		Assert.AreEqual( CommandCostClass.Expensive,
+			compiled.Commands.Require( HL2RPIds.Commands.CityObjectives ).Value.Cost );
+		Assert.AreEqual( CommandCostClass.Expensive,
+			compiled.Commands.Require( HL2RPIds.Commands.EntitlementGrant ).Value.Cost );
+		Assert.AreEqual( CommandCostClass.Cheap,
+			compiled.Commands.Require( HL2RPIds.Commands.CivicData ).Value.Cost );
+		Assert.AreEqual( CommandCostClass.Cheap,
+			compiled.Commands.Require( HL2RPIds.Commands.ScannerIntent ).Value.Cost );
+		Assert.IsTrue( compiled.Commands.All.All( command => Enum.IsDefined( command.Cost ) ) );
 		Assert.AreEqual( 12, compiled.Permissions.Count );
 		Assert.AreEqual( 21, compiled.Panels.Count );
 		Assert.AreEqual( 2, compiled.Initializers.Count );

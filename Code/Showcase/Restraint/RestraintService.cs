@@ -86,12 +86,14 @@ public sealed record RestraintReceipt(
 	CharacterId RestrainerCharacterId,
 	CharacterId RestrainedCharacterId,
 	DateTimeOffset RestrainedAtUtc,
-	long CommitSequence);
+	long CommitSequence,
+	CommitReceipt Commit) : IHL2RPCommittedOperation;
 
 public sealed record UnrestrainReceipt(
 	CharacterId ActorCharacterId,
 	CharacterId ReleasedCharacterId,
-	long CommitSequence);
+	long CommitSequence,
+	CommitReceipt Commit) : IHL2RPCommittedOperation;
 
 /// <summary>
 /// Three-second host-authoritative zip-tie operation. The tie and durable
@@ -103,6 +105,7 @@ public sealed class RestraintService
 	public static readonly TimeSpan RestraintDuration = TimeSpan.FromSeconds(3);
 
 	private readonly DomainRepositories _repositories;
+	private readonly CharacterReferenceMutationService _references;
 	private readonly InventoryAccessService _access;
 	private readonly InventoryLayoutService _layout;
 	private readonly InteractionAuthorityService _authority;
@@ -117,6 +120,7 @@ public sealed class RestraintService
 		IHexClock clock)
 	{
 		_repositories = repositories ?? throw new ArgumentNullException(nameof(repositories));
+		_references = new CharacterReferenceMutationService(_repositories);
 		_access = access ?? throw new ArgumentNullException(nameof(access));
 		_layout = layout ?? throw new ArgumentNullException(nameof(layout));
 		_authority = authority ?? throw new ArgumentNullException(nameof(authority));
@@ -190,6 +194,8 @@ public sealed class RestraintService
 		};
 
 		var unitOfWork = _repositories.Provider.BeginUnitOfWork();
+		unitOfWork.Require(validated.Value.Access);
+		HL2RPUnitOfWork.RequireActorState(unitOfWork, _repositories, validated.Value.Character);
 		var inventoryEditor = unitOfWork.Edit(_repositories.Inventories, source);
 		if (inventoryEditor is null)
 		{
@@ -200,25 +206,19 @@ public sealed class RestraintService
 		inventoryEditor.Replace(removed.Value);
 		unitOfWork.Save(inventoryEditor);
 		unitOfWork.Delete(_repositories.Items, validated.Value.Item);
-		var existing = _repositories.CharacterReferences.Find(DocumentKey(ticket.TargetCharacterId));
-		if (existing is null)
-			unitOfWork.Create(_repositories.CharacterReferences, DocumentKey(ticket.TargetCharacterId), reference);
-		else
+		var staged = _references.StageUpsert(
+			unitOfWork, DocumentKey(ticket.TargetCharacterId), reference);
+		if (staged.Failed)
 		{
-			var referenceEditor = unitOfWork.Edit(_repositories.CharacterReferences, existing);
-			if (referenceEditor is null)
-			{
-				await HL2RPUnitOfWork.DisposeAsync(unitOfWork);
-				return OperationResult<RestraintReceipt>.Failure(ErrorCode.Conflict,
-					"Restraint state changed before commit.");
-			}
-			referenceEditor.Replace(reference);
-			unitOfWork.Save(referenceEditor);
+			await HL2RPUnitOfWork.DisposeAsync(unitOfWork);
+			return OperationResult<RestraintReceipt>.Failure(
+				staged.Error!.Code, staged.Error.Message);
 		}
 		var committed = await HL2RPUnitOfWork.CommitAndDisposeAsync(unitOfWork, cancellationToken);
 		if (!committed.Succeeded) return RestraintPersistence.Failure<RestraintReceipt>(committed.Error!);
 		return OperationResult<RestraintReceipt>.Success(new RestraintReceipt(
-			actor.CharacterId, ticket.TargetCharacterId, now, committed.Value!.Sequence));
+			actor.CharacterId, ticket.TargetCharacterId, now,
+			committed.Value!.Sequence, committed.Value));
 	}
 
 	public OperationResult Cancel( InteractionSessionId ticketId, InventoryActor actor )
@@ -258,12 +258,20 @@ public sealed class RestraintService
 			return OperationResult<UnrestrainReceipt>.Failure(ErrorCode.NotFound,
 				"Target is not actively restrained.");
 		var unitOfWork = _repositories.Provider.BeginUnitOfWork();
-		unitOfWork.Delete(_repositories.CharacterReferences, document);
+		HL2RPUnitOfWork.RequireActorState(unitOfWork, _repositories, role.Value);
+		var staged = _references.StageDelete(unitOfWork, DocumentKey(targetCharacterId));
+		if (staged.Failed)
+		{
+			await HL2RPUnitOfWork.DisposeAsync(unitOfWork);
+			return OperationResult<UnrestrainReceipt>.Failure(
+				staged.Error!.Code, staged.Error.Message);
+		}
 		var committed = await HL2RPUnitOfWork.CommitAndDisposeAsync(unitOfWork, cancellationToken);
 		if (!committed.Succeeded) return RestraintPersistence.Failure<UnrestrainReceipt>(committed.Error!);
 		_authority.TargetInvalidated(InteractionTarget.Character(targetCharacterId), "unrestrained");
 		return OperationResult<UnrestrainReceipt>.Success(new UnrestrainReceipt(
-			actor.CharacterId, targetCharacterId, committed.Value!.Sequence));
+			actor.CharacterId, targetCharacterId,
+			committed.Value!.Sequence, committed.Value));
 	}
 
 	public bool IsRestrained(CharacterId characterId) => new RestraintStateReader(_repositories).IsRestrained(characterId);
@@ -281,21 +289,23 @@ public sealed class RestraintService
 			item.Value.Definition.Value != HL2RPIds.Items.ZipTie)
 			return OperationResult<ValidatedTie>.Failure(ErrorCode.NotFound,
 				"Claimed zip tie is not a member of the inventory.");
-		if (!_access.Has(actor.ConnectionId, actor.CharacterId, inventoryId,
-			InventoryCapability.View | InventoryCapability.Use))
+		var access = _access.Prove(actor.ConnectionId, actor.CharacterId, inventoryId,
+			InventoryCapability.View | InventoryCapability.Use);
+		if (access is null)
 			return OperationResult<ValidatedTie>.Failure(ErrorCode.Unauthorized,
 				"Zip-tie use capability is missing.");
-		return OperationResult<ValidatedTie>.Success(new ValidatedTie(inventory, item));
+		return OperationResult<ValidatedTie>.Success(new ValidatedTie(role.Value, inventory, item, access));
 	}
 
-	private OperationResult ValidateRole(InventoryActor actor)
+	private OperationResult<DocumentSnapshot<CharacterRecord>> ValidateRole(InventoryActor actor)
 	{
 		var character = _repositories.Characters.Find(DomainKeys.Character(actor.CharacterId));
 		if (character is null || character.Value.AccountId != actor.AccountId)
-			return OperationResult.Failure(ErrorCode.Unauthorized, "Authenticated actor binding is invalid.");
+			return OperationResult<DocumentSnapshot<CharacterRecord>>.Failure(
+				ErrorCode.Unauthorized, "Authenticated actor binding is invalid.");
 		return character.Value.Faction.Value is HL2RPIds.Factions.CivilProtection or HL2RPIds.Factions.Overwatch
-			? OperationResult.Success()
-			: OperationResult.Failure(ErrorCode.PolicyDenied,
+			? OperationResult<DocumentSnapshot<CharacterRecord>>.Success(character)
+			: OperationResult<DocumentSnapshot<CharacterRecord>>.Failure(ErrorCode.PolicyDenied,
 				"Only Civil Protection or Overwatch characters may use restraints.");
 	}
 
@@ -303,8 +313,10 @@ public sealed class RestraintService
 		OperationResult<T>.Failure(error.Code, error.Message);
 
 	private sealed record ValidatedTie(
+		DocumentSnapshot<CharacterRecord> Character,
 		DocumentSnapshot<InventoryRecord> Inventory,
-		DocumentSnapshot<ItemRecord> Item);
+		DocumentSnapshot<ItemRecord> Item,
+		InventoryAccessProof Access);
 }
 
 internal static class RestraintPersistence

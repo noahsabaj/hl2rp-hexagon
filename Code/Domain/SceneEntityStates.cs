@@ -118,9 +118,227 @@ public sealed record CombatTargetEntityState
 public sealed record CityObjectiveState
 {
 	public required string Id { get; init; }
-	public required string Text { get; init; }
+	public required string Title { get; init; }
+	public required string Detail { get; init; }
 	public required bool Completed { get; init; }
 	public required DateTimeOffset UpdatedAtUtc { get; init; }
+}
+
+public sealed record CityObjectiveContent( string Title, string Detail );
+
+public sealed record CityObjectiveUpdate(
+	string? ObjectiveId,
+	CityObjectiveContent Content,
+	bool Completed );
+
+public enum CityObjectiveChangeKind
+{
+	Upsert = 0,
+	Delete = 1
+}
+
+/// <summary>
+/// A validated command intent. Upserts carry the shared title/detail contract;
+/// deletes carry only the stable server-issued identifier they remove.
+/// </summary>
+public sealed record CityObjectiveChange
+{
+	public required CityObjectiveChangeKind Kind { get; init; }
+	public required string? ObjectiveId { get; init; }
+	public CityObjectiveContent? Content { get; init; }
+	public bool Completed { get; init; }
+
+	public static CityObjectiveChange Upsert( CityObjectiveUpdate update )
+	{
+		ArgumentNullException.ThrowIfNull( update );
+		return new CityObjectiveChange
+		{
+			Kind = CityObjectiveChangeKind.Upsert,
+			ObjectiveId = update.ObjectiveId,
+			Content = update.Content,
+			Completed = update.Completed
+		};
+	}
+
+	public static CityObjectiveChange Delete( string objectiveId ) => new()
+	{
+		Kind = CityObjectiveChangeKind.Delete,
+		ObjectiveId = objectiveId
+	};
+}
+
+public sealed record CityObjectiveChangeResult(
+	string ObjectiveId,
+	CityObjectiveChangeKind Kind,
+	IReadOnlyList<CityObjectiveState> Objectives );
+
+public static class CityObjectiveContract
+{
+	public const int MaximumObjectives = 32;
+	public const int MaximumTitleLength = 96;
+	public const int MaximumDetailLength = 512;
+
+	public static OperationResult<CityObjectiveContent> CreateContent( string? title, string? detail )
+	{
+		var normalizedTitle = (title ?? string.Empty).Trim();
+		var normalizedDetail = NormalizeLineEndings( detail ?? string.Empty ).Trim();
+		if ( normalizedTitle.Length is 0 or > MaximumTitleLength ||
+			normalizedTitle.Any( char.IsControl ) )
+			return OperationResult<CityObjectiveContent>.Failure(
+				ErrorCode.InvalidArgument,
+				$"Objective title must contain 1-{MaximumTitleLength} non-control characters." );
+		if ( normalizedDetail.Length > MaximumDetailLength ||
+			normalizedDetail.Any( value => value != '\n' && char.IsControl( value ) ) )
+			return OperationResult<CityObjectiveContent>.Failure(
+				ErrorCode.InvalidArgument,
+				$"Objective detail must contain at most {MaximumDetailLength} characters and only line-feed controls." );
+		return OperationResult<CityObjectiveContent>.Success(
+			new CityObjectiveContent( normalizedTitle, normalizedDetail ) );
+	}
+
+	public static OperationResult Validate( IReadOnlyList<CityObjectiveState> objectives )
+	{
+		ArgumentNullException.ThrowIfNull( objectives );
+		if ( objectives.Count > MaximumObjectives )
+			return OperationResult.Failure(
+				ErrorCode.InvalidArgument, $"At most {MaximumObjectives} city objectives are allowed." );
+		var ids = new HashSet<string>( StringComparer.Ordinal );
+		foreach ( var objective in objectives )
+		{
+			if ( objective is null || string.IsNullOrWhiteSpace( objective.Id ) || !ids.Add( objective.Id ) )
+				return OperationResult.Failure( ErrorCode.InvalidArgument, "City objective IDs must be non-empty and unique." );
+			try
+			{
+				StableIdentifier.Require( objective.Id, nameof(objectives) );
+			}
+			catch ( ArgumentException )
+			{
+				return OperationResult.Failure( ErrorCode.InvalidArgument, "City objective ID is invalid." );
+			}
+			var content = CreateContent( objective.Title, objective.Detail );
+			if ( content.Failed || content.Value.Title != objective.Title || content.Value.Detail != objective.Detail )
+				return OperationResult.Failure(
+					ErrorCode.InvalidArgument, content.Error?.Message ?? "City objective content is not normalized." );
+			if ( objective.UpdatedAtUtc == default || objective.UpdatedAtUtc.Offset != TimeSpan.Zero )
+				return OperationResult.Failure( ErrorCode.InvalidArgument, "City objective timestamp must be a non-default UTC value." );
+		}
+		return OperationResult.Success();
+	}
+
+	/// <summary>
+	/// Applies one command against the exact state read for the pending commit.
+	/// A supplied identifier is update-only and therefore must already exist;
+	/// only an omitted identifier allocates a new server-owned identifier.
+	/// </summary>
+	public static OperationResult<CityObjectiveChangeResult> Apply(
+		IReadOnlyList<CityObjectiveState> current,
+		CityObjectiveChange change,
+		DateTimeOffset updatedAtUtc,
+		Func<Guid> newId )
+	{
+		ArgumentNullException.ThrowIfNull( current );
+		ArgumentNullException.ThrowIfNull( change );
+		ArgumentNullException.ThrowIfNull( newId );
+		var currentValidation = Validate( current );
+		if ( currentValidation.Failed )
+			return OperationResult<CityObjectiveChangeResult>.Failure(
+				currentValidation.Error!.Code, currentValidation.Error.Message );
+		if ( updatedAtUtc == default || updatedAtUtc.Offset != TimeSpan.Zero )
+			return OperationResult<CityObjectiveChangeResult>.Failure(
+				ErrorCode.InvalidArgument, "Objective timestamp must be a non-default UTC value." );
+
+		if ( change.Kind == CityObjectiveChangeKind.Delete )
+		{
+			var deleteId = ValidateIdentifier( change.ObjectiveId );
+			if ( deleteId.Failed )
+				return OperationResult<CityObjectiveChangeResult>.Failure(
+					deleteId.Error!.Code, deleteId.Error.Message );
+			if ( !current.Any( value => string.Equals( value.Id, deleteId.Value, StringComparison.Ordinal ) ) )
+				return OperationResult<CityObjectiveChangeResult>.Failure(
+					ErrorCode.NotFound, "City objective was not found." );
+			return OperationResult<CityObjectiveChangeResult>.Success( new CityObjectiveChangeResult(
+				deleteId.Value,
+				CityObjectiveChangeKind.Delete,
+				current.Where( value => !string.Equals( value.Id, deleteId.Value, StringComparison.Ordinal ) ).ToArray() ) );
+		}
+
+		if ( change.Kind != CityObjectiveChangeKind.Upsert || change.Content is null )
+			return OperationResult<CityObjectiveChangeResult>.Failure(
+				ErrorCode.InvalidArgument, "City objective change is invalid." );
+		var content = CreateContent( change.Content.Title, change.Content.Detail );
+		if ( content.Failed || content.Value != change.Content )
+			return OperationResult<CityObjectiveChangeResult>.Failure(
+				ErrorCode.InvalidArgument, content.Error?.Message ?? "City objective content is not normalized." );
+
+		string objectiveId;
+		if ( change.ObjectiveId is not null )
+		{
+			var suppliedId = ValidateIdentifier( change.ObjectiveId );
+			if ( suppliedId.Failed )
+				return OperationResult<CityObjectiveChangeResult>.Failure(
+					suppliedId.Error!.Code, suppliedId.Error.Message );
+			objectiveId = suppliedId.Value;
+			if ( !current.Any( value => string.Equals( value.Id, objectiveId, StringComparison.Ordinal ) ) )
+				return OperationResult<CityObjectiveChangeResult>.Failure(
+					ErrorCode.NotFound, "City objective was not found." );
+		}
+		else
+		{
+			if ( current.Count >= MaximumObjectives )
+				return OperationResult<CityObjectiveChangeResult>.Failure(
+					ErrorCode.InvalidArgument, $"At most {MaximumObjectives} city objectives are allowed." );
+			objectiveId = string.Empty;
+			for ( var attempt = 0; attempt < MaximumObjectives; attempt++ )
+			{
+				var candidate = $"objective.{newId():N}";
+				if ( current.All( value => !string.Equals( value.Id, candidate, StringComparison.Ordinal ) ) )
+				{
+					objectiveId = candidate;
+					break;
+				}
+			}
+			if ( objectiveId.Length == 0 )
+				return OperationResult<CityObjectiveChangeResult>.Failure(
+					ErrorCode.Conflict, "A unique city objective identifier could not be allocated." );
+		}
+
+		var objectives = current
+			.Where( value => !string.Equals( value.Id, objectiveId, StringComparison.Ordinal ) )
+			.Append( new CityObjectiveState
+			{
+				Id = objectiveId,
+				Title = content.Value.Title,
+				Detail = content.Value.Detail,
+				Completed = change.Completed,
+				UpdatedAtUtc = updatedAtUtc
+			} )
+			.ToArray();
+		var candidateValidation = Validate( objectives );
+		return candidateValidation.Succeeded
+			? OperationResult<CityObjectiveChangeResult>.Success( new CityObjectiveChangeResult(
+				objectiveId, CityObjectiveChangeKind.Upsert, objectives ) )
+			: OperationResult<CityObjectiveChangeResult>.Failure(
+				candidateValidation.Error!.Code, candidateValidation.Error.Message );
+	}
+
+	public static OperationResult<string> ValidateIdentifier( string? objectiveId )
+	{
+		var normalized = objectiveId?.Trim();
+		if ( string.IsNullOrEmpty( normalized ) || !string.Equals( normalized, objectiveId, StringComparison.Ordinal ) )
+			return OperationResult<string>.Failure( ErrorCode.InvalidArgument, "Objective ID is invalid." );
+		try
+		{
+			StableIdentifier.Require( normalized, nameof(objectiveId) );
+		}
+		catch ( ArgumentException )
+		{
+			return OperationResult<string>.Failure( ErrorCode.InvalidArgument, "Objective ID is invalid." );
+		}
+		return OperationResult<string>.Success( normalized );
+	}
+
+	private static string NormalizeLineEndings( string value ) =>
+		value.Replace( "\r\n", "\n", StringComparison.Ordinal ).Replace( '\r', '\n' );
 }
 
 public sealed record CityEntityState

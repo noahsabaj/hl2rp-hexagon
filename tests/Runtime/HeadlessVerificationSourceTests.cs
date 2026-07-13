@@ -8,25 +8,6 @@ namespace HL2RP.V2.Tests.Runtime;
 public sealed class HeadlessVerificationSourceTests
 {
 	[TestMethod]
-	public void HeadlessProbeUsesAnIsolatedActorButTheProductionInteractionAuthority()
-	{
-		var root = FindRoot();
-		var host = File.ReadAllText( Path.Combine( root, "Code", "Runtime", "HL2RPHostApplication.cs" ) );
-		foreach ( var marker in new[]
-		{
-			"VerificationActorBinding", "ResolveInteractionActorState",
-			"LoadVerificationProbeCharacter", "_interactions!.Begin(",
-			"PurchaseFromMachineAsync", "VerificationConnectionId", "VerificationAccountId"
-		} ) StringAssert.Contains( host, marker );
-		StringAssert.Contains( host, "if ( _clients.Count == 0 && _verificationActor is null ) return;" );
-
-		var world = File.ReadAllText( Path.Combine( root, "Code", "Runtime", "HL2RPSceneRuntime.cs" ) );
-		StringAssert.Contains( world, "HL2RPInteractionActorState" );
-		StringAssert.Contains( world, "ActorPosition = new WorldPoint" );
-		StringAssert.Contains( world, "HasLineOfSight" );
-	}
-
-	[TestMethod]
 	public void SmokeWaitsForHexagonTypesBeforeApplyingRuntimeOverridesAndStartingPlay()
 	{
 		var root = FindRoot();

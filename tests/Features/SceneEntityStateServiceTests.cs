@@ -118,6 +118,10 @@ public sealed class SceneEntityStateServiceTests
 		await environment.SeedAsync( unit =>
 		{
 			unit.Create( environment.Repositories.Characters, DomainKeys.Character( character.Id ), character );
+			unit.Create(
+				environment.Repositories.CharacterLifecycleGuards,
+				DomainKeys.CharacterLifecycleGuard( character.Id ),
+				new CharacterLifecycleGuardRecord { CharacterId = character.Id, ReferenceRevision = 0 } );
 			unit.Create( environment.Repositories.SceneEntities, DomainKeys.SceneEntity( entityId ),
 				new PersistentSceneEntityRecord
 				{
@@ -153,6 +157,10 @@ public sealed class SceneEntityStateServiceTests
 		await environment.SeedAsync( unit =>
 		{
 			unit.Create( environment.Repositories.Characters, DomainKeys.Character( character.Id ), character );
+			unit.Create(
+				environment.Repositories.CharacterLifecycleGuards,
+				DomainKeys.CharacterLifecycleGuard( character.Id ),
+				new CharacterLifecycleGuardRecord { CharacterId = character.Id, ReferenceRevision = 0 } );
 			unit.Create( environment.Repositories.SceneEntities, DomainKeys.SceneEntity( entityId ),
 				new PersistentSceneEntityRecord
 				{

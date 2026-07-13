@@ -3,10 +3,11 @@
 using System.Threading;
 using System.Threading.Tasks;
 using Hexagon.V2.Kernel.Events;
+using Hexagon.V2.Persistence;
 
 namespace HL2RP.V2.Features;
 
-public sealed record RequestFact
+public sealed record RequestFact : IHL2RPCommittedOperation
 {
 	public required InventoryActor Actor { get; init; }
 	public required CharacterRecord Character { get; init; }
@@ -14,6 +15,7 @@ public sealed record RequestFact
 	public required string Text { get; init; }
 	public required DateTimeOffset RequestedAtUtc { get; init; }
 	public required long CommitSequence { get; init; }
+	public required CommitReceipt Commit { get; init; }
 }
 
 public interface ICommittedChatDeliverySink
@@ -134,11 +136,12 @@ public sealed class RequestDeviceService
 		if ( character.Value.AccountId != actor.AccountId || inventory.Value.Find( requestDeviceItemId ) is null ||
 			item.Value.Definition.Value != HL2RPIds.Items.RequestDevice )
 			return OperationResult<RequestFact>.Failure( ErrorCode.Unauthorized, "Request device membership proof failed." );
-		if ( !_access.Has(
+		var access = _access.Prove(
 			actor.ConnectionId,
 			actor.CharacterId,
 			inventoryId,
-			InventoryCapability.View | InventoryCapability.Use ) )
+			InventoryCapability.View | InventoryCapability.Use );
+		if ( access is null )
 			return OperationResult<RequestFact>.Failure( ErrorCode.Unauthorized, "Request device capability is missing." );
 		if ( !item.Value.Traits.TryGetValue( "request_device", out var payload ) )
 			return OperationResult<RequestFact>.Failure( ErrorCode.PersistedTypeInvalid, "Request device state is missing." );
@@ -174,6 +177,8 @@ public sealed class RequestDeviceService
 				state.Value with { LastRequestAtUtc = _clock.UtcNow } )
 		};
 		var unitOfWork = _repositories.Provider.BeginUnitOfWork();
+		unitOfWork.Require( access );
+		HL2RPUnitOfWork.RequireActorState( unitOfWork, _repositories, character );
 		unitOfWork.RequireUnchanged( _repositories.Inventories, inventory );
 		var editor = unitOfWork.Edit( _repositories.Items, item );
 		if ( editor is null )
@@ -194,7 +199,8 @@ public sealed class RequestDeviceService
 			ChannelId = HL2RPIds.Channels.Request,
 			Text = normalized.Value,
 			RequestedAtUtc = _clock.UtcNow,
-			CommitSequence = committed.Value!.Sequence
+			CommitSequence = committed.Value!.Sequence,
+			Commit = committed.Value
 		};
 		_events.Publish( fact );
 		HL2RPFeaturePersistence.PublishAudit(

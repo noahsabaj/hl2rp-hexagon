@@ -88,6 +88,33 @@ public sealed class CombatShowcaseTests
 	}
 
 	[TestMethod]
+	public async Task InterleavedAccessRevocationRejectsPistolFireWithoutDamageOrAmmunitionMutation()
+	{
+		await using var environment = await ShowcaseTestEnvironment.CreateAsync();
+		var pistol = ShowcaseTestEnvironment.Pistol(equipped: true, raised: false);
+		var seeded = await environment.SeedCharacterAsync(107, items: new[] { pistol });
+		var damage = new FakeDamageBoundary();
+		var service = new PistolCombatService(environment.Repositories, environment.Access,
+			environment.Clock, new FakeRaycast(), damage);
+		var ticket = service.BeginRaise(seeded.Actor, seeded.InventoryId, pistol.Id).Value;
+		environment.Clock.Advance(PistolCombatService.DefaultRaiseDelay);
+		AssertSuccess(await service.CompleteRaiseAsync(ticket.Id, seeded.Actor));
+		environment.Provider.InterleaveNextCommit(() =>
+		{
+			environment.Access.RevokeConnection(seeded.Actor.ConnectionId);
+			return Task.CompletedTask;
+		});
+
+		var result = await service.FireAsync(
+			new PistolFireIntent(seeded.Actor, seeded.InventoryId, pistol.Id));
+
+		Assert.AreEqual(ErrorCode.Conflict, result.Error!.Code);
+		Assert.AreEqual(PistolItemState.MagazineCapacity,
+			environment.ReadPistol(pistol.Id).MagazineRounds);
+		Assert.AreEqual(0, damage.CommitCount);
+	}
+
+	[TestMethod]
 	public async Task FireAndVestCommitFailuresPublishNoPartialDamageOrTraitMutation()
 	{
 		await using var environment = await ShowcaseTestEnvironment.CreateAsync();
@@ -127,6 +154,247 @@ public sealed class CombatShowcaseTests
 	}
 
 	[TestMethod]
+	public async Task PistolTransitionsAndLifecycleClearExposeOnlyDurableReceipts()
+	{
+		await using var environment = await ShowcaseTestEnvironment.CreateAsync();
+		var sessionPistol = ShowcaseTestEnvironment.Pistol(equipped: true, raised: false);
+		var persistedPistol = ShowcaseTestEnvironment.Pistol(equipped: true, raised: true);
+		var seeded = await environment.SeedCharacterAsync(
+			104, items: new[] { sessionPistol, persistedPistol });
+		var service = new PistolCombatService(
+			environment.Repositories,
+			environment.Access,
+			environment.Clock,
+			new FakeRaycast(),
+			new FakeDamageBoundary());
+
+		var lowered = await service.LowerAsync(
+			seeded.Actor, seeded.InventoryId, persistedPistol.Id);
+		Assert.IsTrue(lowered.Succeeded, lowered.Error?.Message);
+		Assert.IsTrue(lowered.Value.HasDurableChanges);
+		Assert.IsNotNull(lowered.Value.Commit);
+		Assert.AreEqual(PistolStateTransitionKind.Lower, lowered.Value.Kind);
+		Assert.IsFalse(environment.ReadPistol(persistedPistol.Id).Raised);
+
+		var ticket = service.BeginRaise(seeded.Actor, seeded.InventoryId, sessionPistol.Id);
+		Assert.IsTrue(ticket.Succeeded, ticket.Error?.Message);
+		environment.Clock.Advance(PistolCombatService.DefaultRaiseDelay);
+		var completed = await service.CompleteRaiseAsync(ticket.Value.Id, seeded.Actor);
+		Assert.IsTrue(completed.Succeeded, completed.Error?.Message);
+		Assert.IsFalse(completed.Value.HasDurableChanges);
+		Assert.IsNull(completed.Value.Commit);
+		Assert.IsFalse(environment.ReadPistol(sessionPistol.Id).Raised,
+			"Raise completion must remain session-only until fire commits.");
+
+		var fired = await service.FireAsync(
+			new PistolFireIntent(seeded.Actor, seeded.InventoryId, sessionPistol.Id));
+		Assert.IsTrue(fired.Succeeded, fired.Error?.Message);
+		Assert.IsTrue(environment.ReadPistol(sessionPistol.Id).Raised);
+
+		environment.Provider.FailNextCommit();
+		var failedClear = await service.ClearCharacterAsync(seeded.Actor.CharacterId);
+		Assert.IsTrue(failedClear.Failed);
+		Assert.IsTrue(environment.ReadPistol(sessionPistol.Id).Raised);
+		Assert.IsTrue(service.IsHostRaised(
+			seeded.Actor, seeded.InventoryId, sessionPistol.Id).Value,
+			"Failed durable clear must retain host-session authority.");
+
+		var cleared = await service.ClearCharacterAsync(seeded.Actor.CharacterId);
+		Assert.IsTrue(cleared.Succeeded, cleared.Error?.Message);
+		Assert.IsTrue(cleared.Value.HasDurableChanges);
+		Assert.IsNotNull(cleared.Value.Commit);
+		Assert.HasCount(1, cleared.Value.ChangedPistols);
+		Assert.AreEqual(sessionPistol.Id, cleared.Value.ChangedPistols[0]);
+		Assert.IsFalse(environment.ReadPistol(sessionPistol.Id).Raised);
+		Assert.IsFalse(service.IsHostRaised(
+			seeded.Actor, seeded.InventoryId, sessionPistol.Id).Value);
+	}
+
+	[TestMethod]
+	public async Task PreparedPistolClearDefersSessionCleanupUntilCallerOwnedCommitCompletes()
+	{
+		await using var environment = await ShowcaseTestEnvironment.CreateAsync();
+		var pistol = ShowcaseTestEnvironment.Pistol(equipped: true, raised: false);
+		var seeded = await environment.SeedCharacterAsync(107, items: new[] { pistol });
+		var service = new PistolCombatService(
+			environment.Repositories,
+			environment.Access,
+			environment.Clock,
+			new FakeRaycast(),
+			new FakeDamageBoundary());
+		var ticket = service.BeginRaise(seeded.Actor, seeded.InventoryId, pistol.Id).Value;
+		environment.Clock.Advance(PistolCombatService.DefaultRaiseDelay);
+		AssertSuccess(await service.CompleteRaiseAsync(ticket.Id, seeded.Actor));
+		AssertSuccess(await service.FireAsync(
+			new PistolFireIntent(seeded.Actor, seeded.InventoryId, pistol.Id)));
+
+		var prepared = service.PrepareCharacterClear(seeded.Actor.CharacterId);
+		Assert.IsTrue(prepared.Succeeded, prepared.Error?.Message);
+		Assert.HasCount(1, prepared.Value.ChangedPistols);
+		var unitOfWork = environment.Repositories.Provider.BeginUnitOfWork();
+		AssertSuccess(service.StageCharacterClear(unitOfWork, prepared.Value));
+		Assert.IsTrue(environment.ReadPistol(pistol.Id).Raised,
+			"Staging must not publish the candidate pistol state.");
+		Assert.IsTrue(service.IsHostRaised(
+			seeded.Actor, seeded.InventoryId, pistol.Id).Value,
+			"Staging must not clear transient raise authority.");
+
+		var committed = await HL2RPUnitOfWork.CommitAndDisposeAsync(unitOfWork);
+		Assert.IsTrue(committed.Succeeded, committed.Error?.Message);
+		Assert.IsFalse(environment.ReadPistol(pistol.Id).Raised);
+		Assert.IsTrue(service.IsHostRaised(
+			seeded.Actor, seeded.InventoryId, pistol.Id).Value,
+			"Even a durable shared commit cannot clear session authority before completion.");
+		var completed = service.CompleteCharacterClear(prepared.Value, committed.Value);
+		Assert.IsTrue(completed.Succeeded, completed.Error?.Message);
+		Assert.AreSame(committed.Value, completed.Value.Commit);
+		Assert.IsFalse(service.IsHostRaised(
+			seeded.Actor, seeded.InventoryId, pistol.Id).Value);
+	}
+
+	[TestMethod]
+	public async Task PreparedPistolClearPinsEveryPistolAndFailedCommitClearsNoSessionState()
+	{
+		await using var environment = await ShowcaseTestEnvironment.CreateAsync();
+		var raised = ShowcaseTestEnvironment.Pistol(equipped: true, raised: false);
+		var unchanged = ShowcaseTestEnvironment.Pistol(5, equipped: false, raised: false);
+		var seeded = await environment.SeedCharacterAsync(108, items: new[] { raised, unchanged });
+		var service = new PistolCombatService(
+			environment.Repositories,
+			environment.Access,
+			environment.Clock,
+			new FakeRaycast(),
+			new FakeDamageBoundary());
+		var ticket = service.BeginRaise(seeded.Actor, seeded.InventoryId, raised.Id).Value;
+		environment.Clock.Advance(PistolCombatService.DefaultRaiseDelay);
+		AssertSuccess(await service.CompleteRaiseAsync(ticket.Id, seeded.Actor));
+		AssertSuccess(await service.FireAsync(
+			new PistolFireIntent(seeded.Actor, seeded.InventoryId, raised.Id)));
+
+		var prepared = service.PrepareCharacterClear(seeded.Actor.CharacterId).Value;
+		var external = environment.Repositories.Provider.BeginUnitOfWork();
+		var unchangedDocument = environment.Repositories.Items.Find(DomainKeys.Item(unchanged.Id))!;
+		var unchangedEditor = external.Edit(environment.Repositories.Items, unchangedDocument)!;
+		unchangedEditor.Replace(CombatPersistence.ReplaceTrait(
+			unchangedEditor.Value,
+			CombatTraitNames.Pistol,
+			HL2RPPersistence.Pistol,
+			environment.ReadPistol(unchanged.Id) with { MagazineRounds = 4 }));
+		external.Save(unchangedEditor);
+		Assert.IsTrue((await HL2RPUnitOfWork.CommitAndDisposeAsync(external)).Succeeded);
+
+		var sequenceBefore = environment.Provider.Health.Sequence;
+		var combined = environment.Repositories.Provider.BeginUnitOfWork();
+		AssertSuccess(service.StageCharacterClear(combined, prepared));
+		var failed = await HL2RPUnitOfWork.CommitAndDisposeAsync(combined);
+		Assert.IsFalse(failed.Succeeded, "An unraised owned pistol must still be pinned by the plan.");
+		Assert.AreEqual(sequenceBefore, environment.Provider.Health.Sequence);
+		Assert.IsTrue(environment.ReadPistol(raised.Id).Raised);
+		Assert.IsTrue(service.IsHostRaised(
+			seeded.Actor, seeded.InventoryId, raised.Id).Value);
+		var forgedCompletion = service.CompleteCharacterClear(
+			prepared, new CommitReceipt(sequenceBefore, Array.Empty<CommittedDocumentVersion>()));
+		Assert.IsTrue(forgedCompletion.Failed);
+		Assert.IsTrue(service.IsHostRaised(
+			seeded.Actor, seeded.InventoryId, raised.Id).Value,
+			"A failed or unrelated commit must publish no transient cleanup event.");
+	}
+
+	[TestMethod]
+	public async Task StartupPistolReconciliationIsOneAtomicReceiptedCommit()
+	{
+		await using var environment = await ShowcaseTestEnvironment.CreateAsync();
+		var first = ShowcaseTestEnvironment.Pistol(equipped: true, raised: true);
+		var second = ShowcaseTestEnvironment.Pistol(equipped: true, raised: true);
+		await environment.SeedCharacterAsync(105, items: new[] { first });
+		await environment.SeedCharacterAsync(106, items: new[] { second });
+		var service = new PistolCombatService(
+			environment.Repositories,
+			environment.Access,
+			environment.Clock,
+			new FakeRaycast(),
+			new FakeDamageBoundary());
+
+		environment.Provider.FailNextCommit();
+		var failed = await service.ReconcileRaisedPistolsAsync();
+		Assert.IsTrue(failed.Failed);
+		Assert.IsTrue(environment.ReadPistol(first.Id).Raised);
+		Assert.IsTrue(environment.ReadPistol(second.Id).Raised);
+
+		var reconciled = await service.ReconcileRaisedPistolsAsync();
+		Assert.IsTrue(reconciled.Succeeded, reconciled.Error?.Message);
+		Assert.IsNotNull(reconciled.Value.Commit);
+		Assert.HasCount(2, reconciled.Value.ChangedPistols);
+		Assert.HasCount(2, reconciled.Value.Commit.Documents);
+		Assert.IsFalse(environment.ReadPistol(first.Id).Raised);
+		Assert.IsFalse(environment.ReadPistol(second.Id).Raised);
+
+		var noOp = await service.ReconcileRaisedPistolsAsync();
+		Assert.IsTrue(noOp.Succeeded, noOp.Error?.Message);
+		Assert.IsFalse(noOp.Value.HasDurableChanges);
+		Assert.IsNull(noOp.Value.Commit);
+	}
+
+	[TestMethod]
+	public async Task CharacterPistolGraphFindsNestedPistolWithoutTouchingLargeUnrelatedPopulation()
+	{
+		await using var environment = await ShowcaseTestEnvironment.CreateAsync();
+		var suitcase = new ItemRecord
+		{
+			Id = ItemId.New(),
+			Definition = new DefinitionId(HL2RPIds.Items.Suitcase),
+			Traits = new Dictionary<string, TypedPayload>()
+		};
+		var nestedPistol = ShowcaseTestEnvironment.Pistol(equipped: true, raised: true);
+		var unrelatedPistol = ShowcaseTestEnvironment.Pistol(equipped: true, raised: true);
+		var seeded = await environment.SeedCharacterAsync(108, items: new[] { suitcase });
+		var nestedInventory = new InventoryRecord
+		{
+			Id = InventoryId.New(),
+			Owner = InventoryOwner.ParentItem(suitcase.Id),
+			Width = 4,
+			Height = 4,
+			Placements = new[] { new InventoryPlacement(nestedPistol.Id, 0, 0) }
+		};
+		await using (var seed = environment.Provider.BeginUnitOfWork())
+		{
+			seed.Create(environment.Repositories.Items, DomainKeys.Item(nestedPistol.Id), nestedPistol);
+			seed.Create(environment.Repositories.Items, DomainKeys.Item(unrelatedPistol.Id), unrelatedPistol);
+			seed.Create(environment.Repositories.Inventories, DomainKeys.Inventory(nestedInventory.Id), nestedInventory);
+			for (var index = 0; index < 256; index++)
+			{
+				var unrelated = new InventoryRecord
+				{
+					Id = InventoryId.New(),
+					Owner = InventoryOwner.Character(CharacterId.New()),
+					Width = 1,
+					Height = 1,
+					Placements = index == 0
+						? new[] { new InventoryPlacement(unrelatedPistol.Id, 0, 0) }
+						: Array.Empty<InventoryPlacement>()
+				};
+				seed.Create(environment.Repositories.Inventories, DomainKeys.Inventory(unrelated.Id), unrelated);
+			}
+			var committed = await seed.CommitAsync();
+			Assert.IsTrue(committed.Succeeded, committed.Error?.Message);
+		}
+		var service = new PistolCombatService(
+			environment.Repositories,
+			environment.Access,
+			environment.Clock,
+			new FakeRaycast(),
+			new FakeDamageBoundary());
+
+		var result = await service.ClearCharacterAsync(seeded.Actor.CharacterId);
+
+		Assert.IsTrue(result.Succeeded, result.Error?.Message);
+		Assert.HasCount(1, result.Value.ChangedPistols);
+		Assert.AreEqual(nestedPistol.Id, result.Value.ChangedPistols[0]);
+		Assert.IsFalse(environment.ReadPistol(nestedPistol.Id).Raised);
+		Assert.IsTrue(environment.ReadPistol(unrelatedPistol.Id).Raised);
+	}
+
+	[TestMethod]
 	public async Task DeathDropIsAtomicAndRespawnContractRestoresOnlyAfterDelay()
 	{
 		await using var environment = await ShowcaseTestEnvironment.CreateAsync();
@@ -160,7 +428,36 @@ public sealed class CombatShowcaseTests
 		Assert.AreEqual(1, boundary.RespawnCount);
 	}
 
+	[TestMethod]
+	public async Task PostCommitDeathBoundaryFailureStillReturnsTheDurableReceipt()
+	{
+		await using var environment = await ShowcaseTestEnvironment.CreateAsync();
+		var pistol = ShowcaseTestEnvironment.Pistol(equipped: true, raised: true);
+		var seeded = await environment.SeedCharacterAsync(109, items: new[] { pistol });
+		var boundary = new FakeLifecycleBoundary { ThrowOnClear = true, ThrowOnDeath = true };
+		var service = new CombatLifecycleService(environment.Repositories, environment.Schema,
+			environment.Layout, new AllowWorldModels(), environment.Clock, boundary);
+		var transform = new WorldTransformRecord
+		{
+			PositionX = 1, PositionY = 2, PositionZ = 3,
+			RotationX = 0, RotationY = 0, RotationZ = 0, RotationW = 1
+		};
+
+		var died = await service.DieAsync(seeded.Actor, seeded.InventoryId, transform, "test");
+
+		Assert.IsTrue(died.Succeeded, died.Error?.Message);
+		Assert.IsNotNull(died.Value.Commit);
+		Assert.AreEqual(died.Value.Commit.Sequence, died.Value.CommitSequence);
+		Assert.IsNotNull(died.Value.BoundaryError);
+		Assert.IsNull(environment.Repositories.Inventories
+			.Find(DomainKeys.Inventory(seeded.InventoryId))!.Value.Find(pistol.Id));
+		Assert.IsNotNull(environment.Repositories.WorldItems.Find(DomainKeys.WorldItem(pistol.Id)));
+	}
+
 	private static void AssertSuccess(OperationResult result) =>
+		Assert.IsTrue(result.Succeeded, result.Error?.Message);
+
+	private static void AssertSuccess<T>(OperationResult<T> result) =>
 		Assert.IsTrue(result.Succeeded, result.Error?.Message);
 
 	private sealed class FakeRaycast : IAuthoritativePistolRaycast
@@ -202,9 +499,18 @@ public sealed class CombatShowcaseTests
 	{
 		public int ClearCount { get; private set; }
 		public int RespawnCount { get; private set; }
+		public bool ThrowOnClear { get; init; }
+		public bool ThrowOnDeath { get; init; }
 
-		public void ClearSessions(InventoryActor actor) => ClearCount++;
-		public void PublishDeath(DeathTransitionReceipt transition) { }
+		public void ClearSessions(InventoryActor actor)
+		{
+			ClearCount++;
+			if (ThrowOnClear) throw new InvalidOperationException("Injected session cleanup failure.");
+		}
+		public void PublishDeath(DeathTransitionReceipt transition)
+		{
+			if (ThrowOnDeath) throw new InvalidOperationException("Injected death presentation failure.");
+		}
 		public void PublishRespawn(DeathRespawnState state) => RespawnCount++;
 	}
 }
