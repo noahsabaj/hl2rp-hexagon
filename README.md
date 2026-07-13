@@ -5,6 +5,12 @@ curated framework showcase rather than a compatibility port of the former
 runtime. The package owns the startup scene and mounts a matching local Hexagon
 source checkout during development and verification.
 
+The game is intentionally configured as a standalone-only s&box project. The
+whitelisted Hexagon library defines the v3 storage protocol; this game supplies
+its production OS adapter, including exclusive leases, write-through durability,
+and atomic file publication. Verification rejects moving those raw operations
+back into the library or silently downgrading the standalone compiler boundary.
+
 The schema demonstrates explicit modules, typed character and item state,
 transactional inventory and economy operations, server-issued interaction
 capabilities, immutable client snapshots, and host-authoritative combat,
