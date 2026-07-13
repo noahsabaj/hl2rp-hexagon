@@ -82,8 +82,8 @@
 					{
 						<div class="objective-editor">
 							<div class="section-heading"><span>EDITOR</span> Issue directive</div>
-							<div class="field-group"><label>Title</label><TextEntry Value:bind="@ObjectiveTitle" MaxLength="@(96)" /></div>
-							<div class="field-group"><label>Directive</label><TextEntry Value:bind="@ObjectiveDetail" Multiline="@true" MaxLength="@(512)" /></div>
+							<div class="field-group"><label>Title</label><TextEntry Value:bind="@ObjectiveTitle" MaxLength="@(CityObjectiveContract.MaximumTitleLength)" /></div>
+							<div class="field-group"><label>Directive</label><TextEntry Value:bind="@ObjectiveDetail" Multiline="@true" MaxLength="@(CityObjectiveContract.MaximumDetailLength)" /></div>
 							<button class="hex-toggle @(ObjectiveCompleted ? "is-on" : string.Empty)" @onclick="@(() => ObjectiveCompleted = !ObjectiveCompleted)">
 								<span></span>@(ObjectiveCompleted ? "Completed" : "Active")</button>
 							<button class="hex-button primary" disabled="@(string.IsNullOrWhiteSpace( ObjectiveTitle ))" @onclick="SaveObjective">
@@ -175,22 +175,22 @@
 @code
 {
 	[Parameter] public ShowcaseWorkspace Workspace { get; set; }
-	[Parameter] public CivicRecordViewModel CivicRecord { get; set; }
-	[Parameter] public ObjectivesViewModel Objectives { get; set; }
-	[Parameter] public NoteEditorViewModel Note { get; set; }
-	[Parameter] public RadioViewModel Radio { get; set; }
-	[Parameter] public ScannerViewModel Scanner { get; set; }
-	[Parameter] public Action<ShowcaseWorkspace> OnWorkspaceChanged { get; set; }
-	[Parameter] public Action<CivicRecordUpdateRequest> OnCivicRecordUpdate { get; set; }
-	[Parameter] public Action<ObjectiveUpdateRequest> OnObjectiveUpdate { get; set; }
-	[Parameter] public Action<NoteSaveRequest> OnNoteSave { get; set; }
-	[Parameter] public Action<RadioTuneRequest> OnRadioTune { get; set; }
-	[Parameter] public Action<ScannerIntentRequest> OnScannerIntent { get; set; }
-	[Parameter] public Action OnClose { get; set; }
+	[Parameter] public CivicRecordViewModel? CivicRecord { get; set; }
+	[Parameter] public ObjectivesViewModel? Objectives { get; set; }
+	[Parameter] public NoteEditorViewModel? Note { get; set; }
+	[Parameter] public RadioViewModel? Radio { get; set; }
+	[Parameter] public ScannerViewModel? Scanner { get; set; }
+	[Parameter] public Action<ShowcaseWorkspace>? OnWorkspaceChanged { get; set; }
+	[Parameter] public Action<CivicRecordUpdateRequest>? OnCivicRecordUpdate { get; set; }
+	[Parameter] public Action<ObjectiveUpdateRequest>? OnObjectiveUpdate { get; set; }
+	[Parameter] public Action<NoteSaveRequest>? OnNoteSave { get; set; }
+	[Parameter] public Action<RadioTuneRequest>? OnRadioTune { get; set; }
+	[Parameter] public Action<ScannerIntentRequest>? OnScannerIntent { get; set; }
+	[Parameter] public Action? OnClose { get; set; }
 
-	private CivicRecordViewModel _boundCivic;
-	private NoteEditorViewModel _boundNote;
-	private RadioViewModel _boundRadio;
+	private CivicRecordViewModel? _boundCivic;
+	private NoteEditorViewModel? _boundNote;
+	private RadioViewModel? _boundRadio;
 	private CivicPriority SelectedPriority { get; set; }
 	private string RecordText { get; set; } = string.Empty;
 	private string SelectedObjectiveId { get; set; } = string.Empty;
@@ -251,13 +251,37 @@
 		ShowcaseWorkspace.Scanner => Scanner is not null, _ => false
 	};
 
-	private void SaveCivicRecord() => OnCivicRecordUpdate?.Invoke( new CivicRecordUpdateRequest( CivicRecord.CharacterId, SelectedPriority, RecordText.Trim() ) );
-	private void SaveNote() => OnNoteSave?.Invoke( new NoteSaveRequest( Note.ItemId, NoteBody ) );
-	private void SaveRadio() => OnRadioTune?.Invoke( new RadioTuneRequest( Radio.RadioItemId, Frequency.Trim(), RadioEnabled ) );
-	private void SendScannerIntent( ScannerIntent intent ) => OnScannerIntent?.Invoke( new ScannerIntentRequest( Scanner.SessionId, intent ) );
-	private void SendScannerMotion( int forward, int right, int up, int yaw, int pitch ) =>
+	private void SaveCivicRecord()
+	{
+		if ( CivicRecord is not { } civicRecord ) return;
+		OnCivicRecordUpdate?.Invoke( new CivicRecordUpdateRequest(
+			civicRecord.CharacterId, SelectedPriority, RecordText.Trim() ) );
+	}
+
+	private void SaveNote()
+	{
+		if ( Note is not { } note ) return;
+		OnNoteSave?.Invoke( new NoteSaveRequest( note.ItemId, NoteBody ) );
+	}
+
+	private void SaveRadio()
+	{
+		if ( Radio is not { } radio ) return;
+		OnRadioTune?.Invoke( new RadioTuneRequest( radio.RadioItemId, Frequency.Trim(), RadioEnabled ) );
+	}
+
+	private void SendScannerIntent( ScannerIntent intent )
+	{
+		if ( Scanner is not { } scanner ) return;
+		OnScannerIntent?.Invoke( new ScannerIntentRequest( scanner.SessionId, intent ) );
+	}
+
+	private void SendScannerMotion( int forward, int right, int up, int yaw, int pitch )
+	{
+		if ( Scanner is not { } scanner ) return;
 		OnScannerIntent?.Invoke( new ScannerIntentRequest(
-			Scanner.SessionId, ScannerIntent.Move, ++_scannerSequence, forward, right, up, yaw, pitch ) );
+			scanner.SessionId, ScannerIntent.Move, ++_scannerSequence, forward, right, up, yaw, pitch ) );
+	}
 
 	private void SelectObjective( CityObjectiveViewModel objective )
 	{

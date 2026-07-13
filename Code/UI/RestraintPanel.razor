@@ -31,9 +31,15 @@
 
 @code
 {
-	[Parameter] public RestraintViewModel ViewModel { get; set; }
-	[Parameter] public Action<RestraintActionRequest> OnRestraintAction { get; set; }
-	[Parameter] public Action<SearchOpenRequest> OnOpenSearch { get; set; }
+	[Parameter, EditorRequired] public RestraintViewModel ViewModel { get; set; } = null!;
+	[Parameter] public Action<RestraintActionRequest>? OnRestraintAction { get; set; }
+	[Parameter] public Action<SearchOpenRequest>? OnOpenSearch { get; set; }
+
+	protected override void OnParametersSet()
+	{
+		if ( ViewModel is null )
+			throw new InvalidOperationException( $"{nameof(RestraintPanel)} requires {nameof(ViewModel)}." );
+	}
 
 	private void OpenSearch( CharacterId target )
 	{

@@ -43,7 +43,13 @@
 						@foreach ( var field in ViewModel.Creation.Fields )
 						{
 							<div class="field-group">
-								<label>@field.Label @if ( field.Required ) { <span class="required">required</span> }</label>
+								<div class="field-label">
+									<label>@field.Label</label>
+									@if ( field.Required )
+									{
+										<span class="required">required</span>
+									}
+								</div>
 								<div class="field-hint">@field.Hint</div>
 								@if ( field.Kind is SnapshotValueKind.String or SnapshotValueKind.Integer )
 								{
@@ -156,17 +162,18 @@
 	@if ( ViewModel.Entitlements is EntitlementAdministrationViewModel entitlements )
 	{
 		<EntitlementAdministrationPanel ViewModel="@entitlements" Controller="@Controller"
+			Variant="entitlement-admin--character-menu"
 			OnResult="@ReportEntitlementResult" />
 	}
 </root>
 
 @code
 {
-	[Parameter] public CharacterMenuViewModel ViewModel { get; set; }
-	[Parameter] public IHexClientController Controller { get; set; }
-	[Parameter] public Action<OperationResult> OnResult { get; set; }
+	[Parameter, EditorRequired] public CharacterMenuViewModel ViewModel { get; set; } = null!;
+	[Parameter] public IHexClientController? Controller { get; set; }
+	[Parameter] public Action<OperationResult>? OnResult { get; set; }
 
-	private CharacterCreationViewModel _boundCreation;
+	private CharacterCreationViewModel? _boundCreation;
 	private readonly Dictionary<string, string> _fieldText = new( StringComparer.Ordinal );
 	private readonly Dictionary<string, SnapshotValue> _fieldValues = new( StringComparer.Ordinal );
 	private bool Creating { get; set; }
@@ -185,20 +192,20 @@
 
 	protected override void OnParametersSet()
 	{
-		if ( ReferenceEquals( _boundCreation, ViewModel?.Creation ) )
+		if ( ViewModel is null )
+			throw new InvalidOperationException( $"{nameof(CharacterMenuPanel)} requires {nameof(ViewModel)}." );
+
+		if ( ReferenceEquals( _boundCreation, ViewModel.Creation ) )
 			return;
 
-		_boundCreation = ViewModel?.Creation;
-		SelectedFaction = ViewModel?.Creation.Factions.FirstOrDefault( choice => choice.Enabled )?.Id;
-		SelectedModel = ViewModel?.Creation.Models.FirstOrDefault( choice =>
+		_boundCreation = ViewModel.Creation;
+		SelectedFaction = ViewModel.Creation.Factions.FirstOrDefault( choice => choice.Enabled )?.Id;
+		SelectedModel = ViewModel.Creation.Models.FirstOrDefault( choice =>
 			choice.Enabled && SelectedFaction is FactionId factionId && choice.FactionId == factionId )?.Id;
-		SelectedClass = ViewModel?.Creation.Classes.FirstOrDefault( choice =>
+		SelectedClass = ViewModel.Creation.Classes.FirstOrDefault( choice =>
 			choice.Enabled && SelectedFaction is FactionId factionId && choice.FactionId == factionId )?.Id;
 		_fieldText.Clear();
 		_fieldValues.Clear();
-
-		if ( ViewModel is null )
-			return;
 
 		foreach ( var field in ViewModel.Creation.Fields )
 		{
@@ -263,9 +270,29 @@
 		}
 	}
 
-	private async Task LoadAsync( CharacterId id ) => Report( await Controller.LoadCharacterAsync( id ), "Entering city…" );
-	private async Task DeleteAsync( CharacterId id ) => Report( await Controller.DeleteCharacterAsync( id ), "Dossier removed." );
-	private async Task RefreshAsync() => Report( await Controller.RequestCharactersAsync(), "Dossiers refreshed." );
+	private async Task LoadAsync( CharacterId id )
+	{
+		if ( Controller is not IHexClientController controller )
+			return;
+
+		Report( await controller.LoadCharacterAsync( id ), "Entering city…" );
+	}
+
+	private async Task DeleteAsync( CharacterId id )
+	{
+		if ( Controller is not IHexClientController controller )
+			return;
+
+		Report( await controller.DeleteCharacterAsync( id ), "Dossier removed." );
+	}
+
+	private async Task RefreshAsync()
+	{
+		if ( Controller is not IHexClientController controller )
+			return;
+
+		Report( await controller.RequestCharactersAsync(), "Dossiers refreshed." );
+	}
 
 	private void Report( OperationResult result, string successMessage )
 	{

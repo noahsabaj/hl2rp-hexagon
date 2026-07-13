@@ -68,8 +68,13 @@ public sealed class EntitlementAvailabilityTests
 	{
 		var connection = ConnectionId.New();
 		var store = new HexClientStore();
+		var nonce = ClientSessionNonce.New();
+		var connectionEpoch = ConnectionEpoch.New();
+		var scope = new ClientSessionScope( nonce, connectionEpoch );
+		store.PrepareSession( nonce );
+		Assert.IsTrue( store.AcceptHello( new ClientSessionHello( scope ) ) );
 		var state = new ClientStateSnapshot(
-			new ClientStateEpoch( ConnectionEpoch.New(), 1, 1 ),
+			new ClientStateEpoch( connectionEpoch, 1, 1 ),
 			new PlayerPublicSnapshot(
 				connection, account.Value, "Entitlement Test", null,
 				string.Empty, string.Empty, null, null, null, false, false ),
@@ -78,7 +83,7 @@ public sealed class EntitlementAvailabilityTests
 			view is null ? null : new[] { view },
 			null,
 			null );
-		Assert.IsTrue( store.ApplyState( state ) );
+		Assert.IsTrue( store.ApplyState( scope, state ) );
 		return new HL2RPShowcaseProjection().Build(
 			store, ShowcaseWorkspace.None, false, ImmutableArray<NotificationViewModel>.Empty );
 	}

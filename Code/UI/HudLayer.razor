@@ -152,18 +152,18 @@
 
 @code
 {
-	[Parameter] public HudViewModel ViewModel { get; set; }
-	[Parameter] public ChatSnapshot Chat { get; set; }
+	[Parameter, EditorRequired] public HudViewModel ViewModel { get; set; } = null!;
+	[Parameter] public ChatSnapshot? Chat { get; set; }
 	[Parameter] public System.Collections.Immutable.ImmutableArray<NotificationViewModel> Notifications { get; set; }
-	[Parameter] public ActionProgressSnapshot Action { get; set; }
-	[Parameter] public DeathViewModel Death { get; set; }
-	[Parameter] public RestraintViewModel Restraint { get; set; }
-	[Parameter] public CombineOverlayViewModel Combine { get; set; }
-	[Parameter] public IHexClientController Controller { get; set; }
-	[Parameter] public Action<OperationResult> OnResult { get; set; }
-	[Parameter] public Action<Guid> OnDismissNotification { get; set; }
-	[Parameter] public Action<SearchOpenRequest> OnOpenSearch { get; set; }
-	[Parameter] public Action OnRespawn { get; set; }
+	[Parameter] public ActionProgressSnapshot? Action { get; set; }
+	[Parameter] public DeathViewModel? Death { get; set; }
+	[Parameter] public RestraintViewModel? Restraint { get; set; }
+	[Parameter] public CombineOverlayViewModel? Combine { get; set; }
+	[Parameter] public IHexClientController? Controller { get; set; }
+	[Parameter] public Action<OperationResult>? OnResult { get; set; }
+	[Parameter] public Action<Guid>? OnDismissNotification { get; set; }
+	[Parameter] public Action<SearchOpenRequest>? OnOpenSearch { get; set; }
+	[Parameter] public Action? OnRespawn { get; set; }
 
 	private readonly UiChoice[] Channels =
 	{
@@ -177,6 +177,12 @@
 	private string SelectedChannel { get; set; } = "ic";
 	private string ChatText { get; set; } = string.Empty;
 	private bool ChatFocused { get; set; }
+
+	protected override void OnParametersSet()
+	{
+		if ( ViewModel is null )
+			throw new InvalidOperationException( $"{nameof(HudLayer)} requires {nameof(ViewModel)}." );
+	}
 
 	private static int Percent( int value, int maximum ) => maximum <= 0 ? 0 : Math.Clamp( value * 100 / maximum, 0, 100 );
 

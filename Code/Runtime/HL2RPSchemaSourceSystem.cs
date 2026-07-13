@@ -17,7 +17,6 @@ namespace HL2RP.V2.Runtime;
 public sealed class HL2RPSchemaSourceSystem : GameObjectSystem<HL2RPSchemaSourceSystem>, IHexSchemaSource
 {
 	private HL2RPHostApplication? _host;
-	private bool _tickRunning;
 
 	public HL2RPSchemaSourceSystem( Scene scene ) : base( scene ) =>
 		Listen( Stage.FinishUpdate, 200, Tick, "HL2RP v2 host maintenance" );
@@ -28,10 +27,13 @@ public sealed class HL2RPSchemaSourceSystem : GameObjectSystem<HL2RPSchemaSource
 			Schema = new HL2RPSchema(),
 			PersistenceInvariants = HL2RPPersistenceInvariants.Profile,
 			PersistenceCodecs = HL2RPPersistence.Codecs,
+			CreatePersistenceStorage = static () =>
+				new HL2RPPhysicalPersistenceStorage( Sandbox.FileSystem.Data ),
 			CreateHostApplication = context => _host = new HL2RPHostApplication( context ),
 			ConfigureClient = context =>
 			{
 				var root = new GameObject( true, "HL2RP v2 Client UI" );
+				root.AddComponent<ScreenPanel>();
 				var presenter = root.AddComponent<HL2RPClientPresenter>();
 				presenter.Bind( context.Store, context.Controller );
 			}
@@ -39,14 +41,6 @@ public sealed class HL2RPSchemaSourceSystem : GameObjectSystem<HL2RPSchemaSource
 
 	private void Tick()
 	{
-		if ( _host is null || _tickRunning ) return;
-		_tickRunning = true;
-		_ = TickAsync( _host );
-	}
-
-	private async System.Threading.Tasks.Task TickAsync( HL2RPHostApplication host )
-	{
-		await host.TickAsync();
-		_tickRunning = false;
+		_host?.RequestMaintenanceTick();
 	}
 }

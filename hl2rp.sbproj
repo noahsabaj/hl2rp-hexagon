@@ -11,7 +11,7 @@
   ],
   "EditorReferences": null,
   "Mounts": null,
-  "IsStandaloneOnly": false,
+  "IsStandaloneOnly": true,
   "Metadata": {
     "MaxPlayers": 64,
     "MinPlayers": 1,
@@ -25,6 +25,12 @@
     "PerMapRanking": false,
     "LeaderboardType": "None",
     "CsProjName": "",
+    "Compiler": {
+      "Whitelist": false,
+      "Unsafe": false,
+      "Nullables": true,
+      "WarningsAsErrors": ""
+    },
     "StartupScene": "scenes/main.scene",
     "DedicatedServerStartupScene": "scenes/main.scene"
   }

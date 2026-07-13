@@ -33,14 +33,22 @@
 
 @code
 {
-	[Parameter] public string Eyebrow { get; set; }
-	[Parameter] public string Title { get; set; }
-	[Parameter] public string Subtitle { get; set; }
-	[Parameter] public string Variant { get; set; }
-	[Parameter] public RenderFragment Body { get; set; }
-	[Parameter] public RenderFragment HeaderActions { get; set; }
-	[Parameter] public RenderFragment Footer { get; set; }
-	[Parameter] public Action OnClose { get; set; }
+	[Parameter] public string? Eyebrow { get; set; }
+	[Parameter, EditorRequired] public string Title { get; set; } = string.Empty;
+	[Parameter] public string? Subtitle { get; set; }
+	[Parameter] public string Variant { get; set; } = string.Empty;
+	[Parameter, EditorRequired] public RenderFragment Body { get; set; } = null!;
+	[Parameter] public RenderFragment? HeaderActions { get; set; }
+	[Parameter] public RenderFragment? Footer { get; set; }
+	[Parameter] public Action? OnClose { get; set; }
+
+	protected override void OnParametersSet()
+	{
+		if ( string.IsNullOrWhiteSpace( Title ) )
+			throw new InvalidOperationException( $"{nameof(HL2RPWindow)} requires a non-empty {nameof(Title)}." );
+		if ( Body is null )
+			throw new InvalidOperationException( $"{nameof(HL2RPWindow)} requires {nameof(Body)}." );
+	}
 
 	protected override int BuildHash() => HashCode.Combine( Eyebrow, Title, Subtitle, Variant );
 }

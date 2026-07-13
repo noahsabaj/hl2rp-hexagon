@@ -79,14 +79,20 @@
 
 @code
 {
-	[Parameter] public InventorySnapshot Snapshot { get; set; }
+	[Parameter, EditorRequired] public InventorySnapshot Snapshot { get; set; } = null!;
 	[Parameter] public ItemId? SelectedItemId { get; set; }
 	[Parameter] public string EmptyMessage { get; set; } = "No items are stored here.";
 	[Parameter] public bool CanDrop { get; set; }
 	[Parameter] public int CellSize { get; set; } = 72;
-	[Parameter] public Action<InventoryItemSnapshot> OnSelect { get; set; }
-	[Parameter] public Func<InventoryItemSnapshot, ItemActionSnapshot, Task> OnAction { get; set; }
-	[Parameter] public Func<InventoryItemSnapshot, Task> OnDropItem { get; set; }
+	[Parameter] public Action<InventoryItemSnapshot>? OnSelect { get; set; }
+	[Parameter] public Func<InventoryItemSnapshot, ItemActionSnapshot, Task>? OnAction { get; set; }
+	[Parameter] public Func<InventoryItemSnapshot, Task>? OnDropItem { get; set; }
+
+	protected override void OnParametersSet()
+	{
+		if ( Snapshot is null )
+			throw new InvalidOperationException( $"{nameof(InventoryGrid)} requires {nameof(Snapshot)}." );
+	}
 
 	protected override int BuildHash() => HashCode.Combine( Snapshot?.Revision ?? -1L, SelectedItemId, CanDrop );
 }

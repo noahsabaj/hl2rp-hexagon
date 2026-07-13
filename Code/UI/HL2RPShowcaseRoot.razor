@@ -7,7 +7,7 @@
 @inherits Panel
 
 <root class="hl2rp-showcase-root">
-	@if ( Model is null || !Model.IsReady )
+	@if ( Model is null || Controller is null || !Model.IsReady )
 	{
 		<div class="showcase-boot">
 			<div class="showcase-boot__mark"><span></span><span></span><span></span></div>
@@ -73,6 +73,7 @@
 				Model.Entitlements is EntitlementAdministrationViewModel entitlements )
 			{
 				<EntitlementAdministrationPanel ViewModel="@entitlements" Controller="@Controller"
+					Variant="entitlement-admin--workspace"
 					OnResult="@HandleResult" />
 			}
 
@@ -135,28 +136,28 @@
 
 @code
 {
-	[Parameter] public HL2RPShowcaseViewModel Model { get; set; }
-	[Parameter] public IHexClientController Controller { get; set; }
-	[Parameter] public Action<WorkspaceTransitionRequest> OnWorkspaceChanged { get; set; }
-	[Parameter] public Action<SearchOpenRequest> OnOpenSearch { get; set; }
-	[Parameter] public Action<Guid> OnDismissNotification { get; set; }
-	[Parameter] public Action OnCloseScoreboard { get; set; }
-	[Parameter] public Action OnToggleScoreboard { get; set; }
-	[Parameter] public Action OnRespawn { get; set; }
-	[Parameter] public Action<VendorPurchaseRequest> OnVendorPurchase { get; set; }
-	[Parameter] public Action<VendorSaleRequest> OnVendorSale { get; set; }
-	[Parameter] public Action<PermitPurchaseRequest> OnPermitPurchase { get; set; }
-	[Parameter] public Action<ItemWorkspaceRequest> OnItemWorkspace { get; set; }
-	[Parameter] public Action<CivicRecordUpdateRequest> OnCivicRecordUpdate { get; set; }
-	[Parameter] public Action<ObjectiveUpdateRequest> OnObjectiveUpdate { get; set; }
-	[Parameter] public Action<NoteSaveRequest> OnNoteSave { get; set; }
-	[Parameter] public Action<RadioTuneRequest> OnRadioTune { get; set; }
-	[Parameter] public Action<RestraintActionRequest> OnRestraintAction { get; set; }
-	[Parameter] public Action<ScannerIntentRequest> OnScannerIntent { get; set; }
-	[Parameter] public Action<CharacterId> OnIntroduce { get; set; }
-	[Parameter] public Action<CharacterId> OnInspectCivic { get; set; }
-	[Parameter] public Action<long> OnDismissItemPresentation { get; set; }
-	[Parameter] public Action<OperationResult> OnOperationResult { get; set; }
+	[Parameter] public HL2RPShowcaseViewModel? Model { get; set; }
+	[Parameter] public IHexClientController? Controller { get; set; }
+	[Parameter] public Action<WorkspaceTransitionRequest>? OnWorkspaceChanged { get; set; }
+	[Parameter] public Action<SearchOpenRequest>? OnOpenSearch { get; set; }
+	[Parameter] public Action<Guid>? OnDismissNotification { get; set; }
+	[Parameter] public Action? OnCloseScoreboard { get; set; }
+	[Parameter] public Action? OnToggleScoreboard { get; set; }
+	[Parameter] public Action? OnRespawn { get; set; }
+	[Parameter] public Action<VendorPurchaseRequest>? OnVendorPurchase { get; set; }
+	[Parameter] public Action<VendorSaleRequest>? OnVendorSale { get; set; }
+	[Parameter] public Action<PermitPurchaseRequest>? OnPermitPurchase { get; set; }
+	[Parameter] public Action<ItemWorkspaceRequest>? OnItemWorkspace { get; set; }
+	[Parameter] public Action<CivicRecordUpdateRequest>? OnCivicRecordUpdate { get; set; }
+	[Parameter] public Action<ObjectiveUpdateRequest>? OnObjectiveUpdate { get; set; }
+	[Parameter] public Action<NoteSaveRequest>? OnNoteSave { get; set; }
+	[Parameter] public Action<RadioTuneRequest>? OnRadioTune { get; set; }
+	[Parameter] public Action<RestraintActionRequest>? OnRestraintAction { get; set; }
+	[Parameter] public Action<ScannerIntentRequest>? OnScannerIntent { get; set; }
+	[Parameter] public Action<CharacterId>? OnIntroduce { get; set; }
+	[Parameter] public Action<CharacterId>? OnInspectCivic { get; set; }
+	[Parameter] public Action<long>? OnDismissItemPresentation { get; set; }
+	[Parameter] public Action<OperationResult>? OnOperationResult { get; set; }
 
 	private ShowcaseWorkspace ActiveWorkspace => Model?.ActiveWorkspace ?? ShowcaseWorkspace.None;
 	private string LocalError { get; set; } = string.Empty;
@@ -166,7 +167,7 @@
 
 	private void CloseCombineWorkspace()
 	{
-		if ( ActiveWorkspace == ShowcaseWorkspace.Scanner && Model.Scanner?.SessionId is InteractionSessionId sessionId )
+		if ( ActiveWorkspace == ShowcaseWorkspace.Scanner && Model?.Scanner?.SessionId is InteractionSessionId sessionId )
 			OnScannerIntent?.Invoke( new ScannerIntentRequest( sessionId, ScannerIntent.Exit ) );
 		RequestWorkspace( ShowcaseWorkspace.None );
 	}

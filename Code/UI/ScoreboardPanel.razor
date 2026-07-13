@@ -42,9 +42,14 @@
 
 @code
 {
-	[Parameter] public ScoreboardViewModel ViewModel { get; set; }
-	[Parameter] public Action OnClose { get; set; }
-	[Parameter] public Action<CharacterId> OnIntroduce { get; set; }
-	[Parameter] public Action<CharacterId> OnInspectCivic { get; set; }
+	[Parameter, EditorRequired] public ScoreboardViewModel ViewModel { get; set; } = null!;
+	[Parameter] public Action? OnClose { get; set; }
+	[Parameter] public Action<CharacterId>? OnIntroduce { get; set; }
+	[Parameter] public Action<CharacterId>? OnInspectCivic { get; set; }
+	protected override void OnParametersSet()
+	{
+		if ( ViewModel is null )
+			throw new InvalidOperationException( $"{nameof(ScoreboardPanel)} requires {nameof(ViewModel)}." );
+	}
 	protected override int BuildHash() => HashCode.Combine( ViewModel?.ServerName, ViewModel?.Players.Length ?? 0 );
 }

@@ -30,13 +30,19 @@
 
 @code
 {
-	[Parameter] public InventoryTransferViewModel ViewModel { get; set; }
-	[Parameter] public IHexClientController Controller { get; set; }
+	[Parameter, EditorRequired] public InventoryTransferViewModel ViewModel { get; set; } = null!;
+	[Parameter] public IHexClientController? Controller { get; set; }
 	[Parameter] public bool IsSearch { get; set; }
-	[Parameter] public Action<OperationResult> OnResult { get; set; }
+	[Parameter] public Action<OperationResult>? OnResult { get; set; }
 
 	private ItemId? _selectedSource;
 	private ItemId? _selectedDestination;
+
+	protected override void OnParametersSet()
+	{
+		if ( ViewModel is null )
+			throw new InvalidOperationException( $"{nameof(InventoryTransferPanel)} requires {nameof(ViewModel)}." );
+	}
 
 	private void SelectSource( InventoryItemSnapshot item ) => _selectedSource = item.ItemId;
 	private void SelectDestination( InventoryItemSnapshot item ) => _selectedDestination = item.ItemId;

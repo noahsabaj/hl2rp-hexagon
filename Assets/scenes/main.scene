@@ -102,6 +102,21 @@
       "OwnerTransfer": 1,
       "Components": [
         {
+          "__type": "Sandbox.NetworkHelper",
+          "__guid": "e0da22c4-444d-44b9-a987-59451c869316",
+          "__enabled": true,
+          "Flags": 0,
+          "OnComponentDestroy": null,
+          "OnComponentDisabled": null,
+          "OnComponentEnabled": null,
+          "OnComponentFixedUpdate": null,
+          "OnComponentStart": null,
+          "OnComponentUpdate": null,
+          "PlayerPrefab": null,
+          "SpawnPoints": [],
+          "StartServer": true
+        },
+        {
           "__type": "Hexagon.V2.Runtime.HexagonBootstrapComponent",
           "__guid": "e0da22c4-444d-44b9-a987-59451c869314",
           "__enabled": true,

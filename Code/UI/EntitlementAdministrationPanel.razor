@@ -11,7 +11,7 @@
 @namespace HL2RP.UI
 @inherits Panel
 
-<root class="entitlement-admin">
+<root class="entitlement-admin @Variant">
 	<div class="section-heading"><span>AUTH</span> Account entitlements</div>
 	<div class="field-hint">
 		Authenticated account @ViewModel.AuthenticatedAccountId.Value · current grants: @FlagSummary( ViewModel.SelfFlags )
@@ -49,9 +49,10 @@
 
 @code
 {
-	[Parameter] public EntitlementAdministrationViewModel ViewModel { get; set; }
-	[Parameter] public IHexClientController Controller { get; set; }
-	[Parameter] public Action<OperationResult> OnResult { get; set; }
+	[Parameter, EditorRequired] public EntitlementAdministrationViewModel ViewModel { get; set; } = null!;
+	[Parameter] public IHexClientController? Controller { get; set; }
+	[Parameter] public Action<OperationResult>? OnResult { get; set; }
+	[Parameter] public string Variant { get; set; } = string.Empty;
 
 	private string TargetAccount { get; set; } = string.Empty;
 	private string SelectedFlag { get; set; } = "civil_protection";
@@ -74,7 +75,10 @@
 
 	protected override void OnParametersSet()
 	{
-		if ( ViewModel?.QueriedAccountId is not AccountId queried || queried.Value == _boundQueriedAccount ) return;
+		if ( ViewModel is null )
+			throw new InvalidOperationException( $"{nameof(EntitlementAdministrationPanel)} requires {nameof(ViewModel)}." );
+
+		if ( ViewModel.QueriedAccountId is not AccountId queried || queried.Value == _boundQueriedAccount ) return;
 		_boundQueriedAccount = queried.Value;
 		TargetAccount = queried.Value.ToString( CultureInfo.InvariantCulture );
 	}

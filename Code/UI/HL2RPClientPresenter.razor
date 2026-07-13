@@ -29,20 +29,20 @@
 @code
 {
 	private readonly HL2RPShowcaseProjection _projection = new();
-	private HexClientStore _store;
+	private HexClientStore? _store;
 	private bool _subscribed;
 	private bool _enabled;
 	private bool _scoreboardOpen;
 	private ShowcaseWorkspace _workspace;
-	private InteractionWorkspaceCoordinator _interactionWorkspaces;
+	private InteractionWorkspaceCoordinator? _interactionWorkspaces;
 	private ClientStateEpoch? _lastStateEpoch;
 	private long _dismissedItemPresentationSequence;
 	private ItemId? _selectedNoteItemId;
 	private ItemId? _selectedRadioItemId;
 	private ImmutableArray<NotificationViewModel> _notifications = ImmutableArray<NotificationViewModel>.Empty;
 
-	public IHexClientController Controller { get; private set; }
-	public HL2RPShowcaseViewModel ViewModel { get; private set; }
+	public IHexClientController? Controller { get; private set; }
+	public HL2RPShowcaseViewModel? ViewModel { get; private set; }
 
 	/// <summary>
 	/// Binds the only two runtime services the presenter accepts. Schema runtime
@@ -122,13 +122,14 @@
 			.ToImmutableArray();
 		var requestedWorkspace = _interactionWorkspaces?.PendingSearch is null
 			? _workspace : ShowcaseWorkspace.Search;
-		ViewModel = _projection.Build(
+		var viewModel = _projection.Build(
 			_store, requestedWorkspace, _scoreboardOpen, _notifications, _dismissedItemPresentationSequence,
 			_selectedNoteItemId, _selectedRadioItemId );
+		ViewModel = viewModel;
 		var observation = _interactionWorkspaces?.Observe(
-			InteractionWorkspaceSnapshot.From( ViewModel ) );
+			InteractionWorkspaceSnapshot.From( viewModel ) );
 		if ( observation?.SearchActivated == true ) _workspace = ShowcaseWorkspace.Search;
-		else if ( _interactionWorkspaces?.PendingSearch is null ) _workspace = ViewModel.ActiveWorkspace;
+		else if ( _interactionWorkspaces?.PendingSearch is null ) _workspace = viewModel.ActiveWorkspace;
 		if ( observation?.AbandonedSearchSession is ClientInteractionWorkspaceSession abandoned )
 			_ = CloseAbandonedSearchAsync( abandoned );
 		StateHasChanged();
@@ -139,10 +140,12 @@
 
 	private async Task TransitionWorkspaceAsync( ShowcaseWorkspace destination )
 	{
-		if ( _interactionWorkspaces is null || ViewModel is null ) return;
-		var transition = await _interactionWorkspaces.PrepareTransitionAsync(
-			InteractionWorkspaceSnapshot.From( ViewModel ), destination );
-		if ( !_interactionWorkspaces.IsCurrent( transition.Sequence ) ) return;
+		var interactionWorkspaces = _interactionWorkspaces;
+		var viewModel = ViewModel;
+		if ( interactionWorkspaces is null || viewModel is null ) return;
+		var transition = await interactionWorkspaces.PrepareTransitionAsync(
+			InteractionWorkspaceSnapshot.From( viewModel ), destination );
+		if ( !interactionWorkspaces.IsCurrent( transition.Sequence ) ) return;
 		if ( transition.CloseResult.Failed )
 		{
 			ObserveResult( transition.CloseResult );
@@ -156,10 +159,12 @@
 
 	private async Task SelectItemWorkspaceAsync( ItemWorkspaceRequest request )
 	{
-		if ( _interactionWorkspaces is null || ViewModel is null ) return;
-		var transition = await _interactionWorkspaces.PrepareTransitionAsync(
-			InteractionWorkspaceSnapshot.From( ViewModel ), request.Workspace );
-		if ( !_interactionWorkspaces.IsCurrent( transition.Sequence ) ) return;
+		var interactionWorkspaces = _interactionWorkspaces;
+		var viewModel = ViewModel;
+		if ( interactionWorkspaces is null || viewModel is null ) return;
+		var transition = await interactionWorkspaces.PrepareTransitionAsync(
+			InteractionWorkspaceSnapshot.From( viewModel ), request.Workspace );
+		if ( !interactionWorkspaces.IsCurrent( transition.Sequence ) ) return;
 		if ( transition.CloseResult.Failed )
 		{
 			ObserveResult( transition.CloseResult );
@@ -176,17 +181,20 @@
 
 	private async Task OpenSearchAsync( SearchOpenRequest request )
 	{
-		if ( Controller is null || _interactionWorkspaces is null || ViewModel is null ) return;
-		var terminal = await _interactionWorkspaces.PrepareTransitionAsync(
-			InteractionWorkspaceSnapshot.From( ViewModel ), ShowcaseWorkspace.None );
-		if ( !_interactionWorkspaces.IsCurrent( terminal.Sequence ) ) return;
+		var controller = Controller;
+		var interactionWorkspaces = _interactionWorkspaces;
+		var viewModel = ViewModel;
+		if ( controller is null || interactionWorkspaces is null || viewModel is null ) return;
+		var terminal = await interactionWorkspaces.PrepareTransitionAsync(
+			InteractionWorkspaceSnapshot.From( viewModel ), ShowcaseWorkspace.None );
+		if ( !interactionWorkspaces.IsCurrent( terminal.Sequence ) ) return;
 		if ( terminal.CloseResult.Failed )
 		{
 			ObserveResult( terminal.CloseResult );
 			return;
 		}
 
-		var pending = _interactionWorkspaces.BeginSearch( request.TargetCharacterId );
+		var pending = interactionWorkspaces.BeginSearch( request.TargetCharacterId );
 		if ( pending.Failed )
 		{
 			AddResultNotification( OperationResult.Failure( pending.Error!.Code, pending.Error.Message ) );
@@ -195,7 +203,7 @@
 		var sequence = pending.Value;
 		_workspace = ShowcaseWorkspace.Search;
 		Rebuild();
-		var result = await Controller.RunSchemaCommandAsync(
+		var result = await controller.RunSchemaCommandAsync(
 			HL2RPIds.Commands.RestraintSet,
 			new Dictionary<string, SnapshotValue>
 			{
@@ -203,7 +211,7 @@
 				["restrain"] = SnapshotValue.Boolean( false ),
 				["search"] = SnapshotValue.Boolean( true )
 			} );
-		var currentRequest = _interactionWorkspaces.CompleteSearchCommand( sequence, result );
+		var currentRequest = interactionWorkspaces.CompleteSearchCommand( sequence, result );
 		if ( !currentRequest ) return;
 		if ( result.Failed )
 		{
@@ -217,8 +225,9 @@
 
 	private async Task CloseAbandonedSearchAsync( ClientInteractionWorkspaceSession session )
 	{
-		if ( _interactionWorkspaces is null ) return;
-		var result = await _interactionWorkspaces.CloseAbandonedSearchAsync( session );
+		var interactionWorkspaces = _interactionWorkspaces;
+		if ( interactionWorkspaces is null ) return;
+		var result = await interactionWorkspaces.CloseAbandonedSearchAsync( session );
 		if ( result.Failed ) ObserveResult( result );
 	}
 
@@ -295,10 +304,13 @@
 
 	private async Task InspectCivicAsync( CharacterId characterId )
 	{
-		if ( Controller is null || _interactionWorkspaces is null || ViewModel is null ) return;
-		var transition = await _interactionWorkspaces.PrepareTransitionAsync(
-			InteractionWorkspaceSnapshot.From( ViewModel ), ShowcaseWorkspace.CivicData );
-		if ( !_interactionWorkspaces.IsCurrent( transition.Sequence ) ) return;
+		var controller = Controller;
+		var interactionWorkspaces = _interactionWorkspaces;
+		var viewModel = ViewModel;
+		if ( controller is null || interactionWorkspaces is null || viewModel is null ) return;
+		var transition = await interactionWorkspaces.PrepareTransitionAsync(
+			InteractionWorkspaceSnapshot.From( viewModel ), ShowcaseWorkspace.CivicData );
+		if ( !interactionWorkspaces.IsCurrent( transition.Sequence ) ) return;
 		if ( transition.CloseResult.Failed )
 		{
 			ObserveResult( transition.CloseResult );
@@ -306,12 +318,12 @@
 		}
 		_workspace = ShowcaseWorkspace.None;
 		Rebuild();
-		var result = await Controller.RunSchemaCommandAsync( HL2RPIds.Commands.CivicData,
+		var result = await controller.RunSchemaCommandAsync( HL2RPIds.Commands.CivicData,
 			new Dictionary<string, SnapshotValue>
 			{
 				["character"] = SnapshotValue.String( characterId.Value.ToString( "D" ) )
 			} );
-		if ( !_interactionWorkspaces.IsCurrent( transition.Sequence ) ) return;
+		if ( !interactionWorkspaces.IsCurrent( transition.Sequence ) ) return;
 		if ( result.Succeeded )
 		{
 			_workspace = ShowcaseWorkspace.CivicData;
@@ -364,10 +376,11 @@
 
 	private void RequestRespawn() => _ = SendSchemaAsync( HL2RPIds.Commands.CombatRespawn, null );
 
-	private async Task SendSchemaAsync( string commandId, IReadOnlyDictionary<string, SnapshotValue> arguments )
+	private async Task SendSchemaAsync( string commandId, IReadOnlyDictionary<string, SnapshotValue>? arguments )
 	{
-		if ( Controller is null ) return;
-		var result = await Controller.RunSchemaCommandAsync( commandId, arguments );
+		var controller = Controller;
+		if ( controller is null ) return;
+		var result = await controller.RunSchemaCommandAsync( commandId, arguments );
 		AddResultNotification( result );
 	}
 

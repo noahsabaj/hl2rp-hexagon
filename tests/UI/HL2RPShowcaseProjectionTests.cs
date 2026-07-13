@@ -419,8 +419,13 @@ public sealed class HL2RPShowcaseProjectionTests
 		IReadOnlyList<string>? permissions = null)
 	{
 		var store = new HexClientStore();
+		var nonce = ClientSessionNonce.New();
+		var connectionEpoch = ConnectionEpoch.New();
+		var scope = new ClientSessionScope( nonce, connectionEpoch );
+		store.PrepareSession( nonce );
+		Assert.IsTrue( store.AcceptHello( new ClientSessionHello( scope ) ) );
 		var snapshot = new ClientStateSnapshot(
-			new ClientStateEpoch(ConnectionEpoch.New(), 1, 1),
+			new ClientStateEpoch(connectionEpoch, 1, 1),
 			new PlayerPublicSnapshot(connectionId, 7656119, "Local Player", characterId, "Citizen 40291",
 				"Observable description", new DefinitionId(HL2RPIds.Models.Citizen01),
 				new FactionId(HL2RPIds.Factions.Citizen), null, false, false),
@@ -429,7 +434,7 @@ public sealed class HL2RPShowcaseProjectionTests
 			views,
 			inventories,
 			null);
-		Assert.IsTrue(store.ApplyState(snapshot));
+		Assert.IsTrue(store.ApplyState(scope, snapshot));
 		return store;
 	}
 

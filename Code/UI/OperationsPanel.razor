@@ -24,19 +24,19 @@
 			</div>
 		</HeaderActions>
 		<Body>
-			@if ( Workspace == ShowcaseWorkspace.Inventory && Inventory is not null )
+			@if ( Workspace == ShowcaseWorkspace.Inventory && Inventory is InventoryWorkspaceViewModel inventory )
 			{
 				<div class="single-inventory-layout">
-					<InventoryGrid Snapshot="@Inventory.Inventory" SelectedItemId="@_selectedPrimary"
-						CanDrop="@Inventory.CanDrop" EmptyMessage="@Inventory.EmptyMessage"
+					<InventoryGrid Snapshot="@inventory.Inventory" SelectedItemId="@_selectedPrimary"
+						CanDrop="@inventory.CanDrop" EmptyMessage="@inventory.EmptyMessage"
 						OnSelect="@SelectPrimary" OnAction="@RunActionAsync" OnDropItem="@DropAsync" />
-					@if ( Door is not null )
+					@if ( Door is DoorSessionViewModel door )
 					{
 						<div class="door-session-controls">
-							<div><strong>Ownable door</strong><span>@Door.OwnerStatus · @(Door.IsOpen ? "Open" : "Closed") · @(Door.CombineLocked ? "Combine locked" : "Unlocked")</span></div>
-							<button class="hex-button secondary" disabled="@(!Door.CanClaim)" title="@Door.ClaimDisabledReason"
+							<div><strong>Ownable door</strong><span>@door.OwnerStatus · @(door.IsOpen ? "Open" : "Closed") · @(door.CombineLocked ? "Combine locked" : "Unlocked")</span></div>
+							<button class="hex-button secondary" disabled="@(!door.CanClaim)" title="@door.ClaimDisabledReason"
 								@onclick="@ClaimDoorAsync">Claim current door</button>
-							<button class="hex-button secondary" disabled="@(!Door.CanRelease)" title="@Door.ReleaseDisabledReason"
+							<button class="hex-button secondary" disabled="@(!door.CanRelease)" title="@door.ReleaseDisabledReason"
 								@onclick="@ReleaseDoorAsync">Release current door</button>
 						</div>
 					}
@@ -83,23 +83,23 @@
 					}
 				</div>
 			}
-			else if ( Workspace == ShowcaseWorkspace.Storage && Storage is not null )
+			else if ( Workspace == ShowcaseWorkspace.Storage && Storage is InventoryTransferViewModel storage )
 			{
-				<InventoryTransferPanel ViewModel="@Storage" Controller="@Controller" IsSearch="@false" OnResult="@OnResult" />
+				<InventoryTransferPanel ViewModel="@storage" Controller="@Controller" IsSearch="@false" OnResult="@OnResult" />
 			}
-			else if ( Workspace == ShowcaseWorkspace.Search && Search is not null )
+			else if ( Workspace == ShowcaseWorkspace.Search && Search is InventoryTransferViewModel search )
 			{
-				<div class="interaction-banner warning"><span>policy</span>@Search.Caption</div>
-				<InventoryTransferPanel ViewModel="@Search" Controller="@Controller" IsSearch="@true" OnResult="@OnResult" />
+				<div class="interaction-banner warning"><span>policy</span>@search.Caption</div>
+				<InventoryTransferPanel ViewModel="@search" Controller="@Controller" IsSearch="@true" OnResult="@OnResult" />
 			}
-			else if ( Workspace == ShowcaseWorkspace.Vendor && Vendor is not null )
+			else if ( Workspace == ShowcaseWorkspace.Vendor && Vendor is VendorViewModel vendor )
 			{
 				<div class="vendor-layout">
 					<div class="vendor-catalog">
-						<div class="vendor-heading"><div><span class="micro-label">AUTHORIZED POINT OF SALE</span><strong>@Vendor.Name</strong><p>@Vendor.Description</p></div>
-							<div class="vendor-balance"><span>AVAILABLE</span>@Vendor.Balance.ToString( "N0" ) T</div></div>
+						<div class="vendor-heading"><div><span class="micro-label">AUTHORIZED POINT OF SALE</span><strong>@vendor.Name</strong><p>@vendor.Description</p></div>
+							<div class="vendor-balance"><span>AVAILABLE</span>@vendor.Balance.ToString( "N0" ) T</div></div>
 						<div class="vendor-offers">
-							@foreach ( var offer in Vendor.Offers )
+							@foreach ( var offer in vendor.Offers )
 							{
 								<div class="vendor-offer @(!offer.CanBuy ? "is-disabled" : string.Empty)">
 									<div class="vendor-offer__icon">inventory_2</div>
@@ -107,36 +107,36 @@
 									<div class="vendor-offer__stock"><span>STOCK</span>@(offer.Stock < 0 ? "∞" : offer.Stock.ToString( "N0" ))</div>
 									<div class="vendor-offer__price">@offer.Price.ToString( "N0" ) T</div>
 									<button class="hex-button primary" disabled="@(!offer.CanBuy)" title="@offer.DisabledReason"
-										@onclick="@(() => OnVendorPurchase?.Invoke( new VendorPurchaseRequest( Vendor.SessionId, offer.DefinitionId, 1 ) ))">Purchase</button>
+										@onclick="@(() => OnVendorPurchase?.Invoke( new VendorPurchaseRequest( vendor.SessionId, offer.DefinitionId, 1 ) ))">Purchase</button>
 								</div>
 							}
 						</div>
 					</div>
-					@if ( Vendor.SellingInventory is not null )
+					@if ( vendor.SellingInventory is InventorySnapshot sellingInventory )
 					{
 						<div class="vendor-sell">
 							<div class="section-heading"><span>SELL</span> Your inventory</div>
-							@foreach ( var item in Vendor.SellingInventory.Items )
+							@foreach ( var item in sellingInventory.Items )
 							{
 								var canSell = InventoryGridRules.TryVendorSell( item, out var payout, out var sellReason );
 								<div class="sell-row"><div><strong>@item.DisplayName</strong><span>@item.Category · ×@item.Quantity</span></div>
 									<button class="hex-button secondary" disabled="@(!canSell)" title="@sellReason"
 										@onclick="@(() => OnVendorSale?.Invoke(
-										new VendorSaleRequest( Vendor.SessionId, Vendor.SellingInventory.InventoryId, item.ItemId, 1 ) ))">
+										new VendorSaleRequest( vendor.SessionId, sellingInventory.InventoryId, item.ItemId, 1 ) ))">
 										@(canSell ? $"Sell · {payout:N0} T" : "Unavailable")</button></div>
 							}
 						</div>
 					}
 				</div>
 			}
-			else if ( Workspace == ShowcaseWorkspace.Permits && Permits is not null )
+			else if ( Workspace == ShowcaseWorkspace.Permits && Permits is PermitViewModel permits )
 			{
 				<div class="permit-layout">
 					<div class="permit-intro"><span class="micro-label">COMMERCE ADMINISTRATION</span><strong>Business permits</strong>
 						<p>Permits are typed civic credentials. Vendors verify the active character's credential on the host.</p>
-						<div class="permit-balance">BALANCE <strong>@Permits.Balance.ToString( "N0" ) T</strong></div></div>
+						<div class="permit-balance">BALANCE <strong>@permits.Balance.ToString( "N0" ) T</strong></div></div>
 					<div class="permit-cards">
-						@foreach ( var permit in Permits.Permits )
+						@foreach ( var permit in permits.Permits )
 						{
 							<div class="permit-card @(permit.Owned ? "is-owned" : string.Empty)">
 								<div class="permit-card__seal">verified</div><span>@permit.PermitKindId</span><strong>@permit.Name</strong><p>@permit.Description</p>
@@ -166,19 +166,19 @@
 @code
 {
 	[Parameter] public ShowcaseWorkspace Workspace { get; set; }
-	[Parameter] public InventoryWorkspaceViewModel Inventory { get; set; }
-	[Parameter] public DoorSessionViewModel Door { get; set; }
-	[Parameter] public InventoryTransferViewModel Storage { get; set; }
-	[Parameter] public VendorViewModel Vendor { get; set; }
-	[Parameter] public PermitViewModel Permits { get; set; }
-	[Parameter] public InventoryTransferViewModel Search { get; set; }
-	[Parameter] public IHexClientController Controller { get; set; }
-	[Parameter] public Action<WorkspaceTransitionRequest> OnWorkspaceChanged { get; set; }
-	[Parameter] public Action<VendorPurchaseRequest> OnVendorPurchase { get; set; }
-	[Parameter] public Action<VendorSaleRequest> OnVendorSale { get; set; }
-	[Parameter] public Action<PermitPurchaseRequest> OnPermitPurchase { get; set; }
-	[Parameter] public Action<ItemWorkspaceRequest> OnItemWorkspace { get; set; }
-	[Parameter] public Action<OperationResult> OnResult { get; set; }
+	[Parameter] public InventoryWorkspaceViewModel? Inventory { get; set; }
+	[Parameter] public DoorSessionViewModel? Door { get; set; }
+	[Parameter] public InventoryTransferViewModel? Storage { get; set; }
+	[Parameter] public VendorViewModel? Vendor { get; set; }
+	[Parameter] public PermitViewModel? Permits { get; set; }
+	[Parameter] public InventoryTransferViewModel? Search { get; set; }
+	[Parameter] public IHexClientController? Controller { get; set; }
+	[Parameter] public Action<WorkspaceTransitionRequest>? OnWorkspaceChanged { get; set; }
+	[Parameter] public Action<VendorPurchaseRequest>? OnVendorPurchase { get; set; }
+	[Parameter] public Action<VendorSaleRequest>? OnVendorSale { get; set; }
+	[Parameter] public Action<PermitPurchaseRequest>? OnPermitPurchase { get; set; }
+	[Parameter] public Action<ItemWorkspaceRequest>? OnItemWorkspace { get; set; }
+	[Parameter] public Action<OperationResult>? OnResult { get; set; }
 
 	private ItemId? _selectedPrimary;
 	private ItemId? _combineTarget;
@@ -186,9 +186,9 @@
 	private string _requestText = string.Empty;
 	private long? _splitAmount = 1;
 	private string StatusText { get; set; } = "Select an item to inspect its host-approved actions.";
-	private InventoryItemSnapshot SelectedTokenStack => Inventory?.Inventory.Items.FirstOrDefault( item =>
+	private InventoryItemSnapshot? SelectedTokenStack => Inventory?.Inventory.Items.FirstOrDefault( item =>
 		_selectedPrimary is ItemId selected && item.ItemId == selected && item.DefinitionId.Value == HL2RPIds.Items.TokenStack );
-	private InventoryItemSnapshot SelectedRequestDevice => Inventory?.Inventory.Items.FirstOrDefault( item =>
+	private InventoryItemSnapshot? SelectedRequestDevice => Inventory?.Inventory.Items.FirstOrDefault( item =>
 		_selectedPrimary is ItemId selected && item.ItemId == selected && item.DefinitionId.Value == HL2RPIds.Items.RequestDevice );
 
 	private (ShowcaseWorkspace Workspace, string Label)[] AvailableTabs => new[]
