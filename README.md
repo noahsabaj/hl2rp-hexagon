@@ -47,9 +47,10 @@ Steam session. The command above is therefore the explicitly incomplete
 local-only form; a release invocation supplies the source-bound manual evidence
 manifest instead of `-SkipRemoteAcceptance`.
 
-There is no v1 migration path. The v2 store uses a distinct format root and
-rejects unknown persisted types, definitions, permissions, actions, and module
-dependencies.
+There is intentionally no migration path for v1 or existing v2 persistence.
+Corrected data starts under `hexagon/persistence/v3/{schemaId}`; existing
+`hexagon/v2/...` data remains untouched for rollback. The v3 store rejects
+unknown persisted types, definitions, permissions, actions, and module dependencies.
 
 ## Account entitlements and first operator
 
