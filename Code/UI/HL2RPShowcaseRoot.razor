@@ -67,7 +67,7 @@
 				{
 					<button class="@DockClass( ShowcaseWorkspace.Entitlements )" @onclick="@(() => ToggleWorkspace( ShowcaseWorkspace.Entitlements ))"><span>admin_panel_settings</span>Access</button>
 				}
-				<button class="character-session-return" disabled="@IsReturningToCharacterSelection"
+				<button class="@(IsReturningToCharacterSelection ? "character-session-return is-disabled" : "character-session-return")" disabled="@IsReturningToCharacterSelection"
 					title="Return to character selection"
 					@onclick="@(() => OnReturnToCharacterSelection?.Invoke())">
 					<span>switch_account</span>@(IsReturningToCharacterSelection ? "Returning…" : "Return to character selection")
