@@ -1295,6 +1295,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 			}
 			PublishConnections( new[] { actor.ConnectionId }, invalidateRuntime: true );
 		}
+		OperationResult result;
 		try
 		{
 			var fired = await _combatIntent!.FireAsync(
@@ -1330,29 +1331,42 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 						$"code={degraded.Code} message={degraded.Message}" );
 				durableSuccess = true;
 			}
-			return Untyped( fired );
+			result = Untyped( fired );
 		}
 		catch ( OperationCanceledException )
 		{
-			return OperationResult.Failure( ErrorCode.Conflict, "Pistol raise was cancelled." );
+			result = OperationResult.Failure( ErrorCode.Conflict, "Pistol raise was cancelled." );
+		}
+		catch ( Exception exception )
+		{
+			Log.Error( exception, $"HL2RP pistol fire failed for character {actor.CharacterId.Value:D}." );
+			result = OperationResult.Failure(
+				ErrorCode.InternalError,
+				"Pistol firing failed unexpectedly." );
+		}
+
+		HL2RPTimedActionCompletion completion;
+		try
+		{
+			completion = active is null
+				? default
+				: _activePistolActions.Complete( actor.ConnectionId, active, durableSuccess );
 		}
 		finally
 		{
-			var completion = active is null
-				? default
-				: _activePistolActions.Complete( actor.ConnectionId, active, durableSuccess );
 			linked?.Dispose();
-			if ( completion.PublishFailure )
-				PublishConnections( new[] { actor.ConnectionId }, invalidateRuntime: true );
-			if ( active is not null && completion.LifecycleCleanupRequested )
-			{
-				var cleanup = await ClearRaisedPistolsAsync( active.Actor, projectionDelta, CancellationToken.None );
-				if ( cleanup.Failed )
-					Log.Error(
-						$"HL2RP late pistol lifecycle cleanup failed for character {active.Actor.CharacterId.Value:D}: " +
-						cleanup.Error!.Message );
-			}
 		}
+		if ( completion.PublishFailure )
+			PublishConnections( new[] { actor.ConnectionId }, invalidateRuntime: true );
+		if ( active is not null && completion.LifecycleCleanupRequested )
+		{
+			var cleanup = await ClearRaisedPistolsAsync( active.Actor, projectionDelta, CancellationToken.None );
+			if ( cleanup.Failed )
+				Log.Error(
+					$"HL2RP late pistol lifecycle cleanup failed for character {active.Actor.CharacterId.Value:D}: " +
+					cleanup.Error!.Message );
+		}
+		return result;
 	}
 
 	private async ValueTask<OperationResult> RunSchemaCommandAsync(

@@ -21,7 +21,7 @@ public sealed class CharacterSessionReturnCoordinator
 	public CharacterSessionReturnCoordinator( IHexClientController controller ) =>
 		_controller = controller ?? throw new ArgumentNullException( nameof(controller) );
 
-	public bool IsBusy => Volatile.Read( ref _busy ) != 0;
+	public bool IsBusy => Interlocked.CompareExchange( ref _busy, 0, 0 ) != 0;
 
 	public async ValueTask<OperationResult> ReturnToCharacterSelectionAsync(
 		CancellationToken cancellationToken = default )
@@ -49,7 +49,7 @@ public sealed class CharacterSessionReturnCoordinator
 		}
 		finally
 		{
-			Volatile.Write( ref _busy, 0 );
+			Interlocked.Exchange( ref _busy, 0 );
 		}
 	}
 }

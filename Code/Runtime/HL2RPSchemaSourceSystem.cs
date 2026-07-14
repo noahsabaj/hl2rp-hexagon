@@ -28,7 +28,7 @@ public sealed class HL2RPSchemaSourceSystem : GameObjectSystem<HL2RPSchemaSource
 			PersistenceInvariants = HL2RPPersistenceInvariants.Profile,
 			PersistenceCodecs = HL2RPPersistence.Codecs,
 			CreatePersistenceStorage = static () =>
-				new HL2RPPhysicalPersistenceStorage( Sandbox.FileSystem.Data ),
+				HL2RPPersistenceStorageFactory.Create( Sandbox.FileSystem.Data ),
 			CreateHostApplication = context => _host = new HL2RPHostApplication( context ),
 			ConfigureClient = context =>
 			{

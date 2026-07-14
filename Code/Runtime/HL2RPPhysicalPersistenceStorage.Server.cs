@@ -14,9 +14,11 @@ using Sandbox;
 namespace HL2RP.V2.Runtime;
 
 /// <summary>
-/// Standalone-game implementation of Hexagon's durable storage protocol. Raw operating-system
-/// access deliberately lives in the standalone HL2RP assembly; the reusable Hexagon library
-/// remains compatible with the s&amp;box API whitelist.
+/// Dedicated-server implementation of Hexagon's durable storage protocol. The s&amp;box compiler
+/// wraps every <c>.Server.cs</c> file in the <c>SERVER</c> compilation boundary and strips its
+/// body from client code archives. Raw operating-system access must remain in this file so a
+/// joining client can pass assembly access control while production retains write-through,
+/// exclusive physical-file semantics.
 /// </summary>
 internal sealed class HL2RPPhysicalPersistenceStorage : IPersistenceStorage
 {

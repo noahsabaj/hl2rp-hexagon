@@ -10,6 +10,9 @@ whitelisted Hexagon library defines the v3 storage protocol; this game supplies
 its production OS adapter, including exclusive leases, write-through durability,
 and atomic file publication. Verification rejects moving those raw operations
 back into the library or silently downgrading the standalone compiler boundary.
+That adapter lives in `.Server.cs`, which s&box removes from remote client code
+archives. Editor-hosted setup uses a whitelist-safe `BaseFileSystem` adapter;
+it supports bootstrap and smoke work but is not the production durability proof.
 
 The schema demonstrates explicit modules, typed character and item state,
 transactional inventory and economy operations, server-issued interaction
