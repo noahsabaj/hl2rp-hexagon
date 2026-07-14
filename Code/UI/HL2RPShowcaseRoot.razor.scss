@@ -292,6 +292,7 @@ $red: #db6a61;
 
 	.showcase-dock { position: absolute; left: 50%; bottom: 24px; z-index: 18; transform: translateX(-50%); padding: 5px; gap: 3px; background-color: rgba( $ink, 0.9 ); border: 1px solid $line; pointer-events: all; }
 	.showcase-dock button { min-width: 70px; height: 44px; padding: 4px 9px; border: 0; border-bottom: 2px solid transparent; background-color: transparent; color: $muted; font-size: 9px; flex-direction: column; align-items: center; justify-content: center; span { font-family: "Material Icons"; font-size: 18px; } &:hover { color: $white; background-color: rgba(255,255,255,0.04); } &.is-active { color: $amber; border-bottom-color: $amber; background-color: rgba($amber,0.08); } }
+	.showcase-dock button.character-session-return { min-width: 145px; margin-left: 4px; border-left: 1px solid $line; color: #9fb0b7; &:hover { color: $amber; } &:disabled { color: #536168; background-color: transparent; pointer-events: none; } }
 
 	.operations-panel, .combine-suite-panel, .scoreboard-panel { position: absolute; inset: 0; z-index: 25; align-items: center; justify-content: center; background-color: rgba( 0, 0, 0, 0.42 ); pointer-events: all; }
 	.operations-window, .combine-suite-window { width: 1280px; height: 790px; }

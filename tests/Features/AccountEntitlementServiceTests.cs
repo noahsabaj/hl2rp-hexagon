@@ -1,5 +1,6 @@
 #nullable enable
 
+using Hexagon.V2.Application;
 using Hexagon.V2.Composition;
 using Hexagon.V2.Domain;
 using Hexagon.V2.Kernel.Events;
@@ -153,10 +154,11 @@ public sealed class AccountEntitlementServiceTests
 	}
 
 	[TestMethod]
-	public async Task EntitlementRoundTripsThroughWalCheckpointRecoveryAndDigest()
+	public async Task EntitlementAndLifecycleGuardRoundTripThroughWalCheckpointRecoveryAndDigest()
 	{
 		var storage = new InMemoryPersistenceStorage();
 		var target = new AccountId( 20 );
+		var guardedCharacter = CharacterId.New();
 		string digest;
 		DocumentRevision revision;
 		await using ( var first = CreateFileProvider( storage ) )
@@ -169,7 +171,21 @@ public sealed class AccountEntitlementServiceTests
 				HL2RPWhitelist.Overwatch, DocumentRevision.None );
 			Assert.IsTrue( granted.Succeeded, granted.Error?.Message );
 			revision = granted.Value.Revision;
-			digest = HL2RPRuntimeProjection.RecoveryDigest( new DomainRepositories( first ) );
+			var repositories = new DomainRepositories( first );
+			var digestWithoutGuard = HL2RPRuntimeProjection.RecoveryDigest( repositories );
+			var unit = first.BeginUnitOfWork();
+			unit.Create(
+				repositories.CharacterLifecycleGuards,
+				DomainKeys.CharacterLifecycleGuard( guardedCharacter ),
+				new CharacterLifecycleGuardRecord
+				{
+					CharacterId = guardedCharacter,
+					ReferenceRevision = 7
+				} );
+			var guarded = await HL2RPUnitOfWork.CommitAndDisposeAsync( unit );
+			Assert.IsTrue( guarded.Succeeded, guarded.Error?.Message );
+			digest = HL2RPRuntimeProjection.RecoveryDigest( repositories );
+			Assert.AreNotEqual( digestWithoutGuard, digest );
 		}
 
 		await using var recovered = CreateFileProvider( storage );
@@ -180,7 +196,12 @@ public sealed class AccountEntitlementServiceTests
 		Assert.IsTrue( observed.Succeeded, observed.Error?.Message );
 		Assert.AreEqual( HL2RPWhitelist.Overwatch, observed.Value.Flags );
 		Assert.AreEqual( revision, observed.Value.Revision );
-		Assert.AreEqual( digest, HL2RPRuntimeProjection.RecoveryDigest( new DomainRepositories( recovered ) ) );
+		var recoveredRepositories = new DomainRepositories( recovered );
+		var recoveredGuard = recoveredRepositories.CharacterLifecycleGuards.Find(
+			DomainKeys.CharacterLifecycleGuard( guardedCharacter ) );
+		Assert.IsNotNull( recoveredGuard );
+		Assert.AreEqual( 7L, recoveredGuard.Value.ReferenceRevision );
+		Assert.AreEqual( digest, HL2RPRuntimeProjection.RecoveryDigest( recoveredRepositories ) );
 	}
 
 	[TestMethod]

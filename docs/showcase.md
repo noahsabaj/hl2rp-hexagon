@@ -23,6 +23,18 @@ creation menu consumes receiver-specific enabled rows authored by the host.
 The synthetic smoke-test account is an in-memory verification overlay and is
 never written to the real entitlement collection.
 
+For a fresh-store dedicated acceptance run, seed the two test accounts before
+the evidence window. Temporarily place the authenticated setup account's Steam
+ID64 in the scene's `HL2RP Bootstrap Operators` component without saving the
+scene, run the real Access workspace, and commit the required Civil Protection
+and City Administration grants. Shut that editor-hosted instance down cleanly,
+preserve the same `hexagon/persistence/v3/hl2rp` root (or identical explicit
+root override), reload/discard the scene edit, and require a clean Git status
+with the tracked `AccountIds` still empty. Only the subsequent dedicated-server
+run with two distinct remote authenticated clients is acceptance evidence; the
+full procedure and artifact requirements are documented in the sibling
+Hexagon `docs/testing.md` runbook.
+
 Character, inventory, item, world-item, economy, and persistent scene-entity
 changes commit through one unit of work. Notifications and snapshots are sent
 only after a successful commit. Continuing interaction access is represented by

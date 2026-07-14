@@ -36,6 +36,7 @@
     <Compile Include="../Code/Showcase/**/*.cs" Link="Product/Showcase/%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="../Code/Runtime/HL2RPRuntimeLogic.cs" Link="Product/Runtime/HL2RPRuntimeLogic.cs" />
 	<Compile Include="../Code/Runtime/HL2RPMaintenanceSupervisor.cs" Link="Product/Runtime/HL2RPMaintenanceSupervisor.cs" />
+	<Compile Include="../Code/Runtime/HL2RPRecoverySnapshot.cs" Link="Product/Runtime/HL2RPRecoverySnapshot.cs" />
 	<Compile Include="../Code/Runtime/HL2RPObjectiveCommandRouter.cs" Link="Product/Runtime/HL2RPObjectiveCommandRouter.cs" />
 	<Compile Include="../Code/Runtime/HL2RPCharacterLoadAdmission.cs" Link="Product/Runtime/HL2RPCharacterLoadAdmission.cs" />
 	<Compile Include="../Code/Runtime/HL2RPPresentationPlanning.cs" Link="Product/Runtime/HL2RPPresentationPlanning.cs" />
@@ -49,6 +50,8 @@
     <Compile Include="../Code/UI/InventoryGridRules.cs" Link="Product/UI/InventoryGridRules.cs" />
     <Compile Include="../Code/UI/ShowcaseViewModels.cs" Link="Product/UI/ShowcaseViewModels.cs" />
     <Compile Include="../Code/UI/InteractionWorkspaceCoordinator.cs" Link="Product/UI/InteractionWorkspaceCoordinator.cs" />
+	<Compile Include="../Code/UI/CharacterSessionReturnCoordinator.cs" Link="Product/UI/CharacterSessionReturnCoordinator.cs" />
+	<Compile Include="../Code/UI/CharacterSessionPresentationState.cs" Link="Product/UI/CharacterSessionPresentationState.cs" />
     <Compile Include="../../hexagon/Code/V2/Kernel/**/*.cs" Link="Hexagon/Kernel/%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="../../hexagon/Code/V2/Persistence/**/*.cs" Link="Hexagon/Persistence/%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="../../hexagon/Code/V2/Domain/**/*.cs" Link="Hexagon/Domain/%(RecursiveDir)%(Filename)%(Extension)" />

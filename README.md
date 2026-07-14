@@ -74,3 +74,34 @@ persisted transactionally with optimistic revisions, and grant/revoke audit
 facts are published only after commit. Revocation blocks future restricted
 character creation but intentionally does not rewrite or demote existing
 characters.
+
+### Fresh-store acceptance setup
+
+The dedicated two-client acceptance run needs restricted characters, but the
+tracked scene intentionally contains no personal account ID. Pre-seed those
+entitlements through the real host before beginning the evidence window:
+
+1. Record `git status --short` and require a clean HL2RP worktree. Open
+   `Assets/scenes/main.scene` at the exact source revision that will be tested.
+2. In the editor, temporarily enter the authenticated setup account's Steam
+   ID64 in `HL2RP Bootstrap Operators`. Do **not** save this scene edit.
+3. Keep the `Hexagon Bootstrap` persistence-root setting unchanged. The setup
+   host and later dedicated server must use the same data directory and the same
+   logical root, `hexagon/persistence/v3/hl2rp` (or the same explicit
+   `PersistenceRootOverride` when isolation is required).
+4. Start an editor-hosted session as that account. From character selection,
+   use **Access** to grant the two remote test accounts the Civil Protection and
+   City Administration entitlements required by the acceptance scenarios.
+5. Stop the host cleanly and wait for both
+   `HL2RP_RECOVERY_SNAPSHOT phase=pre_shutdown ...` and `HEXAGON_DRAINED host`.
+   Do not delete, rename, or redirect the persistence root afterward.
+6. Reload the scene and choose **Reload**/discard when prompted so the temporary
+   operator ID is removed rather than written to `main.scene`; then close the
+   editor. Require `git status --short` to be clean and verify that the tracked
+   `AccountIds` value remains empty before launching the dedicated server.
+
+This editor-hosted setup is not acceptance evidence. Start the timed run only
+after the clean-status check, and capture evidence from a true dedicated-server
+process plus two remote clients authenticated as distinct nonzero accounts. The
+complete source-bound procedure is in the sibling Hexagon checkout at
+`docs/testing.md#manual-dedicated-server-two-client-runbook`.

@@ -67,6 +67,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 	private readonly HL2RPPresentationInvalidation _presentationInvalidation = new();
 	private readonly HL2RPEntitlementPresentationInvalidation _entitlementPresentationInvalidation;
 	private readonly HL2RPMaintenanceSupervisor _maintenance;
+	private readonly HL2RPRecoverySnapshotLifecycle _recoverySnapshots;
 	private readonly HL2RPPresentationSequence _itemPresentationSequence = new();
 	private readonly HL2RPProjectionIndex _projectionIndex = new();
 	private readonly HL2RPCivicSubjectSelections _civicSubjects = new();
@@ -120,6 +121,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 	{
 		_context = context ?? throw new ArgumentNullException( nameof(context) );
 		_repositories = context.Repositories;
+		_recoverySnapshots = new HL2RPRecoverySnapshotLifecycle( IsVerification );
 		_entitlementPresentationInvalidation = new HL2RPEntitlementPresentationInvalidation(
 			_presentationInvalidation, EntitlementRecipients );
 		_maintenance = new HL2RPMaintenanceSupervisor(
@@ -367,6 +369,9 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 			HL2RPPersistenceInvariants.Profile ).Validate();
 		if ( !invariants.IsValid )
 			return OperationResult.Failure( invariants.Issues[0].Code, invariants.Issues[0].Message );
+		_recoverySnapshots.CompleteInitialization(
+			CaptureRecoverySnapshot,
+			static marker => Log.Info( marker ) );
 		return OperationResult.Success();
 	}
 
@@ -521,6 +526,9 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 			else if ( reconciledPistols.Value.Commit is not null )
 				_projectionIndex.Apply( reconciledPistols.Value.Commit, _repositories );
 		}
+		_recoverySnapshots.CompleteQuiescedShutdown(
+			CaptureRecoverySnapshot,
+			static marker => Log.Info( marker ) );
 		foreach ( var binding in _clients.Values ) _ = binding.Player.HostStripPlayableBody();
 		foreach ( var worldObject in _worldObjects.Values )
 			if ( worldObject.IsValid() ) worldObject.Destroy();
@@ -531,6 +539,12 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 		_entitlementQueries.Clear();
 		_clients.Clear();
 	}
+
+	private HL2RPRecoverySnapshot CaptureRecoverySnapshot() => new(
+		_context.Persistence.Health.Sequence,
+		HL2RPRuntimeProjection.RecoveryDigest(
+			_repositories,
+			_context.Configuration.Snapshot() ) );
 
 	private void TrackLifecycle( Task task )
 	{

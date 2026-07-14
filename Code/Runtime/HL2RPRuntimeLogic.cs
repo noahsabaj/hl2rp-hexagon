@@ -769,6 +769,7 @@ public static class HL2RPRuntimeProjection
 		var builder = new StringBuilder();
 		AppendRepository( builder, repositories, DomainCollections.Characters, repositories.Characters );
 		AppendRepository( builder, repositories, DomainCollections.CharacterSlots, repositories.CharacterSlots );
+		AppendRepository( builder, repositories, DomainCollections.CharacterLifecycleGuards, repositories.CharacterLifecycleGuards );
 		AppendRepository( builder, repositories, DomainCollections.Inventories, repositories.Inventories );
 		AppendRepository( builder, repositories, DomainCollections.OwnerInventories, repositories.OwnerInventories );
 		AppendRepository( builder, repositories, DomainCollections.Items, repositories.Items );

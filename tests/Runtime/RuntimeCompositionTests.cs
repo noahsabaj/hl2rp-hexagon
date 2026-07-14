@@ -1063,7 +1063,7 @@ public sealed class RuntimeCompositionTests
 		var presenter = File.ReadAllText( Path.Combine( root, "Code", "UI", "HL2RPClientPresenter.razor" ) );
 		StringAssert.Contains( presenter, "private void Introduce( CharacterId characterId )" );
 		StringAssert.Contains( presenter, "private async Task InspectCivicAsync( CharacterId characterId )" );
-		StringAssert.Contains( presenter, "_workspace = ShowcaseWorkspace.CivicData" );
+		StringAssert.Contains( presenter, "_characterPresentation.Workspace = ShowcaseWorkspace.CivicData" );
 		StringAssert.Contains( presenter, "request.PermitKindId" );
 		var scoreboard = File.ReadAllText( Path.Combine( root, "Code", "UI", "ScoreboardPanel.razor" ) );
 		StringAssert.Contains( scoreboard, "OnIntroduce?.Invoke( characterId )" );

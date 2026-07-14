@@ -17,6 +17,8 @@
 		OnWorkspaceChanged="@TransitionWorkspace" OnOpenSearch="@OpenSearch"
 		OnDismissNotification="@DismissNotification"
 		OnToggleScoreboard="@ToggleScoreboard" OnCloseScoreboard="@CloseScoreboard" OnRespawn="@RequestRespawn"
+		OnReturnToCharacterSelection="@ReturnToCharacterSelection"
+		IsReturningToCharacterSelection="@(_characterSessionReturn?.IsBusy == true)"
 		OnVendorPurchase="@PurchaseFromVendor" OnVendorSale="@SellToVendor" OnPermitPurchase="@PurchasePermit"
 		OnCivicRecordUpdate="@UpdateCivicRecord" OnObjectiveUpdate="@UpdateObjective" OnNoteSave="@SaveNote"
 		OnRadioTune="@TuneRadio" OnRestraintAction="@SetRestraint" OnScannerIntent="@SendScannerIntent"
@@ -32,14 +34,10 @@
 	private HexClientStore? _store;
 	private bool _subscribed;
 	private bool _enabled;
-	private bool _scoreboardOpen;
-	private ShowcaseWorkspace _workspace;
+	private readonly CharacterSessionPresentationState _characterPresentation = new();
 	private InteractionWorkspaceCoordinator? _interactionWorkspaces;
+	private CharacterSessionReturnCoordinator? _characterSessionReturn;
 	private ClientStateEpoch? _lastStateEpoch;
-	private long _dismissedItemPresentationSequence;
-	private ItemId? _selectedNoteItemId;
-	private ItemId? _selectedRadioItemId;
-	private ImmutableArray<NotificationViewModel> _notifications = ImmutableArray<NotificationViewModel>.Empty;
 
 	public IHexClientController? Controller { get; private set; }
 	public HL2RPShowcaseViewModel? ViewModel { get; private set; }
@@ -53,9 +51,11 @@
 		ArgumentNullException.ThrowIfNull( store );
 		ArgumentNullException.ThrowIfNull( controller );
 		Unsubscribe();
+		ResetCharacterPresentation();
 		_store = store;
 		Controller = controller;
 		_interactionWorkspaces = new InteractionWorkspaceCoordinator( controller );
+		_characterSessionReturn = new CharacterSessionReturnCoordinator( controller );
 		_lastStateEpoch = store.StateEpoch;
 		Subscribe();
 		Rebuild();
@@ -96,20 +96,13 @@
 		if ( epoch is ClientStateEpoch current && _lastStateEpoch is ClientStateEpoch previous &&
 			(current.Connection != previous.Connection || current.Character != previous.Character) )
 		{
-			_workspace = ShowcaseWorkspace.None;
-			_interactionWorkspaces?.Reset();
+			ResetCharacterPresentation();
 		}
 		_lastStateEpoch = epoch;
 		if ( change.Kind == ClientStoreChangeKind.SessionCleared )
 		{
-			_workspace = ShowcaseWorkspace.None;
-			_interactionWorkspaces?.Reset();
+			ResetCharacterPresentation();
 			_lastStateEpoch = null;
-			_scoreboardOpen = false;
-			_notifications = ImmutableArray<NotificationViewModel>.Empty;
-			_dismissedItemPresentationSequence = 0;
-			_selectedNoteItemId = null;
-			_selectedRadioItemId = null;
 		}
 		Rebuild();
 	}
@@ -117,19 +110,21 @@
 	private void Rebuild()
 	{
 		if ( _store is null ) return;
-		_notifications = _notifications
+		_characterPresentation.Notifications = _characterPresentation.Notifications
 			.Where( notification => notification.ExpiresAtUtc > DateTimeOffset.UtcNow )
 			.ToImmutableArray();
 		var requestedWorkspace = _interactionWorkspaces?.PendingSearch is null
-			? _workspace : ShowcaseWorkspace.Search;
+			? _characterPresentation.Workspace : ShowcaseWorkspace.Search;
 		var viewModel = _projection.Build(
-			_store, requestedWorkspace, _scoreboardOpen, _notifications, _dismissedItemPresentationSequence,
-			_selectedNoteItemId, _selectedRadioItemId );
+			_store, requestedWorkspace, _characterPresentation.ScoreboardOpen,
+			_characterPresentation.Notifications, _characterPresentation.DismissedItemPresentationSequence,
+			_characterPresentation.SelectedNoteItemId, _characterPresentation.SelectedRadioItemId );
 		ViewModel = viewModel;
 		var observation = _interactionWorkspaces?.Observe(
 			InteractionWorkspaceSnapshot.From( viewModel ) );
-		if ( observation?.SearchActivated == true ) _workspace = ShowcaseWorkspace.Search;
-		else if ( _interactionWorkspaces?.PendingSearch is null ) _workspace = viewModel.ActiveWorkspace;
+		if ( observation?.SearchActivated == true ) _characterPresentation.Workspace = ShowcaseWorkspace.Search;
+		else if ( _interactionWorkspaces?.PendingSearch is null )
+			_characterPresentation.Workspace = viewModel.ActiveWorkspace;
 		if ( observation?.AbandonedSearchSession is ClientInteractionWorkspaceSession abandoned )
 			_ = CloseAbandonedSearchAsync( abandoned );
 		StateHasChanged();
@@ -151,7 +146,7 @@
 			ObserveResult( transition.CloseResult );
 			return;
 		}
-		_workspace = transition.Destination;
+		_characterPresentation.Workspace = transition.Destination;
 		Rebuild();
 	}
 
@@ -170,10 +165,10 @@
 			ObserveResult( transition.CloseResult );
 			return;
 		}
-		if ( request.Workspace == ShowcaseWorkspace.NoteEditor ) _selectedNoteItemId = request.ItemId;
-		else if ( request.Workspace == ShowcaseWorkspace.Radio ) _selectedRadioItemId = request.ItemId;
+		if ( request.Workspace == ShowcaseWorkspace.NoteEditor ) _characterPresentation.SelectedNoteItemId = request.ItemId;
+		else if ( request.Workspace == ShowcaseWorkspace.Radio ) _characterPresentation.SelectedRadioItemId = request.ItemId;
 		else return;
-		_workspace = request.Workspace;
+		_characterPresentation.Workspace = request.Workspace;
 		Rebuild();
 	}
 
@@ -201,7 +196,7 @@
 			return;
 		}
 		var sequence = pending.Value;
-		_workspace = ShowcaseWorkspace.Search;
+		_characterPresentation.Workspace = ShowcaseWorkspace.Search;
 		Rebuild();
 		var result = await controller.RunSchemaCommandAsync(
 			HL2RPIds.Commands.RestraintSet,
@@ -215,7 +210,7 @@
 		if ( !currentRequest ) return;
 		if ( result.Failed )
 		{
-			_workspace = ShowcaseWorkspace.None;
+			_characterPresentation.Workspace = ShowcaseWorkspace.None;
 			AddResultNotification( result );
 			return;
 		}
@@ -233,25 +228,41 @@
 
 	private void ToggleScoreboard()
 	{
-		_scoreboardOpen = !_scoreboardOpen;
+		_characterPresentation.ScoreboardOpen = !_characterPresentation.ScoreboardOpen;
 		Rebuild();
 	}
 
 	private void CloseScoreboard()
 	{
-		_scoreboardOpen = false;
+		_characterPresentation.ScoreboardOpen = false;
 		Rebuild();
+	}
+
+	private void ReturnToCharacterSelection() => _ = ReturnToCharacterSelectionAsync();
+
+	private async Task ReturnToCharacterSelectionAsync()
+	{
+		var coordinator = _characterSessionReturn;
+		if ( coordinator is null ) return;
+
+		var pending = coordinator.ReturnToCharacterSelectionAsync();
+		StateHasChanged();
+		var result = await pending;
+		if ( result.Failed ) ObserveResult( result );
+		else StateHasChanged();
 	}
 
 	private void DismissNotification( Guid id )
 	{
-		_notifications = _notifications.Where( notification => notification.Id != id ).ToImmutableArray();
+		_characterPresentation.Notifications = _characterPresentation.Notifications
+			.Where( notification => notification.Id != id ).ToImmutableArray();
 		Rebuild();
 	}
 
 	private void DismissItemPresentation( long sequence )
 	{
-		_dismissedItemPresentationSequence = Math.Max( _dismissedItemPresentationSequence, sequence );
+		_characterPresentation.DismissedItemPresentationSequence = Math.Max(
+			_characterPresentation.DismissedItemPresentationSequence, sequence );
 		Rebuild();
 	}
 
@@ -316,7 +327,7 @@
 			ObserveResult( transition.CloseResult );
 			return;
 		}
-		_workspace = ShowcaseWorkspace.None;
+		_characterPresentation.Workspace = ShowcaseWorkspace.None;
 		Rebuild();
 		var result = await controller.RunSchemaCommandAsync( HL2RPIds.Commands.CivicData,
 			new Dictionary<string, SnapshotValue>
@@ -326,8 +337,8 @@
 		if ( !interactionWorkspaces.IsCurrent( transition.Sequence ) ) return;
 		if ( result.Succeeded )
 		{
-			_workspace = ShowcaseWorkspace.CivicData;
-			_scoreboardOpen = false;
+			_characterPresentation.Workspace = ShowcaseWorkspace.CivicData;
+			_characterPresentation.ScoreboardOpen = false;
 		}
 		AddResultNotification( result );
 	}
@@ -392,7 +403,15 @@
 			: new NotificationViewModel( Guid.NewGuid(), result.Error?.Code.ToString() ?? "Denied",
 				result.Error?.Message ?? "The host denied the request.", NotificationTone.Critical,
 				DateTimeOffset.UtcNow.AddSeconds( 7 ) );
-		_notifications = _notifications.Add( notification );
+		_characterPresentation.Notifications = _characterPresentation.Notifications.Add( notification );
 		Rebuild();
+	}
+
+	private void ResetCharacterPresentation()
+	{
+		_characterPresentation.Reset();
+		_interactionWorkspaces?.Reset();
+		if ( Controller is not null )
+			_characterSessionReturn = new CharacterSessionReturnCoordinator( Controller );
 	}
 }
