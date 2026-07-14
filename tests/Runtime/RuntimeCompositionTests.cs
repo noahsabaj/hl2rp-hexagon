@@ -1095,6 +1095,9 @@ public sealed class RuntimeCompositionTests
 			Assert.IsFalse( source.Contains( "ReadOnly=", StringComparison.Ordinal ), path );
 			Assert.IsFalse( Regex.IsMatch( source, "MaxLength=\"[0-9]" ), path );
 			Assert.IsFalse( Regex.IsMatch( source, "On[A-Z][A-Za-z0-9]*=\"(?!@)" ), path );
+			Assert.IsFalse(
+				Regex.IsMatch( source, "(?<![A-Za-z0-9_])@?on[a-z][a-z0-9_-]*\\s*=\\s*\"[A-Za-z_][A-Za-z0-9_]*\"" ),
+				$"{path}: s&box event handlers require an explicit Razor expression, for example @onclick=\"@Handler\"." );
 		}
 	}
 

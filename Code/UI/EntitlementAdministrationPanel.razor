@@ -30,9 +30,9 @@
 			}
 		</div>
 		<div class="choice-row wrap">
-			<button class="hex-button secondary" disabled="@(!HasTarget)" @onclick="QueryAsync">Inspect</button>
-			<button class="hex-button primary" disabled="@(!HasCurrentTarget)" @onclick="GrantAsync">Grant</button>
-			<button class="hex-button danger" disabled="@(!HasCurrentTarget)" @onclick="RevokeAsync">Revoke</button>
+			<button class="hex-button secondary" disabled="@(!HasTarget)" @onclick="@QueryAsync">Inspect</button>
+			<button class="hex-button primary" disabled="@(!HasCurrentTarget)" @onclick="@GrantAsync">Grant</button>
+			<button class="hex-button danger" disabled="@(!HasCurrentTarget)" @onclick="@RevokeAsync">Revoke</button>
 		</div>
 		@if ( ViewModel.QueriedAccountId is AccountId queried )
 		{

@@ -70,8 +70,8 @@
 				}
 			</div>
 			<TextEntry Value:bind="@ChatText" Placeholder="Speak in character…" MaxLength="@(512)"
-				onfocus="@(() => ChatFocused = true)" onblur="@(() => ChatFocused = false)" onsubmit="SendChatAsync" />
-			<button class="hex-button primary" disabled="@(string.IsNullOrWhiteSpace( ChatText ))" @onclick="SendChatAsync">Send</button>
+				onfocus="@(() => ChatFocused = true)" onblur="@(() => ChatFocused = false)" onsubmit="@SendChatAsync" />
+			<button class="hex-button primary" disabled="@(string.IsNullOrWhiteSpace( ChatText ))" @onclick="@SendChatAsync">Send</button>
 		</div>
 	</div>
 
@@ -82,7 +82,7 @@
 			<div class="action-progress__track"><span style="width: @ActionPercent( Action )%;"></span></div>
 			@if ( Action.CanCancel )
 			{
-				<button @onclick="CancelActionAsync">close</button>
+				<button @onclick="@CancelActionAsync">close</button>
 			}
 		</div>
 	}

@@ -21,7 +21,7 @@
 		Subtitle="@(Creating ? "Every submitted field is revalidated by the host." : $"{ViewModel.Characters.Characters.Count} of {ViewModel.MaximumSlots} dossiers in use")"
 		Variant="character-menu__window">
 		<HeaderActions>
-			<button class="hex-button ghost" @onclick="RefreshAsync">Refresh</button>
+			<button class="hex-button ghost" @onclick="@RefreshAsync">Refresh</button>
 			<button class="hex-button secondary" disabled="@(ViewModel.Characters.Characters.Count >= ViewModel.MaximumSlots)"
 				@onclick="@(() => Creating = !Creating)">@(Creating ? "Back to dossiers" : "Create character")</button>
 		</HeaderActions>
@@ -153,7 +153,8 @@
 			<div class="window-status">@(string.IsNullOrWhiteSpace( LocalStatus ) ? ViewModel.StatusText : LocalStatus)</div>
 			@if ( Creating )
 			{
-				<button class="hex-button primary wide" disabled="@(!CanSubmit || ViewModel.IsBusy)" @onclick="CreateAsync">
+				<button class="hex-button primary wide @(SubmissionBlocked ? "disabled" : string.Empty)"
+					disabled="@SubmissionBlocked" @onclick="@CreateAsync">
 					@(ViewModel.IsBusy ? "Submitting…" : "Submit dossier")
 				</button>
 			}
@@ -191,6 +192,7 @@
 	private string LocalStatus { get; set; } = string.Empty;
 
 	private bool CanSubmit => _draft.CanSubmit( Name, Description );
+	private bool SubmissionBlocked => !CanSubmit || ViewModel.IsBusy;
 
 	protected override void OnParametersSet()
 	{
@@ -233,8 +235,20 @@
 
 	private async Task CreateAsync()
 	{
-		if ( Controller is null || !CanSubmit || SelectedModel is not DefinitionId model || SelectedFaction is not FactionId faction )
+		if ( ViewModel.IsBusy )
 			return;
+		if ( Controller is null )
+		{
+			LocalStatus = "Waiting for a host connection.";
+			StateHasChanged();
+			return;
+		}
+		if ( !CanSubmit || SelectedModel is not DefinitionId model || SelectedFaction is not FactionId faction )
+		{
+			LocalStatus = "Complete every required field and choose an available affiliation and presentation.";
+			StateHasChanged();
+			return;
+		}
 
 		var fields = _draft.BuildFields();
 

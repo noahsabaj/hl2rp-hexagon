@@ -43,7 +43,7 @@
 							<TextEntry Value:bind="@RecordText" Multiline="@true" MaxLength="@(2048)" Disabled="@(!CivicRecord.CanEdit)" />
 							@if ( CivicRecord.CanEdit )
 							{
-								<button class="hex-button primary" @onclick="SaveCivicRecord">Commit civic record</button>
+								<button class="hex-button primary" @onclick="@SaveCivicRecord">Commit civic record</button>
 							}
 						</div>
 						<div class="infraction-list">
@@ -86,9 +86,9 @@
 							<div class="field-group"><label>Directive</label><TextEntry Value:bind="@ObjectiveDetail" Multiline="@true" MaxLength="@(CityObjectiveContract.MaximumDetailLength)" /></div>
 							<button class="hex-toggle @(ObjectiveCompleted ? "is-on" : string.Empty)" @onclick="@(() => ObjectiveCompleted = !ObjectiveCompleted)">
 								<span></span>@(ObjectiveCompleted ? "Completed" : "Active")</button>
-							<button class="hex-button primary" disabled="@(string.IsNullOrWhiteSpace( ObjectiveTitle ))" @onclick="SaveObjective">
+							<button class="hex-button primary" disabled="@(string.IsNullOrWhiteSpace( ObjectiveTitle ))" @onclick="@SaveObjective">
 								@(string.IsNullOrEmpty( SelectedObjectiveId ) ? "Publish objective" : "Update objective")</button>
-							<button class="hex-button ghost" @onclick="ClearObjective">Clear editor</button>
+							<button class="hex-button ghost" @onclick="@ClearObjective">Clear editor</button>
 						</div>
 					}
 				</div>
@@ -104,7 +104,7 @@
 					</div>
 					<div class="note-tools"><div class="micro-label">PHYSICAL DOCUMENT</div><strong>Note editor</strong>
 						<p>Text is saved as typed item state. The local panel never owns the authoritative document.</p>
-						<button class="hex-button primary" disabled="@(!Note.CanEdit)" @onclick="SaveNote">Save note</button></div>
+						<button class="hex-button primary" disabled="@(!Note.CanEdit)" @onclick="@SaveNote">Save note</button></div>
 				</div>
 			}
 			else if ( Workspace == ShowcaseWorkspace.Radio && Radio is not null )
@@ -125,7 +125,7 @@
 									<span>@preset.Label</span><strong>@preset.Id</strong></button>
 							}
 						</div>
-						<button class="hex-button primary" @onclick="SaveRadio">Apply tuning</button>
+						<button class="hex-button primary" @onclick="@SaveRadio">Apply tuning</button>
 					</div>
 				</div>
 			}
