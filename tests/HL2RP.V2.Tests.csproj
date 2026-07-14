@@ -52,6 +52,7 @@
     <Compile Include="../Code/UI/InteractionWorkspaceCoordinator.cs" Link="Product/UI/InteractionWorkspaceCoordinator.cs" />
 	<Compile Include="../Code/UI/CharacterSessionReturnCoordinator.cs" Link="Product/UI/CharacterSessionReturnCoordinator.cs" />
 	<Compile Include="../Code/UI/CharacterSessionPresentationState.cs" Link="Product/UI/CharacterSessionPresentationState.cs" />
+	<Compile Include="../Code/UI/CharacterCreationDraftState.cs" Link="Product/UI/CharacterCreationDraftState.cs" />
     <Compile Include="../../hexagon/Code/V2/Kernel/**/*.cs" Link="Hexagon/Kernel/%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="../../hexagon/Code/V2/Persistence/**/*.cs" Link="Hexagon/Persistence/%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="../../hexagon/Code/V2/Domain/**/*.cs" Link="Hexagon/Domain/%(RecursiveDir)%(Filename)%(Extension)" />
