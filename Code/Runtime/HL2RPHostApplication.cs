@@ -31,7 +31,7 @@ namespace HL2RP.V2.Runtime;
 /// RpcActor, uses committed repositories and publishes immutable state only after
 /// the relevant service has completed successfully.
 /// </summary>
-public sealed class HL2RPHostApplication : IHexHostApplication
+public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconciliationBoundary
 {
 	private const InventoryCapability CharacterCapabilities =
 		InventoryCapability.View | InventoryCapability.Move | InventoryCapability.TransferIn |
@@ -53,8 +53,8 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 	private readonly Dictionary<SceneEntityId, HL2RPSceneFeatureComponent> _features = new();
 	private readonly Dictionary<ItemId, GameObject> _worldObjects = new();
 	private readonly Dictionary<ConnectionId, ItemActionPresentationEnvelope> _itemActionPresentations = new();
-	private readonly object _lifecycleSync = new();
-	private readonly HashSet<Task> _pendingLifecycle = new();
+	private readonly AsyncOperationRegistry _lifecycleOperations = new();
+	private readonly HL2RPCharacterLifecycleGate _characterLifecycle = new();
 	private readonly HL2RPTimedActionOwnership<ConnectionId, ActiveRestraintAction> _activeRestraintActions = new();
 	private readonly HL2RPTimedActionOwnership<ConnectionId, ActivePistolRaiseAction> _activePistolActions = new();
 	private readonly HashSet<CharacterId> _respawningCharacters = new();
@@ -80,6 +80,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 	private readonly InventoryLayoutService _layout;
 	private readonly InventoryMutationService _inventory;
 	private readonly WorldItemService _worldItems;
+	private readonly HL2RPWorldItemReconciler _worldReconciler;
 	private readonly RestraintStateReader _restraintState;
 	private readonly HL2RPFeatureRuntimePolicy _featureAuthorization;
 	private readonly PolicyPipeline<HL2RPFeaturePolicyContext> _featurePolicy;
@@ -111,7 +112,9 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 	private HL2RPRadioRecipientResolver? _chatRecipients;
 	private ChatRateLimit? _globalChatRateLimit;
 	private bool _disposed;
+	private bool _shutdownEvidenceCompleted;
 	private bool _probeStarted;
+	private HL2RPRecoverySnapshot? _pendingShutdownSnapshot;
 	private VerificationActorBinding? _verificationActor;
 	private HL2RPBootstrapOperatorDirectory _bootstrapOperators;
 	private long _presentationRevision;
@@ -186,6 +189,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 			RequirePolicy( new PolicyHandler<WorldPickupContext>(
 				"hl2rp.runtime.authoritative_pickup", new HL2RPWorldPickupRuntimePolicy(
 					_restraintState, ActorPosition, HasLineOfSight ) ) ) );
+		_worldReconciler = new HL2RPWorldItemReconciler( this, _clock );
 		_featureAuthorization = new HL2RPFeatureRuntimePolicy( _repositories );
 		_featurePolicy = RequirePolicy( new PolicyHandler<HL2RPFeaturePolicyContext>(
 			"hl2rp.runtime.authorization", _featureAuthorization ) );
@@ -239,13 +243,18 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 		var entitlementDocuments = _entitlements.ValidateAll();
 		if ( entitlementDocuments.Failed ) return entitlementDocuments;
 
-		var components = _context.Scene.GetAll<HL2RPSceneFeatureComponent>().ToArray();
-		foreach ( var component in components )
+		var components = new List<HL2RPSceneFeatureComponent>();
+		foreach ( var component in _context.Scene.GetAll<HL2RPSceneFeatureComponent>() )
 		{
+			var identity = component.IdentityComponent;
+			var featureAdmission = HL2RPSceneFeatureAdmission.Evaluate( identity?.RuntimeResolution );
+			if ( featureAdmission.Failed ) return Failure( featureAdmission.Error! );
+			if ( !featureAdmission.Value ) continue;
 			if ( component.SceneEntityId is not SceneEntityId id )
 				return OperationResult.Failure( ErrorCode.ConfigurationInvalid, "HL2RP scene feature has no persistent identity." );
 			if ( !_features.TryAdd( id, component ) )
 				return OperationResult.Failure( ErrorCode.DuplicateRegistration, $"HL2RP scene identity '{id}' is duplicated." );
+			components.Add( component );
 		}
 		var initialized = await HL2RPSceneStateInitializer.InitializeAsync(
 			_repositories, components, _ids, cancellationToken );
@@ -264,8 +273,11 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 			_repositories, _restraintState, restraintAuthorization );
 		foreach ( var feature in components ) directory.Register( new HL2RPSceneInteractable( feature, _repositories ) );
 		if ( IsVerification )
+		{
+			_access.OpenConnection( VerificationConnectionId );
 			_verificationActor = new VerificationActorBinding(
 				VerificationConnectionId, VerificationAccountId, null, null );
+		}
 		var interactionWorld = new HL2RPServerInteractionWorld(
 			_context.Scene, ResolveInteractionActorState, FindPlayer, _features, _restraintState );
 		_interactions = new InteractionAuthorityService(
@@ -336,7 +348,8 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 			_repositories, _interactions, _access, _restraintState, restraintAuthorization );
 
 		var boundaries = new HL2RPSandboxBoundaries(
-			_context.Scene, _features, ResolveActorState, _repositories, ResolveCombatTargetToken );
+			_context.Scene, _features, ResolveActorState, _repositories, ResolveCombatTargetToken,
+			RefreshLiveConnection );
 		_scanner = new ScannerPilotService(
 			_repositories, _interactions, _sessions, _clock,
 			boundaries, boundaries, boundaries, boundaries, boundaries,
@@ -361,7 +374,10 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 		RebuildProjectionIndex();
 		RebuildLiveInventory();
 		RefreshAllLiveConnections();
-		RestoreWorldItems();
+		var reconciledWorldItems = await _worldReconciler.ReconcileStartupAsync(
+			_worldItems.LoadWorldItems().Select( world => world.ItemId ),
+			cancellationToken );
+		if ( reconciledWorldItems.Failed ) return reconciledWorldItems;
 		var invariants = new DomainInvariantValidator(
 			_repositories,
 			_context.Schema,
@@ -378,9 +394,12 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 	public void Connected( RpcActor actor )
 	{
 		if ( _disposed ) return;
-		_clients[new ConnectionId( actor.Connection.Id )] = new ClientBinding(
+		var connectionId = new ConnectionId( actor.Connection.Id );
+		_characterLifecycle.Open( connectionId );
+		_access.OpenConnection( connectionId );
+		_clients[connectionId] = new ClientBinding(
 			actor.Connection, actor.AccountId, actor.Player, null );
-		_projectionIndex.ObserveConnection( new ConnectionId( actor.Connection.Id ), actor.AccountId );
+		_projectionIndex.ObserveConnection( connectionId, actor.AccountId );
 		_projectionIndex.InvalidateRuntimeDependency( "roster-membership", "global" );
 		SendCharacterList( actor.Connection, actor.AccountId );
 		PublishAll();
@@ -389,6 +408,8 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 	public void Disconnected( RpcActor actor )
 	{
 		var connectionId = new ConnectionId( actor.Connection.Id );
+		_characterLifecycle.Close( connectionId );
+		_access.RevokeConnection( connectionId );
 		if ( !_clients.Remove( connectionId, out var binding ) ) return;
 		_projectionIndex.ForgetConnection( connectionId );
 		_presentationInvalidation.ForgetConnection( connectionId );
@@ -398,18 +419,22 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 		CancelTimedActionsForLifecycle( connectionId, binding.CharacterId );
 		if ( binding.CharacterId is CharacterId characterId )
 		{
-			TrackLifecycle( ClearRaisedPistolsForLifecycleAsync(
-				new InventoryActor( connectionId, binding.AccountId, characterId ), CancellationToken.None ) );
+			TrackLifecycle(
+				$"pistol-disconnect:{connectionId.Value:D}",
+				() => ClearRaisedPistolsForLifecycleAsync(
+					new InventoryActor( connectionId, binding.AccountId, characterId ), CancellationToken.None ) );
 			_access.RevokeCharacter( connectionId, characterId );
 			_interactions?.CharacterChanged( connectionId, characterId );
 			_combatIntent?.ClearCharacter( characterId );
 		}
-		_access.RevokeConnection( connectionId );
 		_interactions?.Disconnected( connectionId );
 		_chat?.RevokeConnection( connectionId );
 		_requests?.RevokeConnection( connectionId );
-		if ( _scanner is not null ) TrackLifecycle( _scanner.DisconnectAsync( connectionId ).AsTask() );
-		_ = binding.Player.HostStripPlayableBody();
+		if ( _scanner is not null )
+			TrackLifecycle(
+				$"scanner-disconnect:{connectionId.Value:D}",
+				() => _scanner.DisconnectAsync( connectionId ).AsTask() );
+		_ = binding.Player.HostStripAuthoritativeBody();
 		if ( binding.CharacterId is CharacterId disconnectedCharacter )
 			_combatHealth.Remove( disconnectedCharacter );
 		_projectionIndex.InvalidateRuntimeDependency( "roster-membership", "global" );
@@ -494,6 +519,8 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 			ObserveRestraintTargets();
 		}
 		if ( _presentationInvalidation.IsRefreshDue( now ) ) PublishDuePresentation( now );
+		foreach ( var receipt in await _worldReconciler.ReconcileDueAsync( cancellationToken ) )
+			LogWorldItemReconciliation( receipt, "maintenance" );
 		if ( IsVerification && !_probeStarted )
 		{
 			cancellationToken.ThrowIfCancellationRequested();
@@ -507,37 +534,181 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 	{
 		if ( _disposed ) return;
 		_disposed = true;
-		await _maintenance.DisposeAsync();
-		if ( _sessions is not null ) _sessions.SessionRevoked -= OnInteractionSessionRevoked;
-		CancelAllTimedActionsForLifecycle();
-		if ( _scanner is not null )
-			foreach ( var connectionId in _clients.Keys.ToArray() )
-				TrackLifecycle( _scanner.DisconnectAsync( connectionId ).AsTask() );
-		foreach ( var connectionId in _clients.Keys.ToArray() ) _interactions?.Disconnected( connectionId );
-		Task[] pending;
-		lock ( _lifecycleSync ) pending = _pendingLifecycle.ToArray();
-		foreach ( var task in pending ) await task;
-		if ( _scanner is not null ) await _scanner.DrainCleanupAsync();
-		if ( _pistol is not null )
+		var failures = new List<Exception>();
+
+		try { await _maintenance.DisposeAsync(); }
+		catch ( Exception exception ) { RecordShutdownFailure( failures, "maintenance", exception ); }
+
+		try
 		{
-			var reconciledPistols = await _pistol.ReconcileRaisedPistolsAsync();
-			if ( reconciledPistols.Failed )
-				Log.Error( $"HL2RP pistol shutdown reconciliation failed: {reconciledPistols.Error!.Message}" );
-			else if ( reconciledPistols.Value.Commit is not null )
-				_projectionIndex.Apply( reconciledPistols.Value.Commit, _repositories );
+			if ( _sessions is not null ) _sessions.SessionRevoked -= OnInteractionSessionRevoked;
+			CancelAllTimedActionsForLifecycle();
+			if ( _scanner is not null )
+				foreach ( var connectionId in _clients.Keys.ToArray() )
+					TrackLifecycle(
+						$"scanner-shutdown:{connectionId.Value:D}",
+						() => _scanner.DisconnectAsync( connectionId ).AsTask() );
+			foreach ( var connectionId in _clients.Keys.ToArray() )
+				_interactions?.Disconnected( connectionId );
 		}
-		_recoverySnapshots.CompleteQuiescedShutdown(
-			CaptureRecoverySnapshot,
-			static marker => Log.Info( marker ) );
-		foreach ( var binding in _clients.Values ) _ = binding.Player.HostStripPlayableBody();
-		foreach ( var worldObject in _worldObjects.Values )
-			if ( worldObject.IsValid() ) worldObject.Destroy();
-		_worldObjects.Clear();
-		if ( _verificationActor?.Body is GameObject verificationBody && verificationBody.IsValid() )
-			verificationBody.Destroy();
-		_verificationActor = null;
-		_entitlementQueries.Clear();
-		_clients.Clear();
+		catch ( Exception exception ) { RecordShutdownFailure( failures, "session-revocation", exception ); }
+		finally { _lifecycleOperations.StopAdmission(); }
+
+		try
+		{
+			var lifecycleDrain = await _lifecycleOperations.DrainAsync();
+			foreach ( var failure in lifecycleDrain.Failures )
+				RecordShutdownFailure(
+					failures,
+					$"lifecycle:{failure.Name}",
+					failure.Exception );
+		}
+		catch ( Exception exception ) { RecordShutdownFailure( failures, "lifecycle-drain", exception ); }
+
+		try
+		{
+			if ( _scanner is not null )
+			{
+				var scannerDrain = await _scanner.DrainCleanupAsync();
+				foreach ( var recovery in scannerDrain.RecoveryHandles )
+					RecordShutdownFailure(
+						failures,
+						$"scanner-cleanup:{recovery.SessionId.Value:D}",
+						new InvalidOperationException(
+							$"Scanner '{recovery.ScannerId.Value:D}' cleanup remains unresolved after " +
+							$"{recovery.Attempts} attempts: {recovery.LastError.Message}" ) );
+				foreach ( var flush in scannerDrain.InputFlushFailures )
+					RecordShutdownFailure(
+						failures,
+						$"scanner-input-flush:{flush.SessionId.Value:D}",
+						new InvalidOperationException(
+							$"Scanner '{flush.ScannerId.Value:D}' input sequence {flush.Sequence} was not flushed: " +
+							flush.Error.Message ) );
+			}
+		}
+		catch ( Exception exception ) { RecordShutdownFailure( failures, "scanner", exception ); }
+
+		try
+		{
+			if ( _pistol is not null )
+			{
+				var reconciledPistols = await _pistol.ReconcileRaisedPistolsAsync();
+				if ( reconciledPistols.Failed )
+					throw new InvalidOperationException( reconciledPistols.Error!.Message );
+				if ( reconciledPistols.Value.Commit is not null )
+					_projectionIndex.Apply( reconciledPistols.Value.Commit, _repositories );
+			}
+		}
+		catch ( Exception exception ) { RecordShutdownFailure( failures, "pistol", exception ); }
+
+		try
+		{
+			var worldDrain = await _worldReconciler.DrainAsync();
+			foreach ( var receipt in worldDrain.Attempts ) LogWorldItemReconciliation( receipt, "shutdown" );
+			if ( !worldDrain.IsClean )
+				throw new InvalidOperationException(
+					$"World-item reconciliation has {worldDrain.PendingItems.Count} unresolved desired states." );
+		}
+		catch ( Exception exception ) { RecordShutdownFailure( failures, "world-reconciliation", exception ); }
+
+		try
+		{
+			foreach ( var entry in _worldObjects.ToArray() )
+			{
+				try
+				{
+					if ( entry.Value.IsValid() ) entry.Value.Destroy();
+					_worldObjects.Remove( entry.Key );
+				}
+				catch ( Exception exception )
+				{
+					RecordShutdownFailure( failures, $"world-object:{entry.Key.Value:D}", exception );
+				}
+			}
+		}
+		catch ( Exception exception ) { RecordShutdownFailure( failures, "world-cleanup", exception ); }
+
+		try
+		{
+			foreach ( var binding in _clients.Values )
+			{
+				try
+				{
+					var stripped = binding.Player.HostStripAuthoritativeBody();
+					if ( stripped.Failed ) throw new InvalidOperationException( stripped.Error!.Message );
+				}
+				catch ( Exception exception )
+				{
+					RecordShutdownFailure(
+						failures,
+						$"body:{binding.Connection.Id}",
+						exception );
+				}
+			}
+			try
+			{
+				if ( _verificationActor?.Body is GameObject verificationBody && verificationBody.IsValid() )
+					verificationBody.Destroy();
+			}
+			catch ( Exception exception )
+			{
+				RecordShutdownFailure( failures, "verification-body", exception );
+			}
+		}
+		catch ( Exception exception ) { RecordShutdownFailure( failures, "body-cleanup", exception ); }
+		finally
+		{
+			foreach ( var connectionId in _clients.Keys )
+			{
+				_characterLifecycle.Close( connectionId );
+				_access.RevokeConnection( connectionId );
+			}
+			if ( IsVerification ) _access.RevokeConnection( VerificationConnectionId );
+			_verificationActor = null;
+			_entitlementQueries.Clear();
+			_clients.Clear();
+		}
+
+		if ( failures.Count == 0 )
+		{
+			try { _pendingShutdownSnapshot = CaptureRecoverySnapshot(); }
+			catch ( Exception exception ) { RecordShutdownFailure( failures, "recovery-snapshot", exception ); }
+		}
+
+		if ( failures.Count > 0 )
+			throw new AggregateException( "HL2RP host did not quiesce cleanly.", failures );
+	}
+
+	public OperationResult CompleteQuiescedShutdown( PersistenceShutdownResult persistenceShutdown )
+	{
+		ArgumentNullException.ThrowIfNull( persistenceShutdown );
+		if ( _shutdownEvidenceCompleted ) return OperationResult.Success();
+		if ( !_disposed || _pendingShutdownSnapshot is null )
+			return OperationResult.Failure(
+				ErrorCode.Conflict,
+				"HL2RP shutdown evidence was requested before application cleanup completed." );
+		if ( !persistenceShutdown.IsClean )
+			return OperationResult.Failure(
+				ErrorCode.InternalError,
+				"HL2RP shutdown evidence requires a clean persistence shutdown." );
+		try
+		{
+			HL2RPRecoverySnapshot snapshot = _pendingShutdownSnapshot;
+			var completed = _recoverySnapshots.CompleteAfterPersistence(
+				persistenceShutdown,
+				snapshot,
+				static marker => Log.Info( marker ) );
+			if ( completed.Failed ) return completed;
+			_pendingShutdownSnapshot = null;
+			_shutdownEvidenceCompleted = true;
+			return OperationResult.Success();
+		}
+		catch ( Exception exception )
+		{
+			return OperationResult.Failure(
+				ErrorCode.InternalError,
+				$"HL2RP shutdown evidence could not be emitted: {exception.Message}" );
+		}
 	}
 
 	private HL2RPRecoverySnapshot CaptureRecoverySnapshot() => new(
@@ -546,9 +717,19 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 			_repositories,
 			_context.Configuration.Snapshot() ) );
 
-	private void TrackLifecycle( Task task )
+	private void TrackLifecycle( string name, Func<Task> operation )
 	{
-		lock ( _lifecycleSync ) _pendingLifecycle.Add( task );
+		if ( !_lifecycleOperations.TryStartTask( name, operation ) )
+			Log.Warning( $"HL2RP lifecycle operation '{name}' was rejected because shutdown admission is closed." );
+	}
+
+	private static void RecordShutdownFailure(
+		ICollection<Exception> failures,
+		string stage,
+		Exception exception )
+	{
+		failures.Add( new InvalidOperationException( $"HL2RP shutdown stage '{stage}' failed.", exception ) );
+		Log.Error( exception, $"HL2RP_SHUTDOWN_STAGE_FAILED stage={stage}" );
 	}
 
 	private void OnInteractionSessionRevoked( InteractionSession session )
@@ -611,6 +792,13 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 		CommandProjectionDelta projectionDelta,
 		CancellationToken cancellationToken )
 	{
+		var connectionId = new ConnectionId( actor.Connection.Id );
+		if ( !_characterLifecycle.TryBeginOperation(
+			connectionId, characterId, out var lifecycleEpoch, out var lifecycleOperation ) )
+			return OperationResult.Failure(
+				ErrorCode.Conflict,
+				"Character lifecycle work is already in progress for this connection or character." );
+		using var reservedLifecycle = lifecycleOperation!;
 		var document = _repositories.Characters.Find( DomainKeys.Character( characterId ) );
 		if ( document is null || document.Value.AccountId != actor.AccountId )
 			return OperationResult.Failure( ErrorCode.NotFound, "Character was not found for this account." );
@@ -621,7 +809,6 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 			return OperationResult.Failure( ErrorCode.ConfigurationInvalid, "Character model does not resolve." );
 		var main = MainInventory( characterId );
 		if ( main is null ) return OperationResult.Failure( ErrorCode.NotFound, "Character main inventory was not found." );
-		var connectionId = new ConnectionId( actor.Connection.Id );
 		var admission = HL2RPCharacterLoadAdmission.Validate(
 			connectionId,
 			characterId,
@@ -629,11 +816,9 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 				pair.Key, pair.Value.CharacterId ) ) );
 		if ( admission.Failed ) return admission;
 		var previous = FindActiveCharacter( connectionId );
-		var body = actor.Player.HostPreparePlayableBody( candidate =>
+		var body = actor.Player.HostPrepareAuthoritativeBody( candidate =>
 		{
-			candidate.WorldTransform = actor.Player.GameObject.WorldTransform;
-			ConfigureForcefieldCollisionTags( candidate, document.Value );
-			candidate.AddComponent<PlayerController>();
+			ConfigureAuthoritativePlayerBody( candidate, document.Value );
 			var renderer = candidate.AddComponent<SkinnedModelRenderer>();
 			renderer.Model = Model.Load( modelPath.Value );
 		} );
@@ -668,6 +853,11 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 				return Failure( stagedPistols.Error! );
 			}
 		}
+		if ( !_characterLifecycle.IsCurrent( connectionId, lifecycleEpoch ) )
+		{
+			await HL2RPUnitOfWork.DisposeAsync( unitOfWork );
+			return OperationResult.Failure( ErrorCode.Conflict, "Character load was superseded by a later lifecycle request." );
+		}
 		var committed = await HL2RPUnitOfWork.CommitAndDisposeAsync( unitOfWork, cancellationToken );
 		if ( !committed.Succeeded ) return CombatPersistence.Failure( committed.Error! );
 
@@ -698,7 +888,8 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 			}
 		}
 
-		if ( !_clients.TryGetValue( connectionId, out var currentBinding ) ||
+		if ( !_characterLifecycle.IsCurrent( connectionId, lifecycleEpoch ) ||
+			!_clients.TryGetValue( connectionId, out var currentBinding ) ||
 			currentBinding.AccountId != actor.AccountId ||
 			!ReferenceEquals( currentBinding.Player, actor.Player ) ||
 			currentBinding.CharacterId != previous?.Id )
@@ -706,15 +897,30 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 			Log.Info(
 				$"HL2RP_LOAD_BINDING_CHANGED_AFTER_COMMIT connection={connectionId.Value:D} " +
 				$"character={characterId.Value:D} sequence={committed.Value!.Sequence}" );
-			return OperationResult.Success();
+			return OperationResult.Failure(
+				ErrorCode.Conflict, "Character load was superseded after its durable preparation committed." );
 		}
-
-		if ( !preparedBody.TryActivate( out _ ) )
+		var finalAdmission = HL2RPCharacterLoadAdmission.Validate(
+			connectionId,
+			characterId,
+			_clients.Select( pair => new HL2RPActiveCharacterBinding(
+				pair.Key, pair.Value.CharacterId ) ) );
+		if ( finalAdmission.Failed )
 		{
 			Log.Info(
-				$"HL2RP_LOAD_LIFECYCLE_ENDED_AFTER_COMMIT connection={connectionId.Value:D} " +
+				$"HL2RP_LOAD_TARGET_CLAIMED_AFTER_COMMIT connection={connectionId.Value:D} " +
 				$"character={characterId.Value:D} sequence={committed.Value!.Sequence}" );
-			return OperationResult.Success();
+			return finalAdmission;
+		}
+
+		var activatedBody = preparedBody.TryActivate();
+		if ( activatedBody.Failed )
+		{
+			Log.Error(
+				$"HL2RP_LOAD_BODY_ACTIVATION_FAILED connection={connectionId.Value:D} " +
+				$"character={characterId.Value:D} sequence={committed.Value!.Sequence} " +
+				$"message={activatedBody.Error!.Message}" );
+			return Failure( activatedBody.Error );
 		}
 		_itemActionPresentations.Remove( connectionId );
 		_civicSubjects.ClearConnection( connectionId );
@@ -744,6 +950,21 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 		CancellationToken cancellationToken )
 	{
 		var connectionId = new ConnectionId( actor.Connection.Id );
+		if ( !_characterLifecycle.TryBeginOperation(
+			connectionId, characterId, out var lifecycleEpoch, out var lifecycleOperation ) )
+			return OperationResult.Failure(
+				ErrorCode.Conflict,
+				"Character lifecycle work is already in progress for this connection or character." );
+		using var reservedLifecycle = lifecycleOperation!;
+		var admission = HL2RPCharacterLoadAdmission.Validate(
+			connectionId,
+			characterId,
+			_clients.Select( pair => new HL2RPActiveCharacterBinding(
+				pair.Key, pair.Value.CharacterId ) ) );
+		if ( admission.Failed )
+			return OperationResult.Failure(
+				ErrorCode.Conflict,
+				"An active character cannot be deleted from another connection." );
 		var deletedInventories = _projectionIndex.InventoriesOwnedBy( characterId );
 		var deletedItems = deletedInventories.SelectMany( _projectionIndex.ItemsIn ).Distinct().ToArray();
 		var deletedReferences = _projectionIndex.CharacterReferenceKeys( characterId );
@@ -759,7 +980,8 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 		projectionDelta.Observe( deleted.Value.Commit );
 		_civicSubjects.ClearSubject( characterId );
 		_civicSubjects.ClearConnection( connectionId );
-		if ( _clients[connectionId].CharacterId == characterId ) UnloadBinding( connectionId, characterId );
+		if ( _characterLifecycle.IsCurrent( connectionId, lifecycleEpoch ) &&
+			_clients[connectionId].CharacterId == characterId ) UnloadBinding( connectionId, characterId );
 		SendCharacterList( actor.Connection, actor.AccountId );
 		return OperationResult.Success();
 	}
@@ -770,6 +992,11 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 		CancellationToken cancellationToken )
 	{
 		var connectionId = new ConnectionId( actor.Connection.Id );
+		if ( !_characterLifecycle.TryBeginOperation(
+			connectionId, null, out var lifecycleEpoch, out var lifecycleOperation ) )
+			return OperationResult.Failure(
+				ErrorCode.Conflict, "Character lifecycle work is already in progress for this connection." );
+		using var reservedLifecycle = lifecycleOperation!;
 		if ( _clients[connectionId].CharacterId is CharacterId characterId )
 		{
 			CancelTimedActionsForLifecycle( connectionId, characterId );
@@ -778,6 +1005,9 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 				projectionDelta,
 				cancellationToken );
 			if ( cleared.Failed ) return cleared;
+			if ( !_characterLifecycle.IsCurrent( connectionId, lifecycleEpoch ) )
+				return OperationResult.Failure(
+					ErrorCode.Conflict, "Character unload was superseded by a later lifecycle request." );
 			UnloadBinding( connectionId, characterId );
 		}
 		return OperationResult.Success();
@@ -838,7 +1068,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 		_itemActionPresentations.Remove( connectionId );
 		_civicSubjects.ClearConnection( connectionId );
 		var binding = _clients[connectionId];
-		_ = binding.Player.HostStripPlayableBody();
+		_ = binding.Player.HostStripAuthoritativeBody();
 		SetBindingCharacter( connectionId, null );
 		_combatHealth.Remove( characterId );
 		RefreshLiveConnection( connectionId );
@@ -1051,7 +1281,9 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 	{
 		var actor = RequireInventoryActor( rpc );
 		if ( actor.Failed ) return Failure( actor.Error! );
-		var transform = DropTransform( rpc.Player.PlayableBody ?? rpc.Player.GameObject );
+		if ( !rpc.Player.TryGetUsableAuthoritativeBody( out var authoritativeBody ) )
+			return OperationResult.Failure( ErrorCode.NotFound, "Authoritative drop body is unavailable." );
+		var transform = DropTransform( authoritativeBody );
 		if ( !IsFinite( transform ) )
 			return OperationResult.Failure( ErrorCode.InvalidArgument, "Authoritative drop transform is not finite." );
 		var result = await _worldItems.DropCommittedAsync(
@@ -1065,7 +1297,11 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 				Log.Warning( $"HL2RP_DROP_DEGRADED item={command.ItemId.Value:D} " +
 					$"stage=bag_invalidation message={exception.Message}" );
 			}
-			LogWorldItemBoundaryError( command.ItemId, "drop_restore", RestoreWorldItem( command.ItemId ) );
+			var reconciled = await _worldReconciler.ReconcileCommittedAsync(
+				command.ItemId,
+				CancellationToken.None );
+			LogWorldItemReconciliation( reconciled, "drop" );
+			return WorldItemCommandResult( reconciled );
 		}
 		return Untyped( result );
 	}
@@ -1089,16 +1325,11 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 				Log.Warning( $"HL2RP_PICKUP_DEGRADED item={command.ItemId.Value:D} " +
 					$"stage=bag_invalidation message={exception.Message}" );
 			}
-			try
-			{
-				if ( _worldObjects.Remove( command.ItemId, out var worldObject ) && worldObject.IsValid() )
-					worldObject.Destroy();
-			}
-			catch ( Exception exception )
-			{
-				Log.Warning( $"HL2RP_PICKUP_DEGRADED item={command.ItemId.Value:D} " +
-					$"stage=world_destroy message={exception.Message}" );
-			}
+			var reconciled = await _worldReconciler.ReconcileCommittedAsync(
+				command.ItemId,
+				CancellationToken.None );
+			LogWorldItemReconciliation( reconciled, "pickup" );
+			return WorldItemCommandResult( reconciled );
 		}
 		return Untyped( result );
 	}
@@ -1780,7 +2011,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 			sessionId, sequence.Value, forward.Value, right.Value, up.Value, yaw.Value, pitch.Value ), cancellationToken );
 		if ( applied.Succeeded )
 		{
-			projectionDelta.Observe( applied.Value );
+			if ( applied.Value.Commit is not null ) projectionDelta.Observe( applied.Value.Commit );
 			LogScannerBoundaryError( applied.Value.BoundaryError );
 		}
 		return Untyped( applied );
@@ -1910,11 +2141,9 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 		{
 			// Body and grant are prepared while both the death state and the respawn
 			// phase guard deny commands. Clearing death is the final authority flip.
-			var body = binding.Player.HostBuildPlayableBody( candidate =>
+			var body = binding.Player.HostBuildAuthoritativeBody( candidate =>
 			{
-				candidate.WorldTransform = binding.Player.GameObject.WorldTransform;
-				ConfigureForcefieldCollisionTags( candidate, character );
-				candidate.AddComponent<PlayerController>();
+				ConfigureAuthoritativePlayerBody( candidate, character );
 				candidate.AddComponent<SkinnedModelRenderer>().Model = Model.Load( modelPath.Value );
 			} );
 			if ( body.Failed ) return Failure( body.Error! );
@@ -1933,7 +2162,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 			}
 			catch ( Exception exception )
 			{
-				_ = binding.Player.HostStripPlayableBody();
+				_ = binding.Player.HostStripAuthoritativeBody();
 				Log.Error( exception, "Failed to restore the active-character inventory grant." );
 				return OperationResult.Failure( ErrorCode.InternalError, "Respawn authority could not be restored." );
 			}
@@ -1942,7 +2171,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 			if ( respawned.Failed )
 			{
 				_access.RevokeCharacter( actor.ConnectionId, actor.CharacterId );
-				_ = binding.Player.HostStripPlayableBody();
+				_ = binding.Player.HostStripAuthoritativeBody();
 				PublishConnections( new[] { actor.ConnectionId }, invalidateRuntime: true );
 				return Failure( respawned.Error! );
 			}
@@ -2004,7 +2233,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 	private HL2RPInteractionActorState? ResolveInteractionActorState( ConnectionId connectionId )
 	{
 		var connected = ResolveActorState( connectionId );
-		if ( connected is not null && connected.Value.Player.PlayableBody is GameObject body )
+		if ( connected is not null && connected.Value.Player.TryGetUsableAuthoritativeBody( out var body ) )
 			return new HL2RPInteractionActorState(
 				connected.Value.Account, connected.Value.Character, body, connected.Value.Player.IsDead );
 		if ( _verificationActor is not VerificationActorBinding verification ||
@@ -2017,13 +2246,16 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 			: new HL2RPInteractionActorState( verification.AccountId, character, verificationBody, false );
 	}
 
-	private HexPlayerBody? FindPlayer( CharacterId characterId ) =>
-		_clients.Values.FirstOrDefault( value => value.CharacterId == characterId )?.Player;
+	private HexPlayerBody? FindPlayer( CharacterId characterId )
+	{
+		var player = _clients.Values.FirstOrDefault( value => value.CharacterId == characterId )?.Player;
+		return player is not null && player.TryGetUsableAuthoritativeBody( out _ ) ? player : null;
+	}
 
 	private WorldPoint? ActorPosition( InventoryActor actor )
 	{
-		var body = FindPlayer( actor.CharacterId )?.PlayableBody;
-		if ( body is null ) return null;
+		var player = FindPlayer( actor.CharacterId );
+		if ( player is null || !player.TryGetUsableAuthoritativeBody( out var body ) ) return null;
 		var position = body.WorldPosition;
 		return new WorldPoint( position.x, position.y, position.z );
 	}
@@ -2032,8 +2264,21 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 	{
 		var start = new Vector3( actor.X, actor.Y, actor.Z );
 		var end = new Vector3( target.X, target.Y, target.Z );
-		var trace = _context.Scene.Trace.Ray( start, end ).Run();
+		var trace = _context.Scene.Trace.Ray( start, end ).WithoutTags( "prediction" ).Run();
 		return !trace.Hit || trace.Distance >= Vector3.DistanceBetween( start, end ) - 32f;
+	}
+
+	private bool HasBodyLineOfSight( GameObject actor, GameObject target )
+	{
+		var start = actor.WorldPosition;
+		var end = target.WorldPosition;
+		var trace = _context.Scene.Trace.Ray( start, end )
+			.IgnoreGameObjectHierarchy( actor.Root )
+			.WithoutTags( "prediction" )
+			.Run();
+		return !trace.Hit ||
+			HL2RPObjectHierarchy.Contains( target, trace.GameObject, current => current.Parent ) ||
+			trace.Distance >= Vector3.DistanceBetween( start, end ) - 32f;
 	}
 
 	private PolicyPipeline<T> RequirePolicy<T>()
@@ -2079,7 +2324,9 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 
 	private static WorldTransformRecord DropTransform( GameObject gameObject )
 	{
-		var position = gameObject.WorldPosition + gameObject.WorldTransform.Forward * 48f + Vector3.Up * 24f;
+		var forward = gameObject.Components.Get<PlayerController>()?.EyeAngles.ToRotation().Forward ??
+			gameObject.WorldTransform.Forward;
+		var position = gameObject.WorldPosition + forward * 48f + Vector3.Up * 24f;
 		var rotation = gameObject.WorldRotation;
 		return new WorldTransformRecord
 		{
@@ -2159,8 +2406,8 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 			return;
 		}
 		var character = FindActiveCharacter( connectionId );
-		var body = binding.Player.PlayableBody;
-		if ( character is null || body is null )
+		var hasUsableBody = binding.Player.TryGetUsableAuthoritativeBody( out var body );
+		if ( character is null || !hasUsableBody )
 		{
 			_chatPositions.Apply( version, connectionId, null );
 			_chatAuthorities.Apply( version, connectionId, null );
@@ -2198,7 +2445,8 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 		{
 			foreach ( var pair in _clients )
 			{
-				if ( pair.Value.Player.PlayableBody != current || pair.Value.CharacterId is not CharacterId characterId ) continue;
+				if ( !pair.Value.Player.TryGetUsableAuthoritativeBody( out var body ) ||
+					body != current || pair.Value.CharacterId is not CharacterId characterId ) continue;
 				return characterId.Value.ToString( "D" );
 			}
 		}
@@ -2989,23 +3237,24 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 
 	private CharacterRecord? NearestCharacterTarget( CharacterId viewerId )
 	{
-		var viewerBody = FindPlayer( viewerId )?.PlayableBody;
-		if ( viewerBody is null ) return null;
-		return _clients.Values
-			.Where( value => value.CharacterId is CharacterId id && id != viewerId && value.Player.PlayableBody is not null )
-			.Select( value => new
-			{
-				Character = _repositories.Characters.Find( DomainKeys.Character( value.CharacterId!.Value ) )?.Value,
-				Body = value.Player.PlayableBody!,
-				Distance = Vector3.DistanceBetween( viewerBody.WorldPosition, value.Player.PlayableBody!.WorldPosition )
-			} )
-			.Where( value => value.Character is not null && value.Distance <= 130f &&
-				HasLineOfSight(
-					new WorldPoint( viewerBody.WorldPosition.x, viewerBody.WorldPosition.y, viewerBody.WorldPosition.z ),
-					new WorldPoint( value.Body.WorldPosition.x, value.Body.WorldPosition.y, value.Body.WorldPosition.z ) ) )
-			.OrderBy( value => value.Distance )
-			.Select( value => value.Character )
-			.FirstOrDefault();
+		var viewer = FindPlayer( viewerId );
+		if ( viewer is null || !viewer.TryGetUsableAuthoritativeBody( out var viewerBody ) ) return null;
+		CharacterRecord? nearest = null;
+		var nearestDistance = float.MaxValue;
+		foreach ( var binding in _clients.Values )
+		{
+			if ( binding.CharacterId is not CharacterId candidateId || candidateId == viewerId ||
+				!binding.Player.TryGetUsableAuthoritativeBody( out var candidateBody ) ) continue;
+			var character = _repositories.Characters.Find( DomainKeys.Character( candidateId ) )?.Value;
+			if ( character is null ) continue;
+			var distance = Vector3.DistanceBetween( viewerBody.WorldPosition, candidateBody.WorldPosition );
+			if ( distance > 130f || distance >= nearestDistance ||
+				!HasBodyLineOfSight( viewerBody, candidateBody ) )
+				continue;
+			nearest = character;
+			nearestDistance = distance;
+		}
+		return nearest;
 	}
 
 	private SchemaViewSnapshot? VendorView( CharacterRecord character, InteractionSession session, long revision )
@@ -3066,23 +3315,103 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 			} );
 	}
 
-	private void RestoreWorldItems()
-	{
-		foreach ( var world in _worldItems.LoadWorldItems() )
-			LogWorldItemBoundaryError( world.ItemId, "startup_restore", RestoreWorldItem( world.ItemId ) );
-	}
+	WorldItemBoundaryAttempt IWorldItemReconciliationBoundary.ApplyDesiredState( ItemId itemId ) =>
+		ApplyDesiredWorldItemState( itemId );
 
-	private OperationError? RestoreWorldItem( ItemId itemId )
+	private WorldItemBoundaryAttempt ApplyDesiredWorldItemState( ItemId itemId )
 	{
-		if ( _worldObjects.ContainsKey( itemId ) ) return null;
 		var world = _repositories.WorldItems.Find( DomainKeys.WorldItem( itemId ) )?.Value;
+		if ( world is null )
+		{
+			if ( !_worldObjects.TryGetValue( itemId, out var existing ) )
+				return WorldItemBoundaryAttempt.Applied();
+			if ( !existing.IsValid() )
+			{
+				_worldObjects.Remove( itemId );
+				return WorldItemBoundaryAttempt.Applied();
+			}
+			try
+			{
+				existing.Enabled = false;
+				existing.Destroy();
+				_worldObjects.Remove( itemId );
+				return WorldItemBoundaryAttempt.Applied();
+			}
+			catch ( Exception exception )
+			{
+				return WorldItemBoundaryAttempt.Transient( new OperationError(
+					ErrorCode.InternalError,
+					$"Committed world-item removal could not be published: {exception.Message}" ) );
+			}
+		}
+
 		var item = _repositories.Items.Find( DomainKeys.Item( itemId ) )?.Value;
-		if ( world is null || item is null || !_context.Schema.Items.TryGet( item.Definition.Value, out var definition ) ||
-			string.IsNullOrWhiteSpace( definition!.WorldModel ) || !_worldModels.IsValidModel( definition.WorldModel ) ) return null;
+		if ( item is null )
+			return WorldItemBoundaryAttempt.Permanent( new OperationError(
+				ErrorCode.NotFound,
+				$"World item '{itemId}' references an item record that does not exist." ) );
+		if ( !_context.Schema.Items.TryGet( item.Definition.Value, out var definition ) )
+			return WorldItemBoundaryAttempt.Permanent( new OperationError(
+				ErrorCode.ConfigurationInvalid,
+				$"World item '{itemId}' references unknown definition '{item.Definition.Value}'." ) );
+		if ( string.IsNullOrWhiteSpace( definition!.WorldModel ) ||
+			!_worldModels.IsValidModel( definition.WorldModel ) )
+			return WorldItemBoundaryAttempt.Permanent( new OperationError(
+				ErrorCode.ConfigurationInvalid,
+				$"World item '{itemId}' has no valid configured world model." ) );
+
+		if ( _worldObjects.TryGetValue( itemId, out var cached ) )
+		{
+			if ( cached.IsValid() )
+			{
+				if ( !cached.Network.Active )
+				{
+					try
+					{
+						cached.Destroy();
+						_worldObjects.Remove( itemId );
+					}
+					catch ( Exception exception )
+					{
+						return WorldItemBoundaryAttempt.Transient( new OperationError(
+							ErrorCode.InternalError,
+							$"A partial world-item object could not be destroyed: {exception.Message}" ) );
+					}
+				}
+				else
+				{
+					try
+					{
+						cached.WorldPosition = new Vector3(
+							world.Transform.PositionX,
+							world.Transform.PositionY,
+							world.Transform.PositionZ );
+						cached.WorldRotation = new Rotation(
+							world.Transform.RotationX,
+							world.Transform.RotationY,
+							world.Transform.RotationZ,
+							world.Transform.RotationW );
+						var cachedRenderer = cached.Components.Get<ModelRenderer>();
+						if ( cachedRenderer is not null ) cachedRenderer.Model = Model.Load( definition.WorldModel );
+						cached.Enabled = true;
+						cached.Network.Refresh();
+						return WorldItemBoundaryAttempt.Applied();
+					}
+					catch ( Exception exception )
+					{
+						return WorldItemBoundaryAttempt.Transient( new OperationError(
+							ErrorCode.InternalError,
+							$"Committed world-item publication could not be refreshed: {exception.Message}" ) );
+					}
+				}
+			}
+			else _worldObjects.Remove( itemId );
+		}
+
 		GameObject? gameObject = null;
 		try
 		{
-			gameObject = new GameObject( true, $"HL2RP World Item {itemId}" );
+			gameObject = new GameObject( false, $"HL2RP World Item {itemId}" );
 			gameObject.WorldPosition = new Vector3( world.Transform.PositionX, world.Transform.PositionY, world.Transform.PositionZ );
 			gameObject.WorldRotation = new Rotation(
 				world.Transform.RotationX, world.Transform.RotationY,
@@ -3093,26 +3422,73 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 			var collider = gameObject.AddComponent<BoxCollider>();
 			collider.Scale = new Vector3( 24f, 24f, 24f );
 			gameObject.AddComponent<HL2RPWorldItemPressable>().HostBind( itemId );
-			gameObject.NetworkSpawn();
+			if ( !gameObject.NetworkSpawn( new NetworkSpawnOptions
+			{
+				Owner = null!,
+				StartEnabled = false,
+				OwnerTransfer = OwnerTransfer.Fixed,
+				OrphanedMode = NetworkOrphaned.Destroy
+			} ) )
+			{
+				gameObject.Destroy();
+				return WorldItemBoundaryAttempt.Transient( new OperationError(
+					ErrorCode.InternalError,
+					"Committed world item could not be network-published." ) );
+			}
+			gameObject.Enabled = true;
+			gameObject.Network.Refresh();
 			_worldObjects[itemId] = gameObject;
-			return null;
+			return WorldItemBoundaryAttempt.Applied();
 		}
 		catch ( Exception exception )
 		{
-			try { if ( gameObject is not null && gameObject.IsValid() ) gameObject.Destroy(); }
-			catch ( Exception ) { }
-			_worldObjects.Remove( itemId );
-			return new OperationError(
+			if ( gameObject is not null && gameObject.IsValid() )
+			{
+				try { gameObject.Destroy(); }
+				catch ( Exception cleanupException )
+				{
+					_worldObjects[itemId] = gameObject;
+					return WorldItemBoundaryAttempt.Transient( new OperationError(
+						ErrorCode.InternalError,
+						$"Committed world item failed and its partial object could not be destroyed: " +
+						$"{exception.Message}; cleanup: {cleanupException.Message}" ) );
+				}
+			}
+			return WorldItemBoundaryAttempt.Transient( new OperationError(
 				ErrorCode.InternalError,
-				$"Committed world item could not be materialized: {exception.Message}" );
+				$"Committed world item could not be materialized: {exception.Message}" ) );
 		}
 	}
 
-	private static void LogWorldItemBoundaryError( ItemId itemId, string stage, OperationError? error )
+	private async Task ReconcileCommittedWorldItemAsync( ItemId itemId, string stage )
 	{
-		if ( error is not null )
-			Log.Warning( $"HL2RP_WORLD_ITEM_DEGRADED item={itemId.Value:D} stage={stage} " +
-				$"code={error.Code} message={error.Message}" );
+		var receipt = await _worldReconciler.ReconcileCommittedAsync( itemId, CancellationToken.None );
+		LogWorldItemReconciliation( receipt, stage );
+	}
+
+	private static OperationResult WorldItemCommandResult( WorldItemReconciliationReceipt receipt ) =>
+		receipt.Disposition switch
+		{
+			WorldItemReconciliationDisposition.Applied => OperationResult.Success(),
+			WorldItemReconciliationDisposition.CommittedPendingReconciliation => OperationResult.Failure(
+				ErrorCode.ReconciliationPending,
+				"The item change committed, but its world update is pending reconciliation; do not retry." ),
+			WorldItemReconciliationDisposition.ConfigurationFailed => OperationResult.Failure(
+				receipt.Error?.Code ?? ErrorCode.ConfigurationInvalid,
+				$"The item change committed, but its world update cannot be applied: " +
+				(receipt.Error?.Message ?? "unknown configuration failure") ),
+			_ => throw new ArgumentOutOfRangeException( nameof(receipt.Disposition) )
+		};
+
+	private static void LogWorldItemReconciliation(
+		WorldItemReconciliationReceipt receipt,
+		string stage )
+	{
+		if ( receipt.Disposition != WorldItemReconciliationDisposition.Applied )
+			Log.Warning(
+				$"HL2RP_WORLD_ITEM_DEGRADED item={receipt.ItemId.Value:D} stage={stage} " +
+				$"disposition={receipt.Disposition} attempt={receipt.Attempt} " +
+				$"code={receipt.Error?.Code} message={receipt.Error?.Message}" );
 	}
 
 	private async ValueTask RunVerificationProbeAsync()
@@ -3223,15 +3599,14 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 			throw new InvalidOperationException( "Verification character main inventory was not recovered." );
 		var modelPath = _characterModels.ResolvePath( character.Model );
 		if ( modelPath.Failed ) throw new InvalidOperationException( modelPath.Error!.Message );
-		var body = binding.Player.HostBuildPlayableBody( candidate =>
+		var body = binding.Player.HostBuildAuthoritativeBody( candidate =>
 		{
-			candidate.WorldTransform = binding.Player.GameObject.WorldTransform;
-			ConfigureForcefieldCollisionTags( candidate, character );
-			candidate.AddComponent<PlayerController>();
+			ConfigureAuthoritativePlayerBody( candidate, character );
 			candidate.AddComponent<SkinnedModelRenderer>().Model = Model.Load( modelPath.Value );
 		} );
 		if ( body.Failed ) throw new InvalidOperationException( body.Error!.Message );
 		_access.RevokeConnection( connectionId );
+		_access.OpenConnection( connectionId );
 		_access.Grant( new InventoryGrant
 		{
 			ConnectionId = connectionId,
@@ -3241,6 +3616,11 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 			Kind = InventoryGrantKind.Character
 		} );
 		SetBindingCharacter( connectionId, character.Id );
+		// The verification probe consumes host spatial authority immediately rather
+		// than returning through the normal command-publication path. Publish the
+		// canonical character snapshot now so body eligibility and the probe observe
+		// the same session state.
+		PublishConnections( new[] { connectionId }, invalidateRuntime: true );
 		return new InventoryActor( connectionId, binding.AccountId, character.Id );
 	}
 
@@ -3265,6 +3645,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 		}
 		_verificationActor = binding with { CharacterId = character.Id, Body = body };
 		_access.RevokeConnection( connectionId );
+		_access.OpenConnection( connectionId );
 		_access.Grant( new InventoryGrant
 		{
 			ConnectionId = connectionId,
@@ -3300,6 +3681,18 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 			body.Tags.Add( "combine" );
 	}
 
+	private static void ConfigureAuthoritativePlayerBody( GameObject body, CharacterRecord character )
+	{
+		ConfigureForcefieldCollisionTags( body, character );
+		var controller = body.AddComponent<PlayerController>();
+		// PlayerController leaves this editable tag set null for components created
+		// entirely at runtime. Initialize it before the body is enabled so both the
+		// generated colliders and authority traces receive the intended tags.
+		controller.BodyCollisionTags = new TagSet();
+		controller.BodyCollisionTags.Add( "playerclip" );
+		if ( body.Tags.Contains( "combine" ) ) controller.BodyCollisionTags.Add( "combine" );
+	}
+
 	internal void ClearCombatSessions( InventoryActor actor )
 	{
 		_interactions?.CharacterChanged( actor.ConnectionId, actor.CharacterId );
@@ -3315,14 +3708,19 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 		{
 			if ( subjectCharacterId == actor.CharacterId )
 				return OperationResult.Failure( ErrorCode.PolicyDenied, "A character cannot introduce themselves." );
-			var source = _owner.FindPlayer( actor.CharacterId )?.PlayableBody;
-			var target = _owner.FindPlayer( subjectCharacterId )?.PlayableBody;
-			if ( source is null || target is null )
+			var sourcePlayer = _owner.FindPlayer( actor.CharacterId );
+			var targetPlayer = _owner.FindPlayer( subjectCharacterId );
+			if ( sourcePlayer is null || targetPlayer is null ||
+				!sourcePlayer.TryGetUsableAuthoritativeBody( out var source ) ||
+				!targetPlayer.TryGetUsableAuthoritativeBody( out var target ) )
 				return OperationResult.Failure( ErrorCode.NotFound, "Encounter target is not active." );
 			if ( Vector3.DistanceBetween( source.WorldPosition, target.WorldPosition ) > 130f )
 				return OperationResult.Failure( ErrorCode.PolicyDenied, "Encounter target is out of range." );
-			var trace = _owner._context.Scene.Trace.Ray( source.WorldPosition, target.WorldPosition ).Run();
-			return !trace.Hit || trace.GameObject == target
+			var trace = _owner._context.Scene.Trace.Ray( source.WorldPosition, target.WorldPosition )
+				.IgnoreGameObjectHierarchy( source.Root )
+				.WithoutTags( "prediction" )
+				.Run();
+			return !trace.Hit || HL2RPObjectHierarchy.Contains( target, trace.GameObject, current => current.Parent )
 				? OperationResult.Success()
 				: OperationResult.Failure( ErrorCode.PolicyDenied, "Encounter target is not visible." );
 		}
@@ -3411,7 +3809,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 			if ( _owner._clients.TryGetValue( actor.ConnectionId, out var binding ) &&
 				binding.CharacterId == actor.CharacterId )
 			{
-				var stripped = binding.Player.HostStripPlayableBody();
+				var stripped = binding.Player.HostStripAuthoritativeBody();
 				if ( stripped.Failed ) Log.Error( $"Failed to strip dead player body: {stripped.Error!.Message}" );
 			}
 			_owner.RefreshLiveConnection( actor.ConnectionId );
@@ -3421,10 +3819,11 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 			_owner._presentationInvalidation.TrackDeathDeadline(
 				transition.Respawn.CharacterId, transition.Respawn.RespawnAvailableAtUtc );
 			if ( transition.DroppedPistol is not null )
-				LogWorldItemBoundaryError(
-					transition.DroppedPistol.ItemId,
-					"death_drop_restore",
-					_owner.RestoreWorldItem( transition.DroppedPistol.ItemId ) );
+				_owner.TrackLifecycle(
+					$"world-item-death-drop:{transition.DroppedPistol.ItemId.Value:D}",
+					() => _owner.ReconcileCommittedWorldItemAsync(
+						transition.DroppedPistol.ItemId,
+						"death-drop" ) );
 			// The command outcome owns publication so the fire and optional death
 			// receipts produce one assembled snapshot for the resulting revision.
 		}
@@ -3438,6 +3837,25 @@ public sealed class HL2RPHostApplication : IHexHostApplication
 	{
 		private readonly HL2RPHostApplication _owner;
 		public HL2RPScannerCommitSink( HL2RPHostApplication owner ) => _owner = owner;
+
+		public void Observe( ScannerInputPersistenceReceipt receipt )
+		{
+			try
+			{
+				_owner.PublishChanges(
+					new HL2RPPresentationChangeSet
+					{
+						Connections = new[] { receipt.Session.Actor.ConnectionId },
+						SceneEntities = new[] { receipt.Session.ScannerId }
+					},
+					receipt.Commit );
+			}
+			catch ( Exception exception )
+			{
+				Log.Error( exception,
+					$"HL2RP scanner input receipt {receipt.CommitSequence} could not be projected." );
+			}
+		}
 
 		public void Observe( ScannerPilotCleanupReceipt receipt )
 		{

@@ -42,6 +42,10 @@
 	<Compile Include="../Code/Runtime/HL2RPPresentationPlanning.cs" Link="Product/Runtime/HL2RPPresentationPlanning.cs" />
 	<Compile Include="../Code/Runtime/HL2RPProjectionIndex.cs" Link="Product/Runtime/HL2RPProjectionIndex.cs" />
 	<Compile Include="../Code/Runtime/HL2RPTimedActionOwnership.cs" Link="Product/Runtime/HL2RPTimedActionOwnership.cs" />
+	<Compile Include="../Code/Runtime/HL2RPWorldItemReconciliation.cs" Link="Product/Runtime/HL2RPWorldItemReconciliation.cs" />
+	<Compile Include="../Code/Runtime/HL2RPObjectHierarchy.cs" Link="Product/Runtime/HL2RPObjectHierarchy.cs" />
+	<Compile Include="../Code/Runtime/HL2RPCharacterLifecycleGate.cs" Link="Product/Runtime/HL2RPCharacterLifecycleGate.cs" />
+	<Compile Include="../Code/Runtime/HL2RPSceneFeatureAdmission.cs" Link="Product/Runtime/HL2RPSceneFeatureAdmission.cs" />
 	<Compile Include="../Code/Runtime/HL2RPRetryablePersistenceLease.cs" Link="Product/Runtime/HL2RPRetryablePersistenceLease.cs" />
     <Compile Include="../Code/Runtime/HL2RPCreationAvailability.cs" Link="Product/Runtime/HL2RPCreationAvailability.cs" />
     <Compile Include="../Code/UI/HL2RPPresentationFields.cs" Link="Product/UI/HL2RPPresentationFields.cs" />

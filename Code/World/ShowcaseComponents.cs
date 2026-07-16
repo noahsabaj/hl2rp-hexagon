@@ -41,8 +41,7 @@ public abstract class HL2RPSceneFeatureComponent : Component, Component.IPressab
 
 	bool IPressable.CanPress( IPressable.Event e ) =>
 		SceneEntityId is not null &&
-		e.Source is PlayerController &&
-		e.Source.Network.IsOwner &&
+		HexPlayerBody.IsLocalPredictionSource( e.Source ) &&
 		HexagonRuntimeSystem.Current?.ClientReadiness == HexRuntimeReadiness.Ready &&
 		HexagonRuntimeSystem.Current.ClientController is not null;
 

@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Hexagon.V2.Application;
 using Hexagon.V2.Domain;
@@ -18,7 +19,7 @@ namespace HL2RP.V2.Tests.Showcase.Scanner;
 public sealed class ScannerShowcaseTests
 {
 	[TestMethod]
-	public async Task BoundPilotInputIsOrderedRateLimitedCappedAndTransactional()
+	public async Task BoundPilotInputIsOrderedRateLimitedCappedAndWrittenBehind()
 	{
 		await using var environment = await ShowcaseTestEnvironment.CreateAsync();
 		var pilot = await environment.SeedCharacterAsync(300, HL2RPIds.Factions.CivilProtection,
@@ -44,6 +45,8 @@ public sealed class ScannerShowcaseTests
 		Assert.AreEqual(125f, first.Value.Motion.VelocityX);
 		Assert.AreEqual(37.5f, first.Value.Motion.YawRate);
 		Assert.AreEqual(240f, first.Value.Motion.MaximumAcceleration);
+		Assert.AreEqual(ScannerInputDurability.Pending, first.Value.Durability);
+		Assert.IsNull(first.Value.Commit);
 		Assert.AreEqual(scannerId, fixture.Limits.LastResolvedScannerId);
 		var stale = await service.ApplyInputAsync(pilot.Actor,
 			new ScannerInputIntent(pilotSession.SessionId, 1, 0, 0, 0, 0, 0));
@@ -56,17 +59,185 @@ public sealed class ScannerShowcaseTests
 		var second = await service.ApplyInputAsync(pilot.Actor,
 			new ScannerInputIntent(pilotSession.SessionId, 2, 0, 1, 0, 0, 0));
 		Assert.IsTrue(second.Succeeded, second.Error?.Message);
+		Assert.AreEqual(ScannerInputDurability.Pending, second.Value.Durability);
+		Assert.AreEqual(0L, environment.ReadScanner(scannerId).LastAcceptedInputSequence,
+			"Accepted replay state may lag durable storage by one write-behind window.");
+		Assert.AreEqual(1, service.PendingInputWriteCount);
+		Assert.AreEqual(1, service.ScheduledInputFlushCount);
 		var uncapped = await service.ApplyInputAsync(pilot.Actor,
 			new ScannerInputIntent(pilotSession.SessionId, 3, 1, 1, 0, 0, 0));
 		Assert.AreEqual(ErrorCode.PolicyDenied, uncapped.Error!.Code);
 
-		environment.Clock.Advance(ScannerPilotService.MinimumInputInterval);
 		environment.Provider.FailNextCommit();
-		var failed = await service.ApplyInputAsync(pilot.Actor,
-			new ScannerInputIntent(pilotSession.SessionId, 3, 0, 0, 1, 0, 0));
-		Assert.IsTrue(failed.Failed);
+		fixture.InputFlushDelay.ReleaseNext();
+		await WaitForScheduledInputFlushesAsync(service);
+		Assert.AreEqual(0L, environment.ReadScanner(scannerId).LastAcceptedInputSequence);
+		Assert.AreEqual(1, service.PendingInputWriteCount,
+			"A failed deferred commit must retain the latest accepted sequence.");
+		Assert.IsEmpty(fixture.CommitSink.InputReceipts);
+
+		var drained = await service.DrainCleanupAsync();
+		Assert.IsTrue(drained.Succeeded);
 		Assert.AreEqual(2L, environment.ReadScanner(scannerId).LastAcceptedInputSequence);
+		Assert.AreEqual(0, service.PendingInputWriteCount);
+		Assert.HasCount(1, fixture.CommitSink.InputReceipts);
+		Assert.AreEqual(2L, fixture.CommitSink.InputReceipts[0].Sequence);
 		Assert.HasCount(2, fixture.Motion.Applied);
+	}
+
+	[TestMethod]
+	public async Task TwentyHertzBurstCoalescesToAtMostFourSequenceCommitsPerSecond()
+	{
+		await using var environment = await ShowcaseTestEnvironment.CreateAsync();
+		var pilot = await environment.SeedCharacterAsync(314, HL2RPIds.Factions.CivilProtection,
+			HL2RPIds.Classes.Scanner);
+		var scannerId = SceneEntityId.New();
+		await environment.SeedScannerAsync(scannerId);
+		var fixture = new ScannerFixture(environment, pilot.Actor, scannerId);
+		var service = fixture.CreateService(environment);
+		var session = (await service.EnterAsync(pilot.Actor, scannerId)).Value.Session;
+		var baselineCommits = environment.Provider.SuccessfulCommitCount;
+		long sequence = 0;
+
+		for (var batch = 0; batch < 4; batch++)
+		{
+			for (var input = 0; input < 5; input++)
+			{
+				sequence++;
+				var accepted = await service.ApplyInputAsync(pilot.Actor,
+					new ScannerInputIntent(session.SessionId, sequence, 1, 0, 0, 0, 0));
+				Assert.IsTrue(accepted.Succeeded, accepted.Error?.Message);
+				environment.Clock.Advance(ScannerPilotService.MinimumInputInterval);
+			}
+
+			Assert.AreEqual(1, service.ScheduledInputFlushCount);
+			fixture.InputFlushDelay.ReleaseNext();
+			await WaitForScheduledInputFlushesAsync(service);
+		}
+
+		Assert.AreEqual(4, environment.Provider.SuccessfulCommitCount - baselineCommits);
+		Assert.AreEqual(4, fixture.InputFlushDelay.CallCount);
+		Assert.AreEqual(20L, environment.ReadScanner(scannerId).LastAcceptedInputSequence);
+		CollectionAssert.AreEqual(
+			new long[] { 5, 10, 15, 20 },
+			fixture.CommitSink.InputReceipts.Select(value => value.Sequence).ToArray());
+		Assert.AreEqual(0, service.PendingInputWriteCount);
+	}
+
+	[TestMethod]
+	public async Task ConcurrentInputsCannotBypassTheImmediateRateLimit()
+	{
+		await using var environment = await ShowcaseTestEnvironment.CreateAsync();
+		var pilot = await environment.SeedCharacterAsync(317, HL2RPIds.Factions.CivilProtection,
+			HL2RPIds.Classes.Scanner);
+		var scannerId = SceneEntityId.New();
+		await environment.SeedScannerAsync(scannerId);
+		var fixture = new ScannerFixture(environment, pilot.Actor, scannerId);
+		var service = fixture.CreateService(environment);
+		var session = (await service.EnterAsync(pilot.Actor, scannerId)).Value.Session;
+		fixture.Limits.ArmConcurrentResolveRace();
+
+		var first = Task.Run(async () => await service.ApplyInputAsync(pilot.Actor,
+			new ScannerInputIntent(session.SessionId, 1, 1, 0, 0, 0, 0)));
+		Assert.IsTrue(fixture.Limits.FirstRaceResolveEntered.Wait(TimeSpan.FromSeconds(5)),
+			"The first input did not reach the coordinated resolution point.");
+		var second = Task.Run(async () => await service.ApplyInputAsync(pilot.Actor,
+			new ScannerInputIntent(session.SessionId, 2, 0, 1, 0, 0, 0)));
+		try
+		{
+			Assert.IsTrue(fixture.Motion.FirstApplyObserved.Wait(TimeSpan.FromSeconds(5)),
+				"The first input was not accepted after both callers captured the same session state.");
+		}
+		finally
+		{
+			fixture.Limits.ReleaseSecondRaceResolve();
+		}
+
+		var firstResult = await first;
+		var secondResult = await second;
+		Assert.IsTrue(firstResult.Succeeded, firstResult.Error?.Message);
+		Assert.AreEqual(ErrorCode.PolicyDenied, secondResult.Error!.Code);
+		Assert.AreEqual(1, fixture.Motion.ApplyCount);
+		Assert.AreEqual(1L, service.ActiveSessions.Single().LastAcceptedSequence);
+		Assert.IsTrue((await service.DrainCleanupAsync()).Succeeded);
+	}
+
+	[TestMethod]
+	public async Task StaleFlushGenerationCannotClearNewerAcceptedInput()
+	{
+		await using var environment = await ShowcaseTestEnvironment.CreateAsync();
+		var pilot = await environment.SeedCharacterAsync(315, HL2RPIds.Factions.CivilProtection,
+			HL2RPIds.Classes.Scanner);
+		var scannerId = SceneEntityId.New();
+		await environment.SeedScannerAsync(scannerId);
+		var fixture = new ScannerFixture(environment, pilot.Actor, scannerId);
+		var service = fixture.CreateService(environment);
+		var session = (await service.EnterAsync(pilot.Actor, scannerId)).Value.Session;
+		var flushEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var releaseFlush = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		environment.Provider.InterleaveNextCommit(async () =>
+		{
+			flushEntered.TrySetResult();
+			await releaseFlush.Task;
+		});
+
+		Assert.IsTrue((await service.ApplyInputAsync(pilot.Actor,
+			new ScannerInputIntent(session.SessionId, 1, 1, 0, 0, 0, 0))).Succeeded);
+		fixture.InputFlushDelay.ReleaseNext();
+		await flushEntered.Task;
+		environment.Clock.Advance(ScannerPilotService.MinimumInputInterval);
+		Assert.IsTrue((await service.ApplyInputAsync(pilot.Actor,
+			new ScannerInputIntent(session.SessionId, 2, 0, 1, 0, 0, 0))).Succeeded);
+		releaseFlush.TrySetResult();
+		await WaitForAsync(
+			() => service.ScheduledInputFlushCount == 1 && fixture.InputFlushDelay.PendingCount == 1,
+			"A newer generation did not receive a replacement write-behind window.");
+
+		Assert.AreEqual(1L, environment.ReadScanner(scannerId).LastAcceptedInputSequence,
+			"The older flush may persist, but its completion must not clear the newer generation.");
+		Assert.AreEqual(1, service.PendingInputWriteCount);
+		fixture.InputFlushDelay.ReleaseNext();
+		await WaitForScheduledInputFlushesAsync(service);
+
+		Assert.AreEqual(2L, environment.ReadScanner(scannerId).LastAcceptedInputSequence);
+		Assert.AreEqual(0, service.PendingInputWriteCount);
+		Assert.HasCount(2, fixture.CommitSink.InputReceipts);
+		CollectionAssert.AreEqual(
+			new long[] { 1L, 2L },
+			fixture.CommitSink.InputReceipts.Select(static receipt => receipt.Sequence).ToArray());
+	}
+
+	[TestMethod]
+	public async Task PhotoAndCleanupTransitionsAbsorbLatestPendingSequence()
+	{
+		await using var environment = await ShowcaseTestEnvironment.CreateAsync();
+		var pilot = await environment.SeedCharacterAsync(316, HL2RPIds.Factions.CivilProtection,
+			HL2RPIds.Classes.Scanner);
+		var scannerId = SceneEntityId.New();
+		await environment.SeedScannerAsync(scannerId);
+		var fixture = new ScannerFixture(environment, pilot.Actor, scannerId);
+		var service = fixture.CreateService(environment);
+		var session = (await service.EnterAsync(pilot.Actor, scannerId)).Value.Session;
+
+		Assert.IsTrue((await service.ApplyInputAsync(pilot.Actor,
+			new ScannerInputIntent(session.SessionId, 1, 1, 0, 0, 0, 0))).Succeeded);
+		Assert.IsTrue((await service.TakePhotoAsync(pilot.Actor, session.SessionId)).Succeeded);
+		Assert.AreEqual(1L, environment.ReadScanner(scannerId).LastAcceptedInputSequence);
+		Assert.AreEqual(0, service.PendingInputWriteCount);
+		environment.Clock.Advance(ScannerPilotService.MinimumInputInterval);
+		Assert.IsTrue((await service.ApplyInputAsync(pilot.Actor,
+			new ScannerInputIntent(session.SessionId, 2, 0, 1, 0, 0, 0))).Succeeded);
+
+		Assert.IsTrue((await service.ExitAsync(pilot.Actor, session.SessionId)).Succeeded);
+		var drained = await service.DrainCleanupAsync();
+
+		Assert.IsTrue(drained.Succeeded);
+		Assert.AreEqual(2L, environment.ReadScanner(scannerId).LastAcceptedInputSequence);
+		Assert.IsNull(environment.ReadScanner(scannerId).PilotCharacterId);
+		Assert.AreEqual(0, service.PendingInputWriteCount);
+		Assert.IsEmpty(fixture.CommitSink.InputReceipts,
+			"Sequences absorbed by another durable transition must not publish duplicate commits.");
+		Assert.HasCount(1, fixture.CommitSink.Receipts);
 	}
 
 	[TestMethod]
@@ -124,13 +295,18 @@ public sealed class ScannerShowcaseTests
 			new ScannerInputIntent(entered.Value.Session.SessionId, 1, 1, 0, 0, 0, 0));
 		Assert.IsTrue(input.Succeeded, input.Error?.Message);
 		Assert.IsNotNull(input.Value.BoundaryError);
+		Assert.AreEqual(ScannerInputDurability.Pending, input.Value.Durability);
+		Assert.IsNull(input.Value.Commit);
 		var spotlight = await service.ToggleSpotlightAsync(pilot.Actor, entered.Value.Session.SessionId);
 		Assert.IsTrue(spotlight.Succeeded, spotlight.Error?.Message);
 		Assert.IsNotNull(spotlight.Value.BoundaryError);
+		Assert.AreEqual(1L, environment.ReadScanner(scannerId).LastAcceptedInputSequence,
+			"Spotlight commits must absorb the latest pending input sequence.");
+		Assert.AreEqual(0, service.PendingInputWriteCount);
 		var photo = await service.TakePhotoAsync(pilot.Actor, entered.Value.Session.SessionId);
 		Assert.IsTrue(photo.Succeeded, photo.Error?.Message);
 		Assert.IsNotNull(photo.Value.BoundaryError);
-		Assert.IsTrue(new IHL2RPCommittedOperation[] { entered.Value, input.Value, spotlight.Value, photo.Value }
+		Assert.IsTrue(new IHL2RPCommittedOperation[] { entered.Value, spotlight.Value, photo.Value }
 			.All(value => value.Commit.Documents.Count > 0));
 		fixture.Body.ThrowOnRestore = true;
 		var exited = await service.ExitAsync(pilot.Actor, entered.Value.Session.SessionId);
@@ -209,7 +385,7 @@ public sealed class ScannerShowcaseTests
 	}
 
 	[TestMethod]
-	public async Task RevocationAfterInputCommitReturnsTheDurableReceiptAndSuppressesStaleMotion()
+	public async Task RevocationDuringDeferredInputFlushCleansPilotWithoutReplayingAcceptedMotion()
 	{
 		await using var environment = await ShowcaseTestEnvironment.CreateAsync();
 		var pilot = await environment.SeedCharacterAsync(308, HL2RPIds.Factions.CivilProtection,
@@ -227,10 +403,12 @@ public sealed class ScannerShowcaseTests
 		await service.DrainCleanupAsync();
 
 		Assert.IsTrue(input.Succeeded, input.Error?.Message);
-		Assert.AreEqual(input.Value.Commit.Sequence, input.Value.CommitSequence);
-		Assert.IsEmpty(fixture.Motion.Applied,
-			"World motion must not run after the scanner session was revoked.");
+		Assert.AreEqual(ScannerInputDurability.Pending, input.Value.Durability);
+		Assert.IsNull(input.Value.Commit);
+		Assert.HasCount(1, fixture.Motion.Applied,
+			"Motion accepted while the session was current must run exactly once before deferred persistence.");
 		Assert.IsNull(environment.ReadScanner(scannerId).PilotCharacterId);
+		Assert.HasCount(1, fixture.CommitSink.InputReceipts);
 		Assert.HasCount(1, fixture.CommitSink.Receipts);
 		Assert.AreEqual("post_commit_revoke", fixture.CommitSink.Receipts[0].Reason);
 	}
@@ -322,7 +500,7 @@ public sealed class ScannerShowcaseTests
 	}
 
 	[TestMethod]
-	public async Task CleanupRetainsAddressabilityAcrossRetryRoundsThenPrunesItsCompletedTask()
+	public async Task CleanupStopsAfterEightAttemptsAndExplicitRecoveryStartsANewBudget()
 	{
 		await using var environment = await ShowcaseTestEnvironment.CreateAsync();
 		var pilot = await environment.SeedCharacterAsync(305, HL2RPIds.Factions.CivilProtection,
@@ -330,27 +508,45 @@ public sealed class ScannerShowcaseTests
 		var scannerId = SceneEntityId.New();
 		await environment.SeedScannerAsync(scannerId);
 		var fixture = new ScannerFixture(environment, pilot.Actor, scannerId);
-		fixture.CleanupDelay.Block = true;
 		var service = fixture.CreateService(environment);
 		var entered = (await service.EnterAsync(pilot.Actor, scannerId)).Value.Session;
 		environment.Provider.ConflictNextCommits(ScannerPilotService.CleanupMaximumAttempts + 2);
 
-		var exit = service.ExitAsync(pilot.Actor, entered.SessionId).AsTask();
+		var failed = await service.ExitAsync(pilot.Actor, entered.SessionId);
+		var drained = await service.DrainCleanupAsync();
 
+		Assert.AreEqual(ErrorCode.Conflict, failed.Error!.Code);
 		Assert.AreEqual(pilot.Actor.CharacterId, environment.ReadScanner(scannerId).PilotCharacterId);
 		Assert.IsEmpty(service.ActiveSessions);
 		Assert.AreEqual(1, service.TerminatingSessionCount);
-		Assert.AreEqual(1, service.PendingCleanupCount);
+		Assert.AreEqual(0, service.PendingCleanupCount);
+		Assert.AreEqual(1, service.PendingRecoveryCount);
 		Assert.AreEqual(1, fixture.Body.RestoreCount);
-		Assert.AreEqual(1, fixture.CleanupDelay.CallCount);
-		fixture.CleanupDelay.Release();
+		Assert.AreEqual(ScannerPilotService.CleanupMaximumAttempts - 1, fixture.CleanupDelay.CallCount);
+		Assert.IsFalse(drained.Succeeded);
+		Assert.HasCount(1, drained.RecoveryHandles);
+		var recovery = drained.RecoveryHandles[0];
+		Assert.AreEqual(entered.SessionId, recovery.SessionId);
+		Assert.AreEqual(pilot.Actor, recovery.Actor);
+		Assert.AreEqual(scannerId, recovery.ScannerId);
+		Assert.AreEqual("exit", recovery.Reason);
+		Assert.AreEqual(ScannerPilotService.CleanupMaximumAttempts, recovery.Attempts);
+		Assert.AreEqual(ErrorCode.Conflict, recovery.LastError.Code);
+		Assert.AreEqual(environment.Clock.UtcNow, recovery.CreatedAtUtc);
+		Assert.AreEqual(ErrorCode.Conflict,
+			(await service.ExitAsync(pilot.Actor, entered.SessionId)).Error!.Code,
+			"Ordinary exit must not silently start a fresh retry budget.");
+		Assert.AreEqual(ScannerPilotService.CleanupMaximumAttempts - 1, fixture.CleanupDelay.CallCount);
 
-		var retried = await exit;
+		var retried = await service.RetryCleanupAsync(recovery);
 
 		Assert.IsTrue(retried.Succeeded, retried.Error?.Message);
 		Assert.IsNull(environment.ReadScanner(scannerId).PilotCharacterId);
 		Assert.AreEqual(0, service.TerminatingSessionCount);
 		Assert.AreEqual(0, service.PendingCleanupCount);
+		Assert.AreEqual(0, service.PendingRecoveryCount);
+		Assert.AreEqual(ScannerPilotService.CleanupMaximumAttempts + 1, fixture.CleanupDelay.CallCount,
+			"Two remaining conflicts require two delays before the explicit retry succeeds.");
 		Assert.AreEqual(1, fixture.Body.RestoreCount);
 		Assert.HasCount(1, fixture.CommitSink.Receipts);
 		Assert.IsTrue((await service.EnterAsync(pilot.Actor, scannerId)).Succeeded,
@@ -376,18 +572,82 @@ public sealed class ScannerShowcaseTests
 		Assert.AreEqual(ErrorCode.InternalError, failed.Error!.Code);
 		Assert.AreEqual(1, service.TerminatingSessionCount);
 		Assert.AreEqual(0, service.PendingCleanupCount);
+		Assert.AreEqual(1, service.PendingRecoveryCount);
 		Assert.AreEqual(pilot.Actor.CharacterId, environment.ReadScanner(scannerId).PilotCharacterId);
 		Assert.AreEqual(1, fixture.Body.RestoreCount);
+		Assert.AreEqual(0, fixture.CleanupDelay.CallCount,
+			"Fatal provider health must stop the retry round immediately.");
 		Assert.IsEmpty(fixture.CommitSink.Receipts);
 
+		var drained = await service.DrainCleanupAsync();
+		Assert.HasCount(1, drained.RecoveryHandles);
+		var recovery = drained.RecoveryHandles[0];
+		Assert.AreEqual(1, recovery.Attempts);
+		Assert.AreEqual(ErrorCode.InternalError, recovery.LastError.Code);
 		environment.Provider.ForceFatalHealth(false);
-		var recovered = await service.ExitAsync(pilot.Actor, entered.SessionId);
+		var recovered = await service.RetryCleanupAsync(recovery);
 
 		Assert.IsTrue(recovered.Succeeded, recovered.Error?.Message);
 		Assert.IsNull(environment.ReadScanner(scannerId).PilotCharacterId);
 		Assert.AreEqual(0, service.TerminatingSessionCount);
+		Assert.AreEqual(0, service.PendingRecoveryCount);
 		Assert.AreEqual(1, fixture.Body.RestoreCount);
 		Assert.HasCount(1, fixture.CommitSink.Receipts);
+	}
+
+	[TestMethod]
+	public async Task StorageLimitCleanupFailureIsMappedExactlyAndNeverRetriedAutomatically()
+	{
+		await using var environment = await ShowcaseTestEnvironment.CreateAsync();
+		var pilot = await environment.SeedCharacterAsync(312, HL2RPIds.Factions.CivilProtection,
+			HL2RPIds.Classes.Scanner);
+		var scannerId = SceneEntityId.New();
+		await environment.SeedScannerAsync(scannerId);
+		var fixture = new ScannerFixture(environment, pilot.Actor, scannerId);
+		var service = fixture.CreateService(environment);
+		var entered = (await service.EnterAsync(pilot.Actor, scannerId)).Value.Session;
+		environment.Provider.FailNextCommit(PersistenceErrorCode.StorageLimitExceeded);
+
+		var failed = await service.ExitAsync(pilot.Actor, entered.SessionId);
+		var recovery = service.RecoveryHandles.Single();
+
+		Assert.AreEqual(ErrorCode.StorageLimitExceeded, failed.Error!.Code);
+		Assert.AreEqual(ErrorCode.StorageLimitExceeded, recovery.LastError.Code);
+		Assert.AreEqual(1, recovery.Attempts);
+		Assert.AreEqual(0, fixture.CleanupDelay.CallCount);
+		Assert.AreEqual(pilot.Actor.CharacterId, environment.ReadScanner(scannerId).PilotCharacterId);
+		Assert.IsTrue((await service.RetryCleanupAsync(recovery)).Succeeded);
+		Assert.IsNull(environment.ReadScanner(scannerId).PilotCharacterId);
+	}
+
+	[TestMethod]
+	public async Task CancellationDuringRetryDelayProducesARecoveryHandleWithoutLosingAddressability()
+	{
+		await using var environment = await ShowcaseTestEnvironment.CreateAsync();
+		var pilot = await environment.SeedCharacterAsync(313, HL2RPIds.Factions.CivilProtection,
+			HL2RPIds.Classes.Scanner);
+		var scannerId = SceneEntityId.New();
+		await environment.SeedScannerAsync(scannerId);
+		var fixture = new ScannerFixture(environment, pilot.Actor, scannerId);
+		fixture.CleanupDelay.Block = true;
+		var service = fixture.CreateService(environment);
+		var entered = (await service.EnterAsync(pilot.Actor, scannerId)).Value.Session;
+		environment.Provider.ConflictNextCommits(ScannerPilotService.CleanupMaximumAttempts);
+		using var cancellation = new CancellationTokenSource();
+
+		var exit = service.ExitAsync(pilot.Actor, entered.SessionId, cancellation.Token).AsTask();
+		Assert.AreEqual(1, fixture.CleanupDelay.CallCount);
+		cancellation.Cancel();
+		var failed = await exit;
+
+		Assert.AreEqual(ErrorCode.InternalError, failed.Error!.Code);
+		var recovery = service.RecoveryHandles.Single();
+		Assert.AreEqual(1, recovery.Attempts);
+		Assert.AreEqual(pilot.Actor.CharacterId, environment.ReadScanner(scannerId).PilotCharacterId);
+		Assert.AreEqual(1, fixture.Body.RestoreCount);
+		fixture.CleanupDelay.Block = false;
+		Assert.IsTrue((await service.RetryCleanupAsync(recovery)).Succeeded);
+		Assert.IsNull(environment.ReadScanner(scannerId).PilotCharacterId);
 	}
 
 	[TestMethod]
@@ -440,6 +700,23 @@ public sealed class ScannerShowcaseTests
 		Assert.IsEmpty(recoveredService.ActiveSessions);
 	}
 
+	private static async Task WaitForScheduledInputFlushesAsync(ScannerPilotService service)
+	{
+		await WaitForAsync(
+			() => service.ScheduledInputFlushCount == 0,
+			"Scheduled scanner input flush did not quiesce.");
+	}
+
+	private static async Task WaitForAsync(Func<bool> condition, string failureMessage)
+	{
+		for (var attempt = 0; attempt < 500; attempt++)
+		{
+			if (condition()) return;
+			await Task.Delay(1);
+		}
+		Assert.Fail(failureMessage);
+	}
+
 	private sealed class ScannerFixture
 	{
 		public ScannerFixture(ShowcaseTestEnvironment environment, InventoryActor actor, SceneEntityId scannerId)
@@ -460,12 +737,14 @@ public sealed class ScannerShowcaseTests
 		public FakeMotion Motion { get; } = new();
 		public FakeMotionLimits Limits { get; } = new();
 		public FakeCleanupDelay CleanupDelay { get; } = new();
+		public FakeInputFlushDelay InputFlushDelay { get; } = new();
 		public FakeEffects Effects { get; } = new();
 		public FakeScannerCommitSink CommitSink { get; } = new();
 
 		public ScannerPilotService CreateService(ShowcaseTestEnvironment environment) => new(
 			environment.Repositories, Authority, Sessions, environment.Clock, Body, Motion, Limits, Effects,
-			new FakePoses(), CommitSink, () => Guid.NewGuid(), CleanupDelay.DelayAsync);
+			new FakePoses(), CommitSink, () => Guid.NewGuid(), CleanupDelay.DelayAsync,
+			InputFlushDelay.DelayAsync);
 	}
 
 	private sealed class FakeWorld : IServerInteractionWorld
@@ -535,22 +814,62 @@ public sealed class ScannerShowcaseTests
 
 	private sealed class FakeMotion : IScannerMotionBoundary
 	{
+		private int _applyCount;
 		public List<ScannerMotionCommand> Applied { get; } = new();
+		public ManualResetEventSlim FirstApplyObserved { get; } = new(false);
+		public int ApplyCount => Volatile.Read(ref _applyCount);
 		public bool ThrowOnApply { get; set; }
 		public void Apply(SceneEntityId scannerId, ScannerMotionCommand command)
 		{
-			Applied.Add(command);
+			lock (Applied) Applied.Add(command);
+			Interlocked.Increment(ref _applyCount);
+			FirstApplyObserved.Set();
 			if (ThrowOnApply) throw new InvalidOperationException("Injected scanner motion failure.");
 		}
 	}
 
 	private sealed class FakeMotionLimits : IScannerMotionLimitsProvider
 	{
+		private readonly ManualResetEventSlim _secondRaceResolveEntered = new(false);
+		private readonly ManualResetEventSlim _releaseSecondRaceResolve = new(false);
+		private int _raceResolveCount;
+		private bool _coordinateRace;
+
 		public ScannerMotionLimits Value { get; set; } = new(125f, 240f, 75f);
 		public SceneEntityId? LastResolvedScannerId { get; private set; }
+		public ManualResetEventSlim FirstRaceResolveEntered { get; } = new(false);
+
+		public void ArmConcurrentResolveRace()
+		{
+			_raceResolveCount = 0;
+			FirstRaceResolveEntered.Reset();
+			_secondRaceResolveEntered.Reset();
+			_releaseSecondRaceResolve.Reset();
+			_coordinateRace = true;
+		}
+
+		public void ReleaseSecondRaceResolve() => _releaseSecondRaceResolve.Set();
+
 		public OperationResult<ScannerMotionLimits> Resolve(SceneEntityId scannerId)
 		{
 			LastResolvedScannerId = scannerId;
+			if (_coordinateRace)
+			{
+				var call = Interlocked.Increment(ref _raceResolveCount);
+				if (call == 1)
+				{
+					FirstRaceResolveEntered.Set();
+					if (!_secondRaceResolveEntered.Wait(TimeSpan.FromSeconds(5)))
+						throw new InvalidOperationException("Second scanner input did not reach motion-limit resolution.");
+				}
+				else if (call == 2)
+				{
+					_secondRaceResolveEntered.Set();
+					if (!_releaseSecondRaceResolve.Wait(TimeSpan.FromSeconds(5)))
+						throw new InvalidOperationException("Second scanner input resolution was not released.");
+					_coordinateRace = false;
+				}
+			}
 			return OperationResult<ScannerMotionLimits>.Success(Value);
 		}
 	}
@@ -560,18 +879,49 @@ public sealed class ScannerShowcaseTests
 		private TaskCompletionSource? _release;
 		public bool Block { get; set; }
 		public int CallCount { get; private set; }
-		public Task DelayAsync(TimeSpan duration)
+		public Task DelayAsync(TimeSpan duration, CancellationToken cancellationToken)
 		{
 			Assert.AreEqual(ScannerPilotService.CleanupRetryDelay, duration);
 			CallCount++;
-			if (!Block) return Task.CompletedTask;
+			if (!Block)
+			{
+				cancellationToken.ThrowIfCancellationRequested();
+				return Task.CompletedTask;
+			}
 			_release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+			if (cancellationToken.CanBeCanceled)
+				_ = cancellationToken.Register(
+					static state => ((TaskCompletionSource)state!).TrySetCanceled(),
+					_release);
 			return _release.Task;
 		}
-		public void Release()
+	}
+
+	private sealed class FakeInputFlushDelay
+	{
+		private readonly Queue<TaskCompletionSource> _pending = new();
+
+		public int CallCount { get; private set; }
+		public int PendingCount => _pending.Count(value => !value.Task.IsCompleted);
+
+		public Task DelayAsync(TimeSpan duration, CancellationToken cancellationToken)
 		{
-			Block = false;
-			_release!.TrySetResult();
+			Assert.AreEqual(ScannerPilotService.InputWriteBehindInterval, duration);
+			CallCount++;
+			var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+			_pending.Enqueue(completion);
+			if (cancellationToken.CanBeCanceled)
+				_ = cancellationToken.Register(
+					static state => ((TaskCompletionSource)state!).TrySetCanceled(),
+					completion);
+			return completion.Task;
+		}
+
+		public void ReleaseNext()
+		{
+			while (_pending.Count > 0 && _pending.Peek().Task.IsCompleted) _pending.Dequeue();
+			Assert.IsGreaterThan(0, _pending.Count);
+			_pending.Dequeue().TrySetResult();
 		}
 	}
 
@@ -599,7 +949,9 @@ public sealed class ScannerShowcaseTests
 
 	private sealed class FakeScannerCommitSink : IScannerCommitSink
 	{
+		public List<ScannerInputPersistenceReceipt> InputReceipts { get; } = new();
 		public List<ScannerPilotCleanupReceipt> Receipts { get; } = new();
+		public void Observe(ScannerInputPersistenceReceipt receipt) => InputReceipts.Add(receipt);
 		public void Observe(ScannerPilotCleanupReceipt receipt) => Receipts.Add(receipt);
 	}
 

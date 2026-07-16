@@ -36,25 +36,32 @@ internal sealed class HL2RPSandboxBoundaries :
 	private readonly Func<ConnectionId, (AccountId Account, HexPlayerBody Player, CharacterRecord Character)?> _actors;
 	private readonly DomainRepositories _repositories;
 	private readonly Func<GameObject, string?> _playerTargetToken;
+	private readonly Action<ConnectionId> _bodyStateChanged;
 
 	public HL2RPSandboxBoundaries(
 		Scene scene,
 		IReadOnlyDictionary<SceneEntityId, HL2RPSceneFeatureComponent> features,
 		Func<ConnectionId, (AccountId, HexPlayerBody, CharacterRecord)?> actors,
 		DomainRepositories repositories,
-		Func<GameObject, string?> playerTargetToken )
+		Func<GameObject, string?> playerTargetToken,
+		Action<ConnectionId> bodyStateChanged )
 	{
 		_scene = scene;
 		_features = features;
 		_actors = actors;
 		_repositories = repositories;
 		_playerTargetToken = playerTargetToken;
+		_bodyStateChanged = bodyStateChanged;
 	}
 
 	public void EnterPilot( InventoryActor actor, SceneEntityId scannerId )
 	{
 		var state = _actors( actor.ConnectionId );
-		if ( state?.Player.PlayableBody is GameObject body ) body.Enabled = false;
+		if ( state is not null && state.Value.Player.TryGetUsableAuthoritativeBody( out var body ) )
+		{
+			body.Enabled = false;
+			_bodyStateChanged( actor.ConnectionId );
+		}
 	}
 
 	public void Restore( InventoryActor actor, SceneEntityId scannerId, string reason )
@@ -62,7 +69,11 @@ internal sealed class HL2RPSandboxBoundaries :
 		if ( _features.TryGetValue( scannerId, out var feature ) )
 			feature.Components.Get<HL2RPScannerMotionController>()?.Stop();
 		var state = _actors( actor.ConnectionId );
-		if ( state?.Player.PlayableBody is GameObject body ) body.Enabled = true;
+		if ( state?.Player.AuthoritativeBody is GameObject body )
+		{
+			body.Enabled = true;
+			_bodyStateChanged( actor.ConnectionId );
+		}
 	}
 
 	public void Apply( SceneEntityId scannerId, ScannerMotionCommand command )
@@ -119,15 +130,22 @@ internal sealed class HL2RPSandboxBoundaries :
 	{
 		var state = _actors( intent.Actor.ConnectionId );
 		if ( state is null || state.Value.Character.Id != intent.Actor.CharacterId ||
-			state.Value.Player.PlayableBody is not GameObject body )
+			!state.Value.Player.TryGetUsableAuthoritativeBody( out var body ) )
 			return OperationResult<AuthoritativeShot>.Failure( ErrorCode.Unauthorized, "Authoritative firing body is unavailable." );
 		var origin = body.WorldPosition + Vector3.Up * 56f;
-		var end = origin + body.WorldTransform.Forward * 8_192f;
-		var trace = _scene.Trace.Ray( origin, end ).IgnoreGameObjectHierarchy( body ).Run();
+		var controller = body.Components.Get<PlayerController>();
+		if ( controller is null )
+			return OperationResult<AuthoritativeShot>.Failure( ErrorCode.Unauthorized, "Authoritative firing controller is unavailable." );
+		var end = origin + controller.EyeAngles.ToRotation().Forward * 8_192f;
+		var trace = _scene.Trace.Ray( origin, end )
+			.IgnoreGameObjectHierarchy( body.Root )
+			.WithoutTags( "prediction" )
+			.Run();
 		var resolvedEnd = trace.Hit ? trace.EndPosition : end;
 		var playerTarget = trace.Hit && trace.GameObject is not null ? _playerTargetToken( trace.GameObject ) : null;
 		var target = trace.Hit && playerTarget is null
-			? _features.FirstOrDefault( pair => pair.Value.GameObject == trace.GameObject ).Key
+			? _features.FirstOrDefault( pair =>
+				HL2RPObjectHierarchy.Contains( pair.Value.GameObject, trace.GameObject, current => current.Parent ) ).Key
 			: default;
 		return OperationResult<AuthoritativeShot>.Success( new AuthoritativeShot(
 			new WorldPoint( origin.x, origin.y, origin.z ),

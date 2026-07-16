@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using Hexagon.V2.Persistence;
 using HL2RP.V2.Runtime;
 
 namespace HL2RP.V2.Tests.Runtime;
@@ -113,4 +114,37 @@ public sealed class RecoverySnapshotTests
 		Assert.AreEqual( 0, captures );
 		Assert.IsEmpty( markers );
 	}
+
+	[TestMethod]
+	public void PreShutdownMarkerRequiresCleanPersistenceAndCanFollowADegradedAttempt()
+	{
+		var lifecycle = new HL2RPRecoverySnapshotLifecycle( suppressMarkers: false );
+		var markers = new List<string>();
+		lifecycle.CompleteInitialization(
+			() => new HL2RPRecoverySnapshot( 8, DigestA ),
+			markers.Add );
+
+		var degraded = lifecycle.CompleteAfterPersistence(
+			ShutdownResult( isClean: false ),
+			new HL2RPRecoverySnapshot( 9, DigestB ),
+			markers.Add );
+		var clean = lifecycle.CompleteAfterPersistence(
+			ShutdownResult( isClean: true ),
+			new HL2RPRecoverySnapshot( 9, DigestB ),
+			markers.Add );
+
+		Assert.IsTrue( degraded.Failed );
+		Assert.IsTrue( clean.Succeeded );
+		Assert.HasCount( 2, markers );
+		StringAssert.Contains( markers[1], "phase=pre_shutdown sequence=9" );
+	}
+
+	private static PersistenceShutdownResult ShutdownResult( bool isClean ) => new(
+		DurableSequence: 9,
+		CheckpointSequence: isClean ? 9 : 8,
+		IsClean: isClean,
+		IsRecoverable: true,
+		Checkpoint: new PersistenceResult<long>( isClean ? 9L : 8L, null ),
+		LeaseReleased: true,
+		Detail: isClean ? null : "checkpoint cleanup pending" );
 }

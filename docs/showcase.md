@@ -95,12 +95,25 @@ implemented through host-authored body tags and collision rules. Machine
 cooldowns use the value persisted from each machine component rather than a
 runtime constant.
 
+World-item persistence is the desired-state authority. Host publication and
+destruction run through a single-flight reconciler; successful handles remain
+cached until destruction succeeds or invalidity is confirmed. A transient
+post-commit engine failure is reported as committed but pending reconciliation
+and retried with coalesced 250 ms-to-30 s backoff. Startup does not announce
+readiness unless every durable world item converges.
+
 Every scanner dock declares the stable identity of exactly one drone. Startup
 requires reciprocal persisted dock/drone links, and only the drone may own a
 pilot session. The drone's authored speed and acceleration limits are resolved
 on the host for every accepted input. Input changes a capped target velocity;
 continuous time-based integration applies acceleration independently of RPC or
-render frequency and stops stale input.
+render frequency and stops stale input. Replay protection updates in memory as
+soon as input is accepted, while only the newest sequence is persisted through
+one 250 ms write-behind window per session (at most four sequence commits per
+second). Spotlight, photo, session transition, cleanup, and shutdown commits
+absorb or flush the newest pending sequence. A process crash may lose no more
+than the final 250 ms sequence window; startup clears scanner sessions that did
+not survive the process.
 
 ## Client boundary
 

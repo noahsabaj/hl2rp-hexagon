@@ -20,8 +20,7 @@ public sealed class HL2RPWorldItemPressable : Component, Component.IPressable
 
 	bool IPressable.CanPress( IPressable.Event e ) =>
 		ItemGuid != Guid.Empty &&
-		e.Source is PlayerController &&
-		e.Source.Network.IsOwner &&
+		HexPlayerBody.IsLocalPredictionSource( e.Source ) &&
 		HexagonRuntimeSystem.Current?.ClientReadiness == HexRuntimeReadiness.Ready &&
 		HexagonRuntimeSystem.Current.ClientController is not null &&
 		HexagonRuntimeSystem.Current.ClientStore?.PrivatePlayer?.MainInventoryId is not null;

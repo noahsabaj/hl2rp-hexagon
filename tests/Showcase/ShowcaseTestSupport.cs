@@ -112,6 +112,7 @@ internal sealed class ShowcaseTestEnvironment : IAsyncDisposable
 			unitOfWork.Create(Repositories.Items, DomainKeys.Item(item.Id), item);
 		var committed = await unitOfWork.CommitAsync();
 		if (!committed.Succeeded) throw new InvalidOperationException(committed.Error!.Message);
+		Access.OpenConnection(actor.ConnectionId);
 		Access.Grant(new InventoryGrant
 		{
 			ConnectionId = actor.ConnectionId,
@@ -265,11 +266,20 @@ internal sealed class FaultInjectingProvider : IPersistenceProvider
 	public Guid StoreId => _inner.StoreId;
 	public Guid WriterEpoch => _inner.WriterEpoch;
 	public long CompactionGeneration => _inner.CompactionGeneration;
+	public int CommitAttemptCount { get; private set; }
+	public int SuccessfulCommitCount { get; private set; }
 
 	public void FailNextCommit()
 	{
 		_remainingCommitFailures = 1;
 		_commitFailureCode = PersistenceErrorCode.DurabilityFailed;
+	}
+
+	public void FailNextCommit(PersistenceErrorCode code)
+	{
+		if (code == PersistenceErrorCode.None) throw new ArgumentOutOfRangeException(nameof(code));
+		_remainingCommitFailures = 1;
+		_commitFailureCode = code;
 	}
 
 	public void ConflictNextCommits(int count)
@@ -328,6 +338,7 @@ internal sealed class FaultInjectingProvider : IPersistenceProvider
 		public void Require(ICommitPrecondition precondition) => _inner.Require(precondition);
 		public async ValueTask<PersistenceResult<CommitReceipt>> CommitAsync(CancellationToken cancellationToken = default)
 		{
+			_provider.CommitAttemptCount++;
 			if (_provider._beforeNextCommit is Func<Task> beforeCommit)
 			{
 				_provider._beforeNextCommit = null;
@@ -337,6 +348,7 @@ internal sealed class FaultInjectingProvider : IPersistenceProvider
 				return PersistenceResult<CommitReceipt>.Failure(new PersistenceError(
 					code, "Injected commit failure."));
 			var committed = await _inner.CommitAsync(cancellationToken);
+			if (committed.Succeeded) _provider.SuccessfulCommitCount++;
 			if (committed.Succeeded && _provider._afterNextSuccessfulCommit is Action callback)
 			{
 				_provider._afterNextSuccessfulCommit = null;

@@ -86,9 +86,28 @@ public sealed record ScannerSpotlightReceipt(
 	long CommitSequence,
 	CommitReceipt Commit,
 	OperationError? BoundaryError = null) : IHL2RPCommittedOperation;
+
+public enum ScannerInputDurability
+{
+	Pending = 0,
+	Persisted = 1
+}
+
 public sealed record ScannerInputReceipt(
-	long Sequence, ScannerMotionCommand Motion, long CommitSequence, CommitReceipt Commit,
-	OperationError? BoundaryError = null) : IHL2RPCommittedOperation;
+	long Sequence,
+	ScannerMotionCommand Motion,
+	ScannerInputDurability Durability,
+	CommitReceipt? Commit,
+	OperationError? BoundaryError = null)
+{
+	public long? CommitSequence => Commit?.Sequence;
+}
+
+public sealed record ScannerInputPersistenceReceipt(
+	ScannerPilotSession Session,
+	long Sequence,
+	long CommitSequence,
+	CommitReceipt Commit) : IHL2RPCommittedOperation;
 public sealed record ScannerPhotoReceipt(
 	ScannerPhotoMetadata Metadata, DateTimeOffset CooldownUntilUtc,
 	long CommitSequence, CommitReceipt Commit,
@@ -100,12 +119,36 @@ public sealed record ScannerPilotCleanupReceipt(
 	CommitReceipt Commit,
 	OperationError? BoundaryError = null) : IHL2RPCommittedOperation;
 
+public sealed record ScannerCleanupRecoveryHandle(
+	InteractionSessionId SessionId,
+	InventoryActor Actor,
+	SceneEntityId ScannerId,
+	string Reason,
+	int Attempts,
+	OperationError LastError,
+	DateTimeOffset CreatedAtUtc,
+	OperationError? BoundaryError = null);
+
+public sealed record ScannerInputFlushFailure(
+	InteractionSessionId SessionId,
+	SceneEntityId ScannerId,
+	long Sequence,
+	OperationError Error);
+
+public sealed record ScannerCleanupDrainResult(
+	IReadOnlyList<ScannerCleanupRecoveryHandle> RecoveryHandles,
+	IReadOnlyList<ScannerInputFlushFailure> InputFlushFailures)
+{
+	public bool Succeeded => RecoveryHandles.Count == 0 && InputFlushFailures.Count == 0;
+}
+
 /// <summary>
 /// Synchronous post-commit boundary for lifecycle cleanup that has no command result to carry its
 /// provider-issued receipt. Implementations must not throw; the persistence commit is already durable.
 /// </summary>
 public interface IScannerCommitSink
 {
+	void Observe(ScannerInputPersistenceReceipt receipt);
 	void Observe(ScannerPilotCleanupReceipt receipt);
 }
 
@@ -117,6 +160,12 @@ public sealed class ScannerPilotService
 {
 	public static readonly TimeSpan MinimumInputInterval = TimeSpan.FromMilliseconds(50);
 	public static readonly TimeSpan PhotoCooldown = TimeSpan.FromSeconds(15);
+	/// <summary>
+	/// Accepted input updates replay state immediately and may lag durable storage by at most this
+	/// interval during normal operation. A crash can lose that final sequence window; startup
+	/// reconciliation clears scanner sessions that did not survive the process.
+	/// </summary>
+	public static readonly TimeSpan InputWriteBehindInterval = TimeSpan.FromMilliseconds(250);
 	public static readonly TimeSpan CleanupRetryDelay = TimeSpan.FromMilliseconds(250);
 	public const int MaximumStoredPhotos = 128;
 	public const int CleanupMaximumAttempts = 8;
@@ -132,11 +181,15 @@ public sealed class ScannerPilotService
 	private readonly ITrustedScannerPoseProvider _poses;
 	private readonly IScannerCommitSink _commitSink;
 	private readonly Func<Guid> _createPhotoId;
-	private readonly Func<TimeSpan, Task> _cleanupDelay;
+	private readonly Func<TimeSpan, CancellationToken, Task> _cleanupDelay;
+	private readonly Func<TimeSpan, CancellationToken, Task> _inputFlushDelay;
 	private readonly Dictionary<InteractionSessionId, ScannerPilotSession> _active = new();
 	private readonly object _cleanupSync = new();
 	private readonly HashSet<InteractionSessionId> _terminating = new();
 	private readonly Dictionary<InteractionSessionId, CleanupOperation> _cleanupOperations = new();
+	private readonly Dictionary<InteractionSessionId, ScannerCleanupRecoveryHandle> _recoveryHandles = new();
+	private readonly Dictionary<InteractionSessionId, InputWriteBehindState> _inputWriteBehind = new();
+	private long _nextInputWriteGeneration;
 
 	public ScannerPilotService(
 		DomainRepositories repositories,
@@ -150,7 +203,8 @@ public sealed class ScannerPilotService
 		ITrustedScannerPoseProvider poses,
 		IScannerCommitSink commitSink,
 		Func<Guid>? createPhotoId = null,
-		Func<TimeSpan, Task>? cleanupDelay = null)
+		Func<TimeSpan, CancellationToken, Task>? cleanupDelay = null,
+		Func<TimeSpan, CancellationToken, Task>? inputFlushDelay = null)
 	{
 		_repositories = repositories ?? throw new ArgumentNullException(nameof(repositories));
 		_authority = authority ?? throw new ArgumentNullException(nameof(authority));
@@ -163,7 +217,10 @@ public sealed class ScannerPilotService
 		_poses = poses ?? throw new ArgumentNullException(nameof(poses));
 		_commitSink = commitSink ?? throw new ArgumentNullException(nameof(commitSink));
 		_createPhotoId = createPhotoId ?? Guid.NewGuid;
-		_cleanupDelay = cleanupDelay ?? Task.Delay;
+		_cleanupDelay = cleanupDelay ?? ((duration, cancellationToken) =>
+			Task.Delay(duration, cancellationToken));
+		_inputFlushDelay = inputFlushDelay ?? ((duration, cancellationToken) =>
+			Task.Delay(duration, cancellationToken));
 		_sessions.SessionRevoked += OnSessionRevoked;
 	}
 
@@ -189,6 +246,38 @@ public sealed class ScannerPilotService
 		get
 		{
 			lock (_cleanupSync) return _terminating.Count;
+		}
+	}
+
+	public IReadOnlyList<ScannerCleanupRecoveryHandle> RecoveryHandles
+	{
+		get
+		{
+			lock (_cleanupSync) return Array.AsReadOnly(_recoveryHandles.Values.ToArray());
+		}
+	}
+
+	public int PendingRecoveryCount
+	{
+		get
+		{
+			lock (_cleanupSync) return _recoveryHandles.Count;
+		}
+	}
+
+	public int PendingInputWriteCount
+	{
+		get
+		{
+			lock (_cleanupSync) return _inputWriteBehind.Values.Count(value => value.HasPending);
+		}
+	}
+
+	public int ScheduledInputFlushCount
+	{
+		get
+		{
+			lock (_cleanupSync) return _inputWriteBehind.Values.Count(value => value.Scheduled is not null);
 		}
 	}
 
@@ -225,20 +314,59 @@ public sealed class ScannerPilotService
 		return committed.Succeeded ? OperationResult.Success() : ScannerPersistence.Failure(committed.Error!);
 	}
 
-	public async ValueTask DrainCleanupAsync()
+	public async ValueTask<ScannerCleanupDrainResult> DrainCleanupAsync(
+		CancellationToken cancellationToken = default)
 	{
-		Task<OperationResult>[] pending;
-		lock (_cleanupSync) pending = _cleanupOperations.Values.Select(value => value.Completion.Task).ToArray();
-		foreach (var cleanup in pending)
-			await cleanup;
+		var inputFlushFailures = await DrainInputWriteBehindAsync(cancellationToken);
+		while (true)
+		{
+			Task<OperationResult>[] pending;
+			lock (_cleanupSync)
+				pending = _cleanupOperations.Values.Select(value => value.Completion.Task).ToArray();
+			if (pending.Length == 0) break;
+			foreach (var cleanup in pending)
+				await AwaitCleanupAsync(cleanup, cancellationToken);
+		}
 
-		ScannerPilotSession[] retry;
 		lock (_cleanupSync)
-			retry = _active.Values
-				.Where(value => _terminating.Contains(value.SessionId) && !_cleanupOperations.ContainsKey(value.SessionId))
-				.ToArray();
-		foreach (var active in retry)
-			await BeginCleanup(active, "cleanup_retry");
+			return new ScannerCleanupDrainResult(
+				Array.AsReadOnly(_recoveryHandles.Values.ToArray()),
+				inputFlushFailures);
+	}
+
+	public ValueTask<OperationResult> RetryCleanupAsync(
+		ScannerCleanupRecoveryHandle recovery,
+		CancellationToken cancellationToken = default)
+	{
+		ArgumentNullException.ThrowIfNull(recovery);
+		cancellationToken.ThrowIfCancellationRequested();
+		CleanupOperation operation;
+		lock (_cleanupSync)
+		{
+			if (_cleanupOperations.TryGetValue(recovery.SessionId, out var existing))
+				return new ValueTask<OperationResult>(existing.Completion.Task);
+			if (!_recoveryHandles.TryGetValue(recovery.SessionId, out var current) || current != recovery)
+				return ValueTask.FromResult(OperationResult.Failure(
+					ErrorCode.Conflict, "Scanner cleanup recovery handle is stale."));
+			if (!_active.TryGetValue(recovery.SessionId, out var active) ||
+				active.Actor != recovery.Actor || active.ScannerId != recovery.ScannerId)
+				return ValueTask.FromResult(OperationResult.Failure(
+					ErrorCode.NotFound, "Scanner cleanup recovery session is no longer addressable."));
+
+			operation = new CleanupOperation(
+				active,
+				recovery.Reason,
+				cancellationToken,
+				recovery.CreatedAtUtc)
+			{
+				BoundaryError = recovery.BoundaryError
+			};
+			_recoveryHandles.Remove(recovery.SessionId);
+			_cleanupOperations.Add(recovery.SessionId, operation);
+		}
+
+		_ = CompleteCleanupAsync(operation);
+		return new ValueTask<OperationResult>(operation.Completion.Task);
 	}
 
 	public async ValueTask<OperationResult<ScannerPilotEntryReceipt>> EnterAsync(
@@ -335,12 +463,19 @@ public sealed class ScannerPilotService
 			pilot, committed.Value!.Sequence, committed.Value, boundaryError));
 	}
 
-	public async ValueTask<OperationResult<ScannerInputReceipt>> ApplyInputAsync(
+	public ValueTask<OperationResult<ScannerInputReceipt>> ApplyInputAsync(
 		InventoryActor actor,
 		ScannerInputIntent intent,
-		CancellationToken cancellationToken = default)
+		CancellationToken cancellationToken = default) =>
+		ValueTask.FromResult(ApplyInput(actor, intent, cancellationToken));
+
+	private OperationResult<ScannerInputReceipt> ApplyInput(
+		InventoryActor actor,
+		ScannerInputIntent intent,
+		CancellationToken cancellationToken)
 	{
 		ArgumentNullException.ThrowIfNull(intent);
+		cancellationToken.ThrowIfCancellationRequested();
 		var active = ValidateSession(actor, intent.SessionId);
 		if (active.Failed) return Failure<ScannerInputReceipt>(active.Error!);
 		if (intent.Sequence <= 0 || intent.Sequence <= active.Value.LastAcceptedSequence)
@@ -363,48 +498,63 @@ public sealed class ScannerPilotService
 			intent.Sequence <= scanner.Value.State.LastAcceptedInputSequence)
 			return OperationResult<ScannerInputReceipt>.Failure(ErrorCode.Unauthorized,
 				"Persisted scanner pilot or sequence no longer matches the session.");
-		var unitOfWork = _repositories.Provider.BeginUnitOfWork();
-		unitOfWork.Require(continued.Value);
-		var editor = unitOfWork.Edit(_repositories.SceneEntities, scanner.Value.Document);
-		if (editor is null)
-		{
-			await HL2RPUnitOfWork.DisposeAsync(unitOfWork);
-			return OperationResult<ScannerInputReceipt>.Failure(ErrorCode.Conflict, "Scanner state changed.");
-		}
-		var nextState = scanner.Value.State with { LastAcceptedInputSequence = intent.Sequence };
-		editor.Replace(editor.Value with { State = HL2RPPersistence.Payload(HL2RPPersistence.ScannerState, nextState) });
-		unitOfWork.Save(editor);
-		var committed = await HL2RPUnitOfWork.CommitAndDisposeAsync(unitOfWork, cancellationToken);
-		if (!committed.Succeeded) return ScannerPersistence.Failure<ScannerInputReceipt>(committed.Error!);
-
-		var stillActive = false;
+		cancellationToken.ThrowIfCancellationRequested();
+		InputFlushOperation? scheduled = null;
+		var accepted = false;
 		var cleanupRequired = false;
+		ScannerPilotSession? current = null;
+		OperationError? acceptanceError = null;
 		OperationError? boundaryError = null;
 		lock (_cleanupSync)
 		{
-			stillActive = !_terminating.Contains(intent.SessionId) &&
-				_active.ContainsKey(intent.SessionId) &&
-				continued.Value.IsCurrent();
-			if (stillActive)
+			if (_terminating.Contains(intent.SessionId) ||
+				!_active.TryGetValue(intent.SessionId, out current) ||
+				current.Actor != actor ||
+				!continued.Value.IsCurrent())
 			{
-				_active[intent.SessionId] = active.Value with
+				cleanupRequired = true;
+				acceptanceError = new OperationError(
+					ErrorCode.Unauthorized,
+					"Scanner session changed before input could be accepted.");
+			}
+			else if (intent.Sequence <= current.LastAcceptedSequence)
+				acceptanceError = new OperationError(
+					ErrorCode.Unauthorized,
+					"Scanner input sequence is stale or out of order.");
+			else if (current.LastInputAtUtc is DateTimeOffset currentLast &&
+				now - currentLast < MinimumInputInterval)
+				acceptanceError = new OperationError(
+					ErrorCode.PolicyDenied,
+					"Scanner input rate exceeds 20 Hz.");
+			else
+			{
+				accepted = true;
+				_active[intent.SessionId] = current! with
 				{
 					LastAcceptedSequence = intent.Sequence,
 					LastInputAtUtc = now
 				};
+				scheduled = QueueInputWriteUnsafe(intent.SessionId, intent.Sequence);
 				boundaryError = ObserveBoundary(
 					() => _motion.Apply(active.Value.ScannerId, normalized.Value),
-					"Scanner input committed, but world motion failed.");
+					"Scanner input was accepted, but world motion failed.");
 			}
-			else cleanupRequired = true;
 		}
-		// A concurrent lifecycle cleanup can win immediately after this commit. The
-		// input receipt must still be returned because its sequence was durably
-		// acknowledged; only the now-stale world motion is suppressed.
-		if (cleanupRequired)
-			_ = BeginCleanup(active.Value, "post_commit_session_revoked");
+		if (!accepted)
+		{
+			if (cleanupRequired)
+				_ = BeginCleanup(active.Value, "post_commit_session_revoked");
+			return OperationResult<ScannerInputReceipt>.Failure(
+				acceptanceError!.Code,
+				acceptanceError.Message);
+		}
+		if (scheduled is not null) StartInputFlush(scheduled);
 		return OperationResult<ScannerInputReceipt>.Success(new ScannerInputReceipt(
-			intent.Sequence, normalized.Value, committed.Value!.Sequence, committed.Value, boundaryError));
+			intent.Sequence,
+			normalized.Value,
+			ScannerInputDurability.Pending,
+			null,
+			boundaryError));
 	}
 
 	public async ValueTask<OperationResult<ScannerSpotlightReceipt>> ToggleSpotlightAsync(
@@ -420,6 +570,10 @@ public sealed class ScannerPilotService
 		if (scanner.Failed) return Failure<ScannerSpotlightReceipt>(scanner.Error!);
 		if (scanner.Value.State.PilotCharacterId != actor.CharacterId)
 			return OperationResult<ScannerSpotlightReceipt>.Failure(ErrorCode.Unauthorized, "Scanner pilot changed.");
+		var pendingInput = CapturePendingInput(sessionId);
+		var acceptedSequence = Math.Max(
+			scanner.Value.State.LastAcceptedInputSequence,
+			pendingInput?.Sequence ?? active.Value.LastAcceptedSequence);
 		var enabled = !scanner.Value.State.SpotlightEnabled;
 		var unitOfWork = _repositories.Provider.BeginUnitOfWork();
 		unitOfWork.Require(continued.Value);
@@ -432,11 +586,17 @@ public sealed class ScannerPilotService
 		editor.Replace(editor.Value with
 		{
 			State = HL2RPPersistence.Payload(HL2RPPersistence.ScannerState,
-				scanner.Value.State with { SpotlightEnabled = enabled })
+				scanner.Value.State with
+				{
+					LastAcceptedInputSequence = acceptedSequence,
+					SpotlightEnabled = enabled
+				})
 		});
 		unitOfWork.Save(editor);
 		var committed = await HL2RPUnitOfWork.CommitAndDisposeAsync(unitOfWork, cancellationToken);
 		if (!committed.Succeeded) return ScannerPersistence.Failure<ScannerSpotlightReceipt>(committed.Error!);
+		if (pendingInput is not null)
+			MarkInputPersisted(sessionId, pendingInput.Generation, acceptedSequence);
 		OperationError? boundaryError = null;
 		var cleanupRequired = false;
 		lock (_cleanupSync)
@@ -482,6 +642,10 @@ public sealed class ScannerPilotService
 		if (continued.Failed) return Failure<ScannerPhotoReceipt>(continued.Error!);
 		var scanner = ResolveState(active.Value.ScannerId);
 		if (scanner.Failed) return Failure<ScannerPhotoReceipt>(scanner.Error!);
+		var pendingInput = CapturePendingInput(sessionId);
+		var acceptedSequence = Math.Max(
+			scanner.Value.State.LastAcceptedInputSequence,
+			pendingInput?.Sequence ?? active.Value.LastAcceptedSequence);
 		var now = _clock.UtcNow;
 		if (scanner.Value.State.PhotoCooldownUntilUtc is DateTimeOffset cooldown && now < cooldown)
 			return OperationResult<ScannerPhotoReceipt>.Failure(ErrorCode.PolicyDenied,
@@ -511,6 +675,7 @@ public sealed class ScannerPilotService
 		var nextCooldown = now + PhotoCooldown;
 		var nextState = scanner.Value.State with
 		{
+			LastAcceptedInputSequence = acceptedSequence,
 			Photos = photos,
 			PhotoCooldownUntilUtc = nextCooldown
 		};
@@ -526,6 +691,8 @@ public sealed class ScannerPilotService
 		unitOfWork.Save(editor);
 		var committed = await HL2RPUnitOfWork.CommitAndDisposeAsync(unitOfWork, cancellationToken);
 		if (!committed.Succeeded) return ScannerPersistence.Failure<ScannerPhotoReceipt>(committed.Error!);
+		if (pendingInput is not null)
+			MarkInputPersisted(sessionId, pendingInput.Generation, acceptedSequence);
 		OperationError? boundaryError = null;
 		var cleanupRequired = false;
 		lock (_cleanupSync)
@@ -577,13 +744,278 @@ public sealed class ScannerPilotService
 		}
 	}
 
+	private InputFlushOperation? QueueInputWriteUnsafe(
+		InteractionSessionId sessionId,
+		long sequence)
+	{
+		if (!_inputWriteBehind.TryGetValue(sessionId, out var state))
+		{
+			state = new InputWriteBehindState();
+			_inputWriteBehind.Add(sessionId, state);
+		}
+		state.Generation = checked(++_nextInputWriteGeneration);
+		state.Sequence = sequence;
+		state.HasPending = true;
+		if (state.Scheduled is not null) return null;
+		return CreateInputFlushUnsafe(sessionId, state);
+	}
+
+	private InputFlushOperation CreateInputFlushUnsafe(
+		InteractionSessionId sessionId,
+		InputWriteBehindState state)
+	{
+		var operation = new InputFlushOperation(sessionId, state.Generation);
+		state.Scheduled = operation;
+		return operation;
+	}
+
+	private void StartInputFlush(InputFlushOperation operation) =>
+		_ = CompleteInputFlushAsync(operation);
+
+	private async Task CompleteInputFlushAsync(InputFlushOperation operation)
+	{
+		InputFlushAttempt attempt;
+		try
+		{
+			await _inputFlushDelay(InputWriteBehindInterval, operation.Cancellation.Token);
+			attempt = await FlushPendingInputOnceAsync(
+				operation.SessionId, operation.Cancellation.Token);
+		}
+		catch (OperationCanceledException)
+		{
+			attempt = InputFlushAttempt.Canceled(operation.ScheduledGeneration);
+		}
+		catch (Exception exception)
+		{
+			attempt = InputFlushAttempt.Failure(
+				operation.ScheduledGeneration,
+				0,
+				OperationResult.Failure(
+					ErrorCode.InternalError,
+					$"Scanner input write-behind failed unexpectedly: {exception.Message}"));
+		}
+
+		InputFlushOperation? next = null;
+		lock (_cleanupSync)
+		{
+			if (_inputWriteBehind.TryGetValue(operation.SessionId, out var state) &&
+				ReferenceEquals(state.Scheduled, operation))
+			{
+				state.Scheduled = null;
+				var hasNewerInput = state.HasPending && state.Generation > attempt.CapturedGeneration;
+				if (state.HasPending && !_terminating.Contains(operation.SessionId) &&
+					!attempt.WasCanceled && (attempt.Result.Succeeded || hasNewerInput))
+					next = CreateInputFlushUnsafe(operation.SessionId, state);
+				else if (!state.HasPending)
+					_inputWriteBehind.Remove(operation.SessionId);
+			}
+		}
+		operation.Cancellation.Dispose();
+		operation.Completion.TrySetResult(attempt.Result);
+		if (next is not null) StartInputFlush(next);
+	}
+
+	private async Task<InputFlushAttempt> FlushPendingInputOnceAsync(
+		InteractionSessionId sessionId,
+		CancellationToken cancellationToken)
+	{
+		PendingInputSnapshot pending;
+		ScannerPilotSession active;
+		lock (_cleanupSync)
+		{
+			if (!_inputWriteBehind.TryGetValue(sessionId, out var state) || !state.HasPending)
+				return InputFlushAttempt.Success(0, 0, null);
+			pending = new PendingInputSnapshot(state.Generation, state.Sequence);
+			if (_terminating.Contains(sessionId))
+				return InputFlushAttempt.Success(pending.Generation, pending.Sequence, null);
+			if (!_active.TryGetValue(sessionId, out active!))
+				return InputFlushAttempt.Failure(
+					pending.Generation,
+					pending.Sequence,
+					OperationResult.Failure(
+						ErrorCode.NotFound,
+						"Scanner input write-behind session is no longer addressable."));
+		}
+
+		cancellationToken.ThrowIfCancellationRequested();
+		var continued = Continue(active);
+		if (continued.Failed)
+			return InputFlushAttempt.Failure(
+				pending.Generation,
+				pending.Sequence,
+				OperationResult.Failure(continued.Error!.Code, continued.Error.Message));
+		var scanner = ResolveState(active.ScannerId);
+		if (scanner.Failed)
+			return InputFlushAttempt.Failure(
+				pending.Generation,
+				pending.Sequence,
+				OperationResult.Failure(scanner.Error!.Code, scanner.Error.Message));
+		if (scanner.Value.State.PilotCharacterId != active.Actor.CharacterId)
+		{
+			RemoveInputWriteBehind(sessionId);
+			return InputFlushAttempt.Success(pending.Generation, pending.Sequence, null);
+		}
+		if (scanner.Value.State.LastAcceptedInputSequence >= pending.Sequence)
+		{
+			MarkInputPersisted(sessionId, pending.Generation, pending.Sequence);
+			return InputFlushAttempt.Success(pending.Generation, pending.Sequence, null);
+		}
+
+		var unitOfWork = _repositories.Provider.BeginUnitOfWork();
+		unitOfWork.Require(continued.Value);
+		var editor = unitOfWork.Edit(_repositories.SceneEntities, scanner.Value.Document);
+		if (editor is null)
+		{
+			await HL2RPUnitOfWork.DisposeAsync(unitOfWork);
+			return InputFlushAttempt.Failure(
+				pending.Generation,
+				pending.Sequence,
+				OperationResult.Failure(ErrorCode.Conflict, "Scanner state changed during input write-behind."));
+		}
+		editor.Replace(editor.Value with
+		{
+			State = HL2RPPersistence.Payload(
+				HL2RPPersistence.ScannerState,
+				scanner.Value.State with { LastAcceptedInputSequence = pending.Sequence })
+		});
+		unitOfWork.Save(editor);
+		var committed = await HL2RPUnitOfWork.CommitAndDisposeAsync(unitOfWork, cancellationToken);
+		if (!committed.Succeeded)
+			return InputFlushAttempt.Failure(
+				pending.Generation,
+				pending.Sequence,
+				ScannerPersistence.Failure(committed.Error!));
+
+		MarkInputPersisted(sessionId, pending.Generation, pending.Sequence);
+		_commitSink.Observe(new ScannerInputPersistenceReceipt(
+			active,
+			pending.Sequence,
+			committed.Value!.Sequence,
+			committed.Value));
+		return InputFlushAttempt.Success(pending.Generation, pending.Sequence, committed.Value);
+	}
+
+	private PendingInputSnapshot? CapturePendingInput(InteractionSessionId sessionId)
+	{
+		lock (_cleanupSync)
+			return _inputWriteBehind.TryGetValue(sessionId, out var state) && state.HasPending
+				? new PendingInputSnapshot(state.Generation, state.Sequence)
+				: null;
+	}
+
+	private void MarkInputPersisted(
+		InteractionSessionId sessionId,
+		long capturedGeneration,
+		long persistedSequence)
+	{
+		InputFlushOperation? cancel = null;
+		lock (_cleanupSync)
+		{
+			if (!_inputWriteBehind.TryGetValue(sessionId, out var state) || !state.HasPending ||
+				state.Generation > capturedGeneration || state.Sequence > persistedSequence)
+				return;
+			state.HasPending = false;
+			cancel = state.Scheduled;
+			if (cancel is null) _inputWriteBehind.Remove(sessionId);
+		}
+		TryCancel(cancel);
+	}
+
+	private void CancelScheduledInputFlush(InteractionSessionId sessionId)
+	{
+		InputFlushOperation? operation;
+		lock (_cleanupSync)
+			operation = _inputWriteBehind.TryGetValue(sessionId, out var state)
+				? state.Scheduled
+				: null;
+		TryCancel(operation);
+	}
+
+	private void RemoveInputWriteBehind(InteractionSessionId sessionId)
+	{
+		InputFlushOperation? operation;
+		lock (_cleanupSync)
+		{
+			if (!_inputWriteBehind.Remove(sessionId, out var state)) return;
+			operation = state.Scheduled;
+		}
+		TryCancel(operation);
+	}
+
+	private OperationResult RemoveInputWriteBehindAndSucceed(InteractionSessionId sessionId)
+	{
+		RemoveInputWriteBehind(sessionId);
+		return OperationResult.Success();
+	}
+
+	private async Task<IReadOnlyList<ScannerInputFlushFailure>> DrainInputWriteBehindAsync(
+		CancellationToken cancellationToken)
+	{
+		while (true)
+		{
+			InputFlushOperation[] scheduled;
+			lock (_cleanupSync)
+				scheduled = _inputWriteBehind.Values
+					.Where(value => value.Scheduled is not null)
+					.Select(value => value.Scheduled!)
+					.ToArray();
+			if (scheduled.Length == 0) break;
+			foreach (var operation in scheduled) TryCancel(operation);
+			foreach (var operation in scheduled)
+				await AwaitCleanupAsync(operation.Completion.Task, cancellationToken);
+		}
+
+		InteractionSessionId[] pendingSessions;
+		lock (_cleanupSync)
+			pendingSessions = _inputWriteBehind
+				.Where(value => value.Value.HasPending && !_terminating.Contains(value.Key))
+				.Select(value => value.Key)
+				.ToArray();
+		var failures = new List<ScannerInputFlushFailure>();
+		foreach (var sessionId in pendingSessions)
+		{
+			while (true)
+			{
+				var pending = CapturePendingInput(sessionId);
+				if (pending is null) break;
+				var flushed = await FlushPendingInputOnceAsync(sessionId, cancellationToken);
+				if (flushed.Result.Failed)
+				{
+					bool terminating;
+					SceneEntityId scannerId;
+					lock (_cleanupSync)
+					{
+						terminating = _terminating.Contains(sessionId);
+						scannerId = _active.TryGetValue(sessionId, out var active)
+							? active.ScannerId
+							: default;
+					}
+					if (!terminating && scannerId.Value != Guid.Empty)
+						failures.Add(new ScannerInputFlushFailure(
+							sessionId, scannerId, pending.Sequence, flushed.Result.Error!));
+					break;
+				}
+				var remaining = CapturePendingInput(sessionId);
+				if (remaining is null || remaining.Generation <= pending.Generation) break;
+			}
+		}
+		return Array.AsReadOnly(failures.ToArray());
+	}
+
+	private static void TryCancel(InputFlushOperation? operation)
+	{
+		if (operation is null) return;
+		try { operation.Cancellation.Cancel(); }
+		catch (ObjectDisposedException) { }
+	}
+
 	private async ValueTask<OperationResult> ExitCoreAsync(
 		ScannerPilotSession active,
 		string reason,
 		CancellationToken cancellationToken)
 	{
 		cancellationToken.ThrowIfCancellationRequested();
-		var cleanup = BeginCleanup(active, reason);
+		var cleanup = BeginCleanup(active, reason, cancellationToken);
 		_authority.Close(active.SessionId);
 		return await cleanup;
 	}
@@ -600,7 +1032,10 @@ public sealed class ScannerPilotService
 			_ = BeginCleanup(active, revoked.RevokeReason ?? "session_revoked");
 	}
 
-	private Task<OperationResult> BeginCleanup(ScannerPilotSession active, string reason)
+	private Task<OperationResult> BeginCleanup(
+		ScannerPilotSession active,
+		string reason,
+		CancellationToken cancellationToken = default)
 	{
 		CleanupOperation operation;
 		var restoreBody = false;
@@ -608,10 +1043,16 @@ public sealed class ScannerPilotService
 		{
 			if (_cleanupOperations.TryGetValue(active.SessionId, out var existing))
 				return existing.Completion.Task;
+			if (_recoveryHandles.TryGetValue(active.SessionId, out var recovery))
+				return Task.FromResult(OperationResult.Failure(
+					recovery.LastError.Code,
+					recovery.LastError.Message,
+					recovery.LastError.Details));
 			restoreBody = _terminating.Add(active.SessionId);
-			operation = new CleanupOperation(active, reason);
+			operation = new CleanupOperation(active, reason, cancellationToken, null);
 			_cleanupOperations.Add(active.SessionId, operation);
 		}
+		CancelScheduledInputFlush(active.SessionId);
 
 		if (restoreBody)
 		{
@@ -629,22 +1070,22 @@ public sealed class ScannerPilotService
 
 	private async Task CompleteCleanupAsync(CleanupOperation operation)
 	{
-		OperationResult result;
+		CleanupAttemptResult outcome;
 		try
 		{
-			while (true)
-			{
-				result = await ClearPersistedPilotWithRetryAsync(
-					operation.Session, operation.Reason, operation.BoundaryError);
-				if (result.Succeeded || !CanRetryCleanup(result)) break;
-				await _cleanupDelay(CleanupRetryDelay);
-			}
+			outcome = await ClearPersistedPilotWithRetryAsync(
+				operation.Session,
+				operation.Reason,
+				operation.BoundaryError,
+				operation.CancellationToken);
 		}
 		catch (Exception exception)
 		{
-			result = OperationResult.Failure(ErrorCode.InternalError,
-				$"Scanner pilot cleanup failed unexpectedly: {exception.Message}");
+			outcome = new CleanupAttemptResult(OperationResult.Failure(
+				ErrorCode.InternalError,
+				$"Scanner pilot cleanup failed before its retry round completed: {exception.Message}"), 0);
 		}
+		var result = outcome.Result;
 
 		lock (_cleanupSync)
 		{
@@ -652,7 +1093,18 @@ public sealed class ScannerPilotService
 			{
 				_active.Remove(operation.Session.SessionId);
 				_terminating.Remove(operation.Session.SessionId);
+				_recoveryHandles.Remove(operation.Session.SessionId);
 			}
+			else
+				_recoveryHandles[operation.Session.SessionId] = new ScannerCleanupRecoveryHandle(
+					operation.Session.SessionId,
+					operation.Session.Actor,
+					operation.Session.ScannerId,
+					operation.Reason,
+					outcome.Attempts,
+					result.Error!,
+					operation.RecoveryCreatedAtUtc ?? _clock.UtcNow,
+					operation.BoundaryError);
 			_cleanupOperations.Remove(operation.Session.SessionId);
 		}
 		operation.Completion.TrySetResult(result);
@@ -665,33 +1117,73 @@ public sealed class ScannerPilotService
 			_repositories.Provider.Health.Status != PersistenceHealthStatus.Fatal;
 	}
 
-	private async Task<OperationResult> ClearPersistedPilotWithRetryAsync(
+	private async Task<CleanupAttemptResult> ClearPersistedPilotWithRetryAsync(
 		ScannerPilotSession active,
 		string reason,
-		OperationError? boundaryError)
+		OperationError? boundaryError,
+		CancellationToken cancellationToken)
 	{
 		OperationResult result = OperationResult.Failure(ErrorCode.Conflict, "Scanner cleanup did not run.");
-		for (var attempt = 0; attempt < CleanupMaximumAttempts; attempt++)
+		for (var attempt = 1; attempt <= CleanupMaximumAttempts; attempt++)
 		{
-			result = await ClearPersistedPilotOnceAsync(active, reason, boundaryError);
-			if (result.Succeeded || !CanRetryCleanup(result)) return result;
+			try
+			{
+				cancellationToken.ThrowIfCancellationRequested();
+				result = await ClearPersistedPilotOnceAsync(
+					active, reason, boundaryError, cancellationToken);
+			}
+			catch (OperationCanceledException)
+			{
+				return new CleanupAttemptResult(OperationResult.Failure(
+					ErrorCode.InternalError,
+					"Scanner pilot cleanup was canceled before durable recovery completed."), attempt);
+			}
+			catch (Exception exception)
+			{
+				result = OperationResult.Failure(ErrorCode.InternalError,
+					$"Scanner pilot cleanup failed unexpectedly: {exception.Message}");
+			}
+
+			if (result.Succeeded || !CanRetryCleanup(result) || attempt == CleanupMaximumAttempts)
+				return new CleanupAttemptResult(result, attempt);
+			try
+			{
+				await _cleanupDelay(CleanupRetryDelay, cancellationToken);
+			}
+			catch (OperationCanceledException)
+			{
+				return new CleanupAttemptResult(OperationResult.Failure(
+					ErrorCode.InternalError,
+					"Scanner pilot cleanup retry delay was canceled before durable recovery completed."), attempt);
+			}
+			catch (Exception exception)
+			{
+				return new CleanupAttemptResult(OperationResult.Failure(
+					ErrorCode.InternalError,
+					$"Scanner pilot cleanup retry delay failed: {exception.Message}"), attempt);
+			}
 		}
-		return result;
+		return new CleanupAttemptResult(result, CleanupMaximumAttempts);
 	}
 
 	private async Task<OperationResult> ClearPersistedPilotOnceAsync(
 		ScannerPilotSession active,
 		string reason,
-		OperationError? boundaryError)
+		OperationError? boundaryError,
+		CancellationToken cancellationToken)
 	{
 		var scanner = ResolveState(active.ScannerId);
 		if (scanner.Failed)
 			return scanner.Error!.Code == ErrorCode.NotFound
-				? OperationResult.Success()
+				? RemoveInputWriteBehindAndSucceed(active.SessionId)
 				: OperationResult.Failure(scanner.Error.Code, scanner.Error.Message);
 		if (scanner.Value.State.PilotCharacterId is null ||
 			scanner.Value.State.PilotCharacterId != active.Actor.CharacterId)
-			return OperationResult.Success();
+			return RemoveInputWriteBehindAndSucceed(active.SessionId);
+		var pendingInput = CapturePendingInput(active.SessionId);
+		var acceptedSequence = Math.Max(
+			scanner.Value.State.LastAcceptedInputSequence,
+			pendingInput?.Sequence ?? active.LastAcceptedSequence);
 		var unitOfWork = _repositories.Provider.BeginUnitOfWork();
 		var editor = unitOfWork.Edit(_repositories.SceneEntities, scanner.Value.Document);
 		if (editor is null)
@@ -702,11 +1194,17 @@ public sealed class ScannerPilotService
 		editor.Replace(editor.Value with
 		{
 			State = HL2RPPersistence.Payload(HL2RPPersistence.ScannerState,
-				scanner.Value.State with { PilotCharacterId = null, SpotlightEnabled = false })
+				scanner.Value.State with
+				{
+					PilotCharacterId = null,
+					SpotlightEnabled = false,
+					LastAcceptedInputSequence = acceptedSequence
+				})
 		});
 		unitOfWork.Save(editor);
-		var committed = await HL2RPUnitOfWork.CommitAndDisposeAsync(unitOfWork);
+		var committed = await HL2RPUnitOfWork.CommitAndDisposeAsync(unitOfWork, cancellationToken);
 		if (!committed.Succeeded) return ScannerPersistence.Failure(committed.Error!);
+		RemoveInputWriteBehind(active.SessionId);
 		_commitSink.Observe(new ScannerPilotCleanupReceipt(
 			active, reason, committed.Value!.Sequence, committed.Value, boundaryError));
 		return OperationResult.Success();
@@ -813,21 +1311,106 @@ public sealed class ScannerPilotService
 		return new OperationError(ErrorCode.InternalError, $"{first.Message} {second.Message}");
 	}
 
+	private static async Task<OperationResult> AwaitCleanupAsync(
+		Task<OperationResult> cleanup,
+		CancellationToken cancellationToken)
+	{
+		if (!cancellationToken.CanBeCanceled || cleanup.IsCompleted)
+			return await cleanup;
+
+		var completed = new TaskCompletionSource<OperationResult>(
+			TaskCreationOptions.RunContinuationsAsynchronously);
+		using var registration = cancellationToken.Register(
+			static state => ((TaskCompletionSource<OperationResult>)state!).TrySetCanceled(),
+			completed);
+		_ = ObserveCleanupCompletionAsync(cleanup, completed);
+		return await completed.Task;
+	}
+
+	private static async Task ObserveCleanupCompletionAsync(
+		Task<OperationResult> cleanup,
+		TaskCompletionSource<OperationResult> completion)
+	{
+		try { completion.TrySetResult(await cleanup); }
+		catch (OperationCanceledException) { completion.TrySetCanceled(); }
+		catch (Exception exception) { completion.TrySetException(exception); }
+	}
+
 	private sealed record ResolvedScanner(
 		DocumentSnapshot<PersistentSceneEntityRecord> Document,
 		ScannerEntityState State);
 
+	private sealed record PendingInputSnapshot(long Generation, long Sequence);
+
+	private sealed record InputFlushAttempt(
+		OperationResult Result,
+		long CapturedGeneration,
+		long CapturedSequence,
+		CommitReceipt? Commit,
+		bool WasCanceled)
+	{
+		public static InputFlushAttempt Success(
+			long generation,
+			long sequence,
+			CommitReceipt? commit) =>
+			new(OperationResult.Success(), generation, sequence, commit, false);
+
+		public static InputFlushAttempt Failure(
+			long generation,
+			long sequence,
+			OperationResult result) =>
+			new(result, generation, sequence, null, false);
+
+		public static InputFlushAttempt Canceled(long generation) =>
+			new(OperationResult.Success(), generation, 0, null, true);
+	}
+
+	private sealed class InputWriteBehindState
+	{
+		public long Generation { get; set; }
+		public long Sequence { get; set; }
+		public bool HasPending { get; set; }
+		public InputFlushOperation? Scheduled { get; set; }
+	}
+
+	private sealed class InputFlushOperation
+	{
+		public InputFlushOperation(InteractionSessionId sessionId, long scheduledGeneration)
+		{
+			SessionId = sessionId;
+			ScheduledGeneration = scheduledGeneration;
+			Cancellation = new CancellationTokenSource();
+			Completion = new TaskCompletionSource<OperationResult>(
+				TaskCreationOptions.RunContinuationsAsynchronously);
+		}
+
+		public InteractionSessionId SessionId { get; }
+		public long ScheduledGeneration { get; }
+		public CancellationTokenSource Cancellation { get; }
+		public TaskCompletionSource<OperationResult> Completion { get; }
+	}
+
+	private sealed record CleanupAttemptResult(OperationResult Result, int Attempts);
+
 	private sealed class CleanupOperation
 	{
-		public CleanupOperation(ScannerPilotSession session, string reason)
+		public CleanupOperation(
+			ScannerPilotSession session,
+			string reason,
+			CancellationToken cancellationToken,
+			DateTimeOffset? recoveryCreatedAtUtc)
 		{
 			Session = session;
 			Reason = reason;
+			CancellationToken = cancellationToken;
+			RecoveryCreatedAtUtc = recoveryCreatedAtUtc;
 			Completion = new TaskCompletionSource<OperationResult>(TaskCreationOptions.RunContinuationsAsynchronously);
 		}
 
 		public ScannerPilotSession Session { get; }
 		public string Reason { get; }
+		public CancellationToken CancellationToken { get; }
+		public DateTimeOffset? RecoveryCreatedAtUtc { get; }
 		public TaskCompletionSource<OperationResult> Completion { get; }
 		public OperationError? BoundaryError { get; set; }
 	}
@@ -863,6 +1446,10 @@ internal static class ScannerPersistence
 		PersistenceErrorCode.AlreadyExists or PersistenceErrorCode.RevisionConflict => ErrorCode.Conflict,
 		PersistenceErrorCode.TypeNotRegistered or PersistenceErrorCode.CollectionTypeMismatch => ErrorCode.PersistedTypeInvalid,
 		PersistenceErrorCode.InvalidOperation => ErrorCode.InvalidArgument,
+		PersistenceErrorCode.InvariantViolation => ErrorCode.InvariantViolation,
+		PersistenceErrorCode.LeaseUnavailable => ErrorCode.LeaseUnavailable,
+		PersistenceErrorCode.StorageLimitExceeded => ErrorCode.StorageLimitExceeded,
+		PersistenceErrorCode.StaleTransaction => ErrorCode.StaleTransaction,
 		_ => ErrorCode.InternalError
 	};
 }

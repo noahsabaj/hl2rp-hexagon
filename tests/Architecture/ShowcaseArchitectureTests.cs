@@ -62,6 +62,87 @@ public sealed class ShowcaseArchitectureTests
 	}
 
 	[TestMethod]
+	public void PlatformChatAndClientObjectMutationAreFailClosed()
+	{
+		var root = FindRoot();
+		var platform = File.ReadAllText( Path.Combine( root, "ProjectSettings", "Platform.config" ) );
+		StringAssert.Contains( platform, "\"ChatEnabled\": false" );
+		StringAssert.Contains( platform, "\"ChatShowUI\": false" );
+		var networking = File.ReadAllText( Path.Combine( root, "ProjectSettings", "Networking.config" ) );
+		foreach ( var permission in new[]
+		{
+			"\"ClientsCanSpawnObjects\": false",
+			"\"ClientsCanRefreshObjects\": false",
+			"\"ClientsCanDestroyObjects\": false"
+		} ) StringAssert.Contains( networking, permission );
+		StringAssert.Contains( networking, "\"UpdateRate\": 30" );
+		var source = File.ReadAllText( Path.Combine( root, "Code", "Runtime", "HL2RPSchemaSourceSystem.cs" ) );
+		StringAssert.Contains( source, "Component, IChatEvent" );
+		StringAssert.Contains( source, "message.Suppress = true" );
+	}
+
+	[TestMethod]
+	public void SpatialAuthorityUsesOnlyTheHostSimulatedBody()
+	{
+		var root = FindRoot();
+		var authorityFiles = new[]
+		{
+			Path.Combine( root, "Code", "Runtime", "HL2RPHostApplication.cs" ),
+			Path.Combine( root, "Code", "Runtime", "HL2RPSandboxBoundaries.cs" ),
+			Path.Combine( root, "Code", "Runtime", "HL2RPSceneRuntime.cs" )
+		};
+		var source = string.Join( "\n", authorityFiles.Select( File.ReadAllText ) );
+		StringAssert.Contains( source, "AuthoritativeBody" );
+		Assert.IsFalse( source.Contains( "PlayableBody", StringComparison.Ordinal ) );
+		Assert.IsFalse( source.Contains( "Player.GameObject", StringComparison.Ordinal ) );
+		StringAssert.Contains( source, "controller.EyeAngles.ToRotation().Forward" );
+		StringAssert.Contains( source, "ConfigureAuthoritativePlayerBody" );
+		StringAssert.Contains( source, "controller.BodyCollisionTags = new TagSet()" );
+		StringAssert.Contains( source, "TryGetUsableAuthoritativeBody" );
+		StringAssert.Contains( source, "WithoutTags( \"prediction\" )" );
+		StringAssert.Contains( source, "HL2RPObjectHierarchy.Contains" );
+		StringAssert.Contains( source, "HL2RPCharacterLifecycleGate" );
+		StringAssert.Contains( source, "_access.OpenConnection( connectionId )" );
+		StringAssert.Contains( source, "HL2RPSceneFeatureAdmission.Evaluate" );
+		var showcase = File.ReadAllText( Path.Combine( root, "Code", "World", "ShowcaseComponents.cs" ) );
+		var worldItems = File.ReadAllText( Path.Combine( root, "Code", "Runtime", "HL2RPWorldItemPressable.cs" ) );
+		StringAssert.Contains( showcase, "HexPlayerBody.IsLocalPredictionSource( e.Source )" );
+		StringAssert.Contains( worldItems, "HexPlayerBody.IsLocalPredictionSource( e.Source )" );
+	}
+
+	[TestMethod]
+	public void HostLifecycleAndWorldEffectsAreOwnedAndDrained()
+	{
+		var source = File.ReadAllText( Path.Combine( FindRoot(), "Code", "Runtime", "HL2RPHostApplication.cs" ) );
+		StringAssert.Contains( source, "IHexHostApplication, IWorldItemReconciliationBoundary" );
+		StringAssert.Contains( source, "AsyncOperationRegistry _lifecycleOperations" );
+		StringAssert.Contains( source, "_worldReconciler.ReconcileStartupAsync" );
+		StringAssert.Contains( source, "_worldReconciler.ReconcileCommittedAsync" );
+		StringAssert.Contains( source, "ErrorCode.ReconciliationPending" );
+		Assert.IsFalse( source.Contains( "RestoreWorldItem", StringComparison.Ordinal ) );
+		Assert.IsFalse( source.Contains( "_pendingLifecycle", StringComparison.Ordinal ) );
+
+		var dispose = source.IndexOf( "public async ValueTask DisposeAsync()", StringComparison.Ordinal );
+		var stopAdmission = source.IndexOf( "_lifecycleOperations.StopAdmission()", dispose, StringComparison.Ordinal );
+		var lifecycleDrain = source.IndexOf( "_lifecycleOperations.DrainAsync()", dispose, StringComparison.Ordinal );
+		var scannerDrain = source.IndexOf( "_scanner.DrainCleanupAsync()", dispose, StringComparison.Ordinal );
+		var pistolDrain = source.IndexOf( "_pistol.ReconcileRaisedPistolsAsync()", dispose, StringComparison.Ordinal );
+		var worldDrain = source.IndexOf( "_worldReconciler.DrainAsync()", dispose, StringComparison.Ordinal );
+		var recoveryMarker = source.IndexOf( "CompleteQuiescedShutdown", dispose, StringComparison.Ordinal );
+		Assert.IsGreaterThanOrEqualTo( 0, dispose );
+		Assert.IsLessThan( lifecycleDrain, stopAdmission, "Lifecycle admission must close before drain." );
+		Assert.IsLessThan( scannerDrain, lifecycleDrain, "Lifecycle work must drain before scanner cleanup." );
+		Assert.IsLessThan( pistolDrain, scannerDrain, "Scanner cleanup must precede pistol reconciliation." );
+		Assert.IsLessThan( worldDrain, pistolDrain, "Pistol reconciliation must precede world drain." );
+		Assert.IsLessThan( recoveryMarker, worldDrain, "Recovery evidence must follow world drain." );
+
+		StringAssert.Contains( source, "if ( !gameObject.NetworkSpawn( new NetworkSpawnOptions" );
+		StringAssert.Contains( source, "StartEnabled = false" );
+		StringAssert.Contains( source, "OwnerTransfer = OwnerTransfer.Fixed" );
+		StringAssert.Contains( source, "_worldObjects[itemId] = gameObject" );
+	}
+
+	[TestMethod]
 	public void UiReadsSnapshotsAndCommandsOnly()
 	{
 		var uiRoot = Path.Combine( FindRoot(), "Code", "UI" );

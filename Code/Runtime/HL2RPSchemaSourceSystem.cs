@@ -17,9 +17,17 @@ namespace HL2RP.V2.Runtime;
 public sealed class HL2RPSchemaSourceSystem : GameObjectSystem<HL2RPSchemaSourceSystem>, IHexSchemaSource
 {
 	private HL2RPHostApplication? _host;
+	private readonly GameObject _platformChatGuard;
 
-	public HL2RPSchemaSourceSystem( Scene scene ) : base( scene ) =>
+	public HL2RPSchemaSourceSystem( Scene scene ) : base( scene )
+	{
+		_platformChatGuard = new GameObject( scene, true, "HL2RP Platform Chat Guard" )
+		{
+			NetworkMode = NetworkMode.Never
+		};
+		_platformChatGuard.AddComponent<HL2RPPlatformChatSuppressor>();
 		Listen( Stage.FinishUpdate, 200, Tick, "HL2RP v2 host maintenance" );
+	}
 
 	void IHexSchemaSource.CollectSchemas( SchemaSourceCollector collector ) => collector.Register(
 		new HexSchemaRuntimeDescriptor
@@ -43,4 +51,16 @@ public sealed class HL2RPSchemaSourceSystem : GameObjectSystem<HL2RPSchemaSource
 	{
 		_host?.RequestMaintenanceTick();
 	}
+
+	public override void Dispose()
+	{
+		if ( _platformChatGuard.IsValid() ) _platformChatGuard.Destroy();
+		base.Dispose();
+	}
+}
+
+/// <summary>Defense in depth when platform chat configuration drifts.</summary>
+internal sealed class HL2RPPlatformChatSuppressor : Component, IChatEvent
+{
+	void IChatEvent.OnChatMessage( ChatMessageEvent message ) => message.Suppress = true;
 }

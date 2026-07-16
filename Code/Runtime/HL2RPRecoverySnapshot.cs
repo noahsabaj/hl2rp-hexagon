@@ -1,6 +1,8 @@
 #nullable enable
 
 using System;
+using Hexagon.V2.Kernel;
+using Hexagon.V2.Persistence;
 
 namespace HL2RP.V2.Runtime;
 
@@ -88,5 +90,30 @@ public sealed class HL2RPRecoverySnapshotLifecycle
 			markerSink( capture().Format( HL2RPRecoverySnapshotPhase.PreShutdown ) );
 		_shutdownSnapshotCompleted = true;
 		return !_suppressMarkers;
+	}
+
+	public OperationResult CompleteAfterPersistence(
+		PersistenceShutdownResult persistenceShutdown,
+		HL2RPRecoverySnapshot snapshot,
+		Action<string> markerSink )
+	{
+		ArgumentNullException.ThrowIfNull( persistenceShutdown );
+		ArgumentNullException.ThrowIfNull( snapshot );
+		ArgumentNullException.ThrowIfNull( markerSink );
+		if ( !persistenceShutdown.IsClean )
+			return OperationResult.Failure(
+				ErrorCode.InternalError,
+				"Recovery evidence requires a clean persistence shutdown." );
+		try
+		{
+			_ = CompleteQuiescedShutdown( () => snapshot, markerSink );
+			return OperationResult.Success();
+		}
+		catch ( Exception exception )
+		{
+			return OperationResult.Failure(
+				ErrorCode.InternalError,
+				$"Recovery evidence could not be emitted: {exception.Message}" );
+		}
 	}
 }

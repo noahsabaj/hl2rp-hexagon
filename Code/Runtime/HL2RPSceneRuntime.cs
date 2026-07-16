@@ -170,7 +170,7 @@ internal sealed class HL2RPServerInteractionWorld : IServerInteractionWorld
 	{
 		var actor = _actors( connectionId );
 		if ( actor is null || actor.Character.Id != characterId ||
-			!actor.Body.IsValid() ||
+			!actor.Body.IsValid() || !actor.Body.Enabled ||
 			!TryTargetPosition( target, out var targetPosition ) )
 		{
 			context = null!;
@@ -195,7 +195,10 @@ internal sealed class HL2RPServerInteractionWorld : IServerInteractionWorld
 	{
 		var start = new Vector3( context.ActorPosition.X, context.ActorPosition.Y, context.ActorPosition.Z );
 		var end = new Vector3( context.TargetPosition.X, context.TargetPosition.Y, context.TargetPosition.Z );
-		var result = _scene.Trace.Ray( start, end ).Run();
+		var trace = _scene.Trace.Ray( start, end ).WithoutTags( "prediction" );
+		var actor = _actors( context.ConnectionId );
+		if ( actor is not null && actor.Body.IsValid() ) trace = trace.IgnoreGameObjectHierarchy( actor.Body.Root );
+		var result = trace.Run();
 		return !result.Hit || result.Distance >= Vector3.DistanceBetween( start, end ) - 32f;
 	}
 
@@ -209,7 +212,8 @@ internal sealed class HL2RPServerInteractionWorld : IServerInteractionWorld
 			return true;
 		}
 		if ( target.Kind == InteractionTargetKind.Character &&
-			_players( new CharacterId( target.Id ) )?.PlayableBody is GameObject body )
+			_players( new CharacterId( target.Id ) ) is { } player &&
+			player.TryGetUsableAuthoritativeBody( out var body ) )
 		{
 			var point = body.WorldPosition;
 			position = new WorldPoint( point.x, point.y, point.z );

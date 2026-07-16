@@ -16,6 +16,7 @@ namespace HL2RP.V2.Tests.Features;
 
 internal sealed class FeatureTestEnvironment : IAsyncDisposable
 {
+	private readonly HashSet<ConnectionId> _openConnections = new();
 	private FeatureTestEnvironment(
 		FaultPersistenceProvider provider,
 		CompiledSchema schema )
@@ -137,7 +138,9 @@ internal sealed class FeatureTestEnvironment : IAsyncDisposable
 		if ( !indexed.Succeeded ) throw new InvalidOperationException( indexed.Error!.Message );
 	}
 
-	public void Grant( InventoryActor actor, InventoryId inventory, InventoryCapability capabilities ) =>
+	public void Grant( InventoryActor actor, InventoryId inventory, InventoryCapability capabilities )
+	{
+		OpenConnection( actor.ConnectionId );
 		Access.Grant( new InventoryGrant
 		{
 			ConnectionId = actor.ConnectionId,
@@ -146,12 +149,15 @@ internal sealed class FeatureTestEnvironment : IAsyncDisposable
 			Capabilities = capabilities,
 			Kind = InventoryGrantKind.Character
 		} );
+	}
 
 	public void GrantSession(
 		InventoryActor actor,
 		InventoryId inventory,
 		InventoryCapability capabilities,
-		InteractionSessionId sessionId ) =>
+		InteractionSessionId sessionId )
+	{
+		OpenConnection( actor.ConnectionId );
 		Access.Grant( new InventoryGrant
 		{
 			ConnectionId = actor.ConnectionId,
@@ -161,6 +167,12 @@ internal sealed class FeatureTestEnvironment : IAsyncDisposable
 			Kind = InventoryGrantKind.InteractionSession,
 			SessionId = sessionId
 		} );
+	}
+
+	private void OpenConnection( ConnectionId connectionId )
+	{
+		if ( _openConnections.Add( connectionId ) ) Access.OpenConnection( connectionId );
+	}
 
 	public static PolicyPipeline<HL2RPFeaturePolicyContext> AllowPolicy() => new(
 		new PolicyHandler<HL2RPFeaturePolicyContext>( "built_in", new FixedPolicy( PolicyDecision.Allow() ) ) );
