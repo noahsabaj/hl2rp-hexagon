@@ -583,7 +583,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 		if ( IsVerification && !_probeStarted )
 		{
 			cancellationToken.ThrowIfCancellationRequested();
-			if ( _clients.Count == 0 && _verificationActor is null ) return;
+			if ( _verificationActor is null ) return;
 			_probeStarted = true;
 			await RunVerificationProbeAsync();
 		}
@@ -3597,22 +3597,38 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 
 	private async ValueTask RunVerificationProbeAsync()
 	{
-		ConnectionId connectionId;
-		AccountId account;
-		ClientBinding? connectedClient = null;
-		if ( _clients.Count > 0 )
+		try
 		{
-			var client = _clients.OrderBy( value => value.Key.Value ).First();
-			connectionId = client.Key;
-			account = client.Value.AccountId;
-			connectedClient = client.Value;
+			await RunVerificationProbeCoreAsync();
 		}
-		else if ( _verificationActor is VerificationActorBinding verification )
+		catch ( Exception exception )
 		{
-			connectionId = verification.ConnectionId;
-			account = verification.AccountId;
+			// A failed probe must not leave a live host running on partially committed
+			// probe data; verification runs are one-shot and their outcome is the
+			// sentinel below plus the shutdown both branches share.
+			Log.Error(
+				$"HL2RP_PROBE_FAILED probe={_context.VerificationProbe} " +
+				$"detail=\"{exception.GetType().Name}: {exception.Message}\"" );
 		}
-		else throw new InvalidOperationException( "Verification actor was not initialized." );
+		finally
+		{
+			// The probe runs inside the maintenance supervisor. Starting shutdown is
+			// synchronous, but awaiting it here would deadlock when application disposal
+			// waits for this maintenance tick to return.
+			if ( HexagonRuntimeSystem.Current is not null )
+				_ = HexagonRuntimeSystem.Current.ShutdownAsync();
+		}
+	}
+
+	private async ValueTask RunVerificationProbeCoreAsync()
+	{
+		// The probe always runs as the synthetic verification actor: it durably mutates
+		// its store and terminates the host, so it must never hijack a real connected
+		// player's binding even when a client races the first maintenance tick.
+		if ( _verificationActor is not VerificationActorBinding verification )
+			throw new InvalidOperationException( "Verification actor was not initialized." );
+		var connectionId = verification.ConnectionId;
+		var account = verification.AccountId;
 
 		if ( _context.VerificationProbe == "commit" )
 		{
@@ -3633,11 +3649,13 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 				}, CancellationToken.None );
 				if ( created.Failed ) throw new InvalidOperationException( created.Error!.Message );
 			}
-			var probeCharacter = _characters.ListForAccount( account ).Single( value => value.Name == "Verification Citizen" );
-			var actor = connectedClient is null
-				? LoadVerificationProbeCharacter( connectionId, account, probeCharacter )
-				: LoadConnectedProbeCharacter( connectionId, connectedClient, probeCharacter );
-			var machine = _features.Single( value => value.Value is HL2RPVendingMachineComponent );
+			var probeCharacter = RequireSingleProbeCharacter( account );
+			var actor = LoadVerificationProbeCharacter( connectionId, account, probeCharacter );
+			var machines = _features.Where( value => value.Value is HL2RPVendingMachineComponent ).ToArray();
+			if ( machines.Length != 1 )
+				throw new InvalidOperationException(
+					$"Expected exactly one vending machine feature; found {machines.Length}." );
+			var machine = machines[0];
 			var actorState = ResolveInteractionActorState( actor.ConnectionId ) ??
 				throw new InvalidOperationException( "Verification interaction actor is unavailable." );
 			actorState.Body.WorldPosition = machine.Value.GameObject.WorldPosition;
@@ -3658,18 +3676,18 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 		}
 		else if ( _context.VerificationProbe == "recover" )
 		{
-			var probeCharacter = _characters.ListForAccount( account ).SingleOrDefault( value => value.Name == "Verification Citizen" );
-			if ( probeCharacter is null )
-				throw new InvalidOperationException( "Verification character was not recovered." );
-			_ = connectedClient is null
-				? LoadVerificationProbeCharacter( connectionId, account, probeCharacter )
-				: LoadConnectedProbeCharacter( connectionId, connectedClient, probeCharacter );
+			var probeCharacter = RequireSingleProbeCharacter( account );
+			_ = LoadVerificationProbeCharacter( connectionId, account, probeCharacter );
 			var main = MainInventory( probeCharacter.Id );
 			if ( main is null || !main.Placements.Any( placement =>
 				_repositories.Items.Find( DomainKeys.Item( placement.ItemId ) )?.Value.Definition.Value == HL2RPIds.Items.Water ) )
 				throw new InvalidOperationException( "Verification machine purchase was not recovered." );
-			var machine = _repositories.SceneEntities.All().Select( value => value.Value )
-				.Single( value => value.Kind == "vending_machine" );
+			var machineEntities = _repositories.SceneEntities.All().Select( value => value.Value )
+				.Where( value => value.Kind == "vending_machine" ).ToArray();
+			if ( machineEntities.Length != 1 )
+				throw new InvalidOperationException(
+					$"Expected exactly one persisted vending machine; found {machineEntities.Length}." );
+			var machine = machineEntities[0];
 			var machineState = HL2RPPersistence.MachineState.Deserialize( machine.State.Data, machine.State.TypeVersion );
 			if ( machineState.CooldownUntilUtc is null || probeCharacter.Balance >= 25 )
 				throw new InvalidOperationException( "Verification machine economy state was not recovered." );
@@ -3678,11 +3696,16 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 			Log.Info( $"HL2RP_PROBE_RECOVERED sequence={_context.Persistence.Health.Sequence} digest={digest}" );
 		}
 		else throw new InvalidOperationException( "Unknown verification probe." );
-		// The probe runs inside the maintenance supervisor. Starting shutdown is
-		// synchronous, but awaiting it here would deadlock when application disposal
-		// waits for this maintenance tick to return.
-		if ( HexagonRuntimeSystem.Current is not null )
-			_ = HexagonRuntimeSystem.Current.ShutdownAsync();
+	}
+
+	private CharacterRecord RequireSingleProbeCharacter( AccountId account )
+	{
+		var candidates = _characters.ListForAccount( account )
+			.Where( value => value.Name == "Verification Citizen" ).ToArray();
+		if ( candidates.Length != 1 )
+			throw new InvalidOperationException(
+				$"Expected exactly one verification character; found {candidates.Length}." );
+		return candidates[0];
 	}
 
 	private void SetBindingCharacter( ConnectionId connectionId, CharacterId? characterId )
@@ -3692,40 +3715,6 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 		_clients[connectionId] = binding with { CharacterId = characterId };
 		_projectionIndex.ObserveCharacterBindingChanged( connectionId, binding.CharacterId, characterId );
 		RefreshLiveConnection( connectionId );
-	}
-
-	private InventoryActor LoadConnectedProbeCharacter(
-		ConnectionId connectionId,
-		ClientBinding binding,
-		CharacterRecord character )
-	{
-		var main = MainInventory( character.Id ) ??
-			throw new InvalidOperationException( "Verification character main inventory was not recovered." );
-		var modelPath = _characterModels.ResolvePath( character.Model );
-		if ( modelPath.Failed ) throw new InvalidOperationException( modelPath.Error!.Message );
-		var body = binding.Player.HostBuildAuthoritativeBody( candidate =>
-		{
-			ConfigureAuthoritativePlayerBody( candidate, character );
-			candidate.AddComponent<SkinnedModelRenderer>().Model = Model.Load( modelPath.Value );
-		} );
-		if ( body.Failed ) throw new InvalidOperationException( body.Error!.Message );
-		_access.RevokeConnection( connectionId );
-		_access.OpenConnection( connectionId );
-		_access.Grant( new InventoryGrant
-		{
-			ConnectionId = connectionId,
-			CharacterId = character.Id,
-			InventoryId = main.Id,
-			Capabilities = CharacterCapabilities,
-			Kind = InventoryGrantKind.Character
-		} );
-		SetBindingCharacter( connectionId, character.Id );
-		// The verification probe consumes host spatial authority immediately rather
-		// than returning through the normal command-publication path. Publish the
-		// canonical character snapshot now so body eligibility and the probe observe
-		// the same session state.
-		PublishConnections( new[] { connectionId }, invalidateRuntime: true );
-		return new InventoryActor( connectionId, binding.AccountId, character.Id );
 	}
 
 	private InventoryActor LoadVerificationProbeCharacter(
