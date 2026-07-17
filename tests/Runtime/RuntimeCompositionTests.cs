@@ -164,18 +164,16 @@ public sealed class RuntimeCompositionTests
 		var host = HL2RPTestSource.WithoutComments( Path.Combine( root, "Code", "Runtime", "HL2RPHostApplication.cs" ) );
 		foreach ( var route in new[]
 		{
-			"new CombatIntentService", "_combatIntent!.FireAsync", "ReconcileRaisedPistolsAsync",
-			"PurchaseFromMachineAsync", "_doorOwnership!.ClaimAsync", "_doorOwnership!.ReleaseAsync",
+			"new CombatIntentService", "ReconcileRaisedPistolsAsync",
 			"ReconcilePersistedPilotsAsync", "DrainCleanupAsync", "_executableActions.Validate",
-			"ExecutableItemActionRoute.HealthVialConsume", "ApplyScannerInputAsync",
 			"NearestCharacterTarget",
-			"_search!.Open", "scannerFeature is HL2RPScannerDockComponent", "UpdateRecordAsync",
-			"ConfigureAsync", "new HL2RPAuditLogHandler",
+			"scannerFeature is HL2RPScannerDockComponent",
+			"new HL2RPAuditLogHandler",
 			"audit: _audit", "IHL2RPSchemaCommandRoutes<RpcActor>.PublishAdministrationAudit(",
 			"var restraintAuthorization = new RestraintPermissionAuthorizer( _repositories, _chatAuthorities )",
 			"_restraintState, restraintAuthorization",
 			"IHL2RPSchemaCommandRoutes<RpcActor>.DoorOwnershipAsync(",
-			"_sceneBehavior!.ToggleDoorAsync", "_context.Configuration.Snapshot()",
+			"_context.Configuration.Snapshot()",
 			"HL2RPPersistenceInvariants.Profile"
 		} ) StringAssert.Contains( host, route );
 		// The snapshot/view builders moved to the engine-neutral presentation composer;
@@ -188,6 +186,18 @@ public sealed class RuntimeCompositionTests
 			"HL2RPItemDropAvailability.Project", "HL2RPItemActionAvailability.Project", "VendorSellAvailabilityFor",
 			"_host.NearestCharacterTarget", "_host.IsOwnableDoor"
 		} ) StringAssert.Contains( composer, route );
+		// The command route bodies moved to the engine-neutral command execution core;
+		// their service wiring is pinned against that source and the admission seams
+		// stay pinned on the host above.
+		var execution = HL2RPTestSource.WithoutComments( Path.Combine( root, "Code", "Runtime", "HL2RPCommandExecution.cs" ) );
+		foreach ( var route in new[]
+		{
+			"_services.CombatIntent!.FireAsync", "PurchaseFromMachineAsync",
+			"_services.DoorOwnership!.ClaimAsync", "_services.DoorOwnership!.ReleaseAsync",
+			"ExecutableItemActionRoute.HealthVialConsume", "ApplyScannerInputAsync",
+			"_services.Search!.Open", "UpdateRecordAsync", "ConfigureAsync",
+			"_services.SceneBehavior!.ToggleDoorAsync"
+		} ) StringAssert.Contains( execution, route );
 		var world = HL2RPTestSource.WithoutComments( Path.Combine( root, "Code", "Runtime", "HL2RPSceneRuntime.cs" ) );
 		StringAssert.Contains( world, "IsRestrained = _restraints.IsRestrained( characterId )" );
 		StringAssert.Contains( world, "new CharacterRestraintInteractable" );
@@ -1102,9 +1112,14 @@ public sealed class RuntimeCompositionTests
 		{
 			"_sessions.SessionRevoked += OnInteractionSessionRevoked",
 			"_sessions.SessionRevoked -= OnInteractionSessionRevoked",
-			"hl2rp.runtime.item_presentation",
-			"arguments.OptionalGuid( \"character\" )"
+			"hl2rp.runtime.item_presentation"
 		} ) StringAssert.Contains( host, required );
+		// The optional civic-subject argument is parsed by the neutral command
+		// execution core, which owns the CivicData route body.
+		StringAssert.Contains(
+			HL2RPTestSource.WithoutComments( Path.Combine(
+				root, "Code", "Runtime", "HL2RPCommandExecution.cs" ) ),
+			"arguments.OptionalGuid( \"character\" )" );
 
 		var presenter = HL2RPTestSource.WithoutComments( Path.Combine( root, "Code", "UI", "HL2RPClientPresenter.razor" ) );
 		StringAssert.Contains( presenter, "private void Introduce( CharacterId characterId )" );

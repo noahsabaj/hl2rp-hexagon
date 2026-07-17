@@ -130,7 +130,12 @@ public sealed class ShowcaseArchitectureTests
 		StringAssert.Contains( source, "AsyncOperationRegistry _lifecycleOperations" );
 		StringAssert.Contains( source, "_worldReconciler.ReconcileStartupAsync" );
 		StringAssert.Contains( source, "_worldReconciler.ReconcileCommittedAsync" );
-		StringAssert.Contains( source, "ErrorCode.ReconciliationPending" );
+		// The committed-but-pending disposition is surfaced by the neutral command
+		// execution core, which owns the drop/pickup reconciliation epilogue.
+		StringAssert.Contains(
+			HL2RPTestSource.WithoutComments( Path.Combine(
+				FindRoot(), "Code", "Runtime", "HL2RPCommandExecution.cs" ) ),
+			"ErrorCode.ReconciliationPending" );
 		Assert.IsFalse( source.Contains( "RestoreWorldItem", StringComparison.Ordinal ) );
 		Assert.IsFalse( source.Contains( "_pendingLifecycle", StringComparison.Ordinal ) );
 

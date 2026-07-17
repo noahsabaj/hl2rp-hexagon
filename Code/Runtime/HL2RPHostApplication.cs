@@ -32,7 +32,8 @@ namespace HL2RP.V2.Runtime;
 /// the relevant service has completed successfully.
 /// </summary>
 public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconciliationBoundary,
-	IHL2RPClientCommandRoutes<RpcActor>, IHL2RPSchemaCommandRoutes<RpcActor>, IHL2RPPresentationHost
+	IHL2RPClientCommandRoutes<RpcActor>, IHL2RPSchemaCommandRoutes<RpcActor>, IHL2RPPresentationHost,
+	IHL2RPCommandExecutionHost
 {
 	private const InventoryCapability CharacterCapabilities =
 		InventoryCapability.View | InventoryCapability.Move | InventoryCapability.TransferIn |
@@ -75,6 +76,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 	private readonly HL2RPPresentationSequence _itemPresentationSequence = new();
 	private readonly HL2RPProjectionIndex _projectionIndex = new();
 	private readonly HL2RPPresentationComposer _presentation;
+	private HL2RPCommandExecution? _execution;
 	private readonly HL2RPCivicSubjectSelections _civicSubjects = new();
 	private readonly HL2RPExecutableItemActionCatalog _executableActions =
 		HL2RPExecutableItemActionCatalog.CreateDefault();
@@ -416,6 +418,54 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 			HL2RPPersistenceInvariants.Profile ).Validate();
 		if ( !invariants.IsValid )
 			return OperationResult.Failure( invariants.Issues[0].Code, invariants.Issues[0].Message );
+		_execution = new HL2RPCommandExecution( new HL2RPCommandExecutionServices
+		{
+			Repositories = _repositories,
+			Clock = _clock,
+			Provider = _context.Persistence,
+			Audit = _audit,
+			Entitlements = _entitlements,
+			EntitlementQueries = _entitlementQueries,
+			EntitlementPresentationInvalidation = _entitlementPresentationInvalidation,
+			CivicSubjects = _civicSubjects,
+			ProjectionIndex = _projectionIndex,
+			ActiveRestraintActions = _activeRestraintActions,
+			ActivePistolActions = _activePistolActions,
+			ExecutableActions = _executableActions,
+			WorldReconciler = _worldReconciler,
+			Inventory = _inventory,
+			WorldItems = _worldItems,
+			ItemActions = _itemActions,
+			Chat = _chat,
+			Interactions = _interactions,
+			Sessions = _sessions,
+			Bags = _bags,
+			Tokens = _tokens,
+			CombineLocks = _combineLocks,
+			DoorOwnership = _doorOwnership,
+			SceneBehavior = _sceneBehavior,
+			Requests = _requests,
+			Civic = _civic,
+			Recognition = _recognition,
+			ObjectiveRouter = _objectiveRouter,
+			Radio = _radio,
+			Commerce = _commerce,
+			Documents = _documents,
+			PermitPurchases = _permitPurchases,
+			Restraints = _restraints,
+			Search = _search,
+			Scanner = _scanner,
+			Pistol = _pistol,
+			CombatIntent = _combatIntent,
+			HealthVials = _healthVials,
+			MainInventory = MainInventory,
+			CurrentSession = CurrentSession,
+			CanManageEntitlements = CanManageEntitlements,
+			IsKnownAccount = IsKnownAccount,
+			Warn = static message => Log.Warning( message ),
+			Fail = static message => Log.Error( message ),
+			Report = static ( exception, message ) => Log.Error( exception, message )
+		}, this );
 		_recoverySnapshots.CompleteInitialization(
 			CaptureRecoverySnapshot,
 			static marker => Log.Info( marker ) );
@@ -1099,51 +1149,20 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 		return OperationResult.Success();
 	}
 
-	private async ValueTask<OperationResult> ClearRaisedPistolsAsync(
+	private ValueTask<OperationResult> ClearRaisedPistolsAsync(
 		InventoryActor actor,
 		CommandProjectionDelta projectionDelta,
-		CancellationToken cancellationToken )
-	{
-		if ( _combatIntent is null ) return OperationResult.Success();
-		var cleared = await _combatIntent.ClearCharacterAsync( actor.CharacterId, cancellationToken );
-		if ( cleared.Failed ) return Failure( cleared.Error! );
-		if ( cleared.Value.Commit is not null )
-		{
-			projectionDelta.Observe( cleared.Value.Commit );
-			projectionDelta.Connections.Add( actor.ConnectionId );
-			projectionDelta.Characters.Add( actor.CharacterId );
-			projectionDelta.Items.UnionWith( cleared.Value.ChangedPistols );
-			var main = MainInventory( actor.CharacterId );
-			if ( main is not null ) projectionDelta.Inventories.Add( main.Id );
-		}
-		return OperationResult.Success();
-	}
+		CancellationToken cancellationToken ) =>
+		_execution is null
+			? new ValueTask<OperationResult>( OperationResult.Success() )
+			: _execution.ClearRaisedPistolsAsync( actor, projectionDelta, cancellationToken );
 
-	private async Task ClearRaisedPistolsForLifecycleAsync(
+	private Task ClearRaisedPistolsForLifecycleAsync(
 		InventoryActor actor,
-		CancellationToken cancellationToken )
-	{
-		var projectionDelta = new CommandProjectionDelta();
-		var cleared = await ClearRaisedPistolsAsync( actor, projectionDelta, cancellationToken );
-		if ( cleared.Failed )
-		{
-			Log.Error(
-				$"HL2RP pistol lifecycle cleanup failed for character {actor.CharacterId.Value:D}: " +
-				cleared.Error!.Message );
-			return;
-		}
-		if ( projectionDelta.Receipts.Count == 0 ) return;
-		PublishChanges(
-			new HL2RPPresentationChangeSet
-			{
-				Connections = projectionDelta.Connections.ToArray(),
-				Characters = projectionDelta.Characters.ToArray(),
-				Inventories = projectionDelta.Inventories.ToArray(),
-				Items = projectionDelta.Items.ToArray(),
-				RebuildLiveInventory = projectionDelta.Inventories.Count > 0 || projectionDelta.Items.Count > 0
-			},
-			projectionDelta.Receipts );
-	}
+		CancellationToken cancellationToken ) =>
+		_execution is null
+			? Task.CompletedTask
+			: _execution.ClearRaisedPistolsForLifecycleAsync( actor, cancellationToken );
 
 	private void UnloadBinding( ConnectionId connectionId, CharacterId characterId )
 	{
@@ -1173,7 +1192,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 			connectionId,
 			candidate => characterId is null || candidate.Actor.CharacterId == characterId ) )
 		{
-			CancelToken( action.Cancellation );
+			HL2RPCommandExecution.CancelToken( action.Cancellation );
 			if ( _restraints is not null )
 			{
 				var cancelled = _restraints.Cancel( action.Ticket.TicketId, action.Actor );
@@ -1184,14 +1203,14 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 		foreach ( var action in _activePistolActions.CancelForLifecycle(
 			connectionId,
 			candidate => characterId is null || candidate.Actor.CharacterId == characterId ) )
-			CancelToken( action.Cancellation );
+			HL2RPCommandExecution.CancelToken( action.Cancellation );
 	}
 
 	private void CancelAllTimedActionsForLifecycle()
 	{
 		foreach ( var action in _activeRestraintActions.CancelAllForLifecycle() )
 		{
-			CancelToken( action.Cancellation );
+			HL2RPCommandExecution.CancelToken( action.Cancellation );
 			if ( _restraints is not null )
 			{
 				var cancelled = _restraints.Cancel( action.Ticket.TicketId, action.Actor );
@@ -1200,20 +1219,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 			}
 		}
 		foreach ( var action in _activePistolActions.CancelAllForLifecycle() )
-			CancelToken( action.Cancellation );
-	}
-
-	private static void CancelToken( CancellationTokenSource cancellation )
-	{
-		try
-		{
-			cancellation.Cancel();
-		}
-		catch ( ObjectDisposedException )
-		{
-			// The action owner may have completed between the atomic state change
-			// and delivery of the best-effort pre-commit cancellation signal.
-		}
+			HL2RPCommandExecution.CancelToken( action.Cancellation );
 	}
 
 	private async ValueTask<OperationResult> MoveAsync(
@@ -1224,14 +1230,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 	{
 		var actor = RequireInventoryActor( rpc );
 		if ( actor.Failed ) return Failure( actor.Error! );
-		var result = await _inventory.MoveCommittedAsync(
-			actor.Value, command.SourceId, command.TargetId, command.ItemId, command.X, command.Y, cancellationToken );
-		if ( result.Succeeded )
-		{
-			projectionDelta.Observe( result.Value );
-			_bags?.ItemMoved( command.ItemId );
-		}
-		return Untyped( result );
+		return await _execution!.MoveAsync( actor.Value, command, projectionDelta, cancellationToken );
 	}
 
 	private async ValueTask<OperationResult> RunItemActionAsync(
@@ -1242,128 +1241,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 	{
 		var actor = RequireInventoryActor( rpc );
 		if ( actor.Failed ) return Failure( actor.Error! );
-		var item = _repositories.Items.Find( DomainKeys.Item( command.ItemId ) )?.Value;
-		if ( item is null ) return OperationResult.Failure( ErrorCode.NotFound, "Item was not found." );
-		if ( !_executableActions.TryResolve( item.Definition, command.ActionId, out var executable ) )
-			return OperationResult.Failure( ErrorCode.UnknownDefinition, "Item action has no executable host route." );
-		if ( executable.Route == ExecutableItemActionRoute.BagInteraction )
-			return Untyped( _bags!.Open( actor.Value, command.InventoryId, command.ItemId ) );
-		if ( executable.Route == ExecutableItemActionRoute.TokenSplit )
-		{
-			var amount = new HL2RPCommandArguments( command.Arguments ).Integer( "amount" );
-			if ( amount.Failed || amount.Value is <= 0 or > int.MaxValue )
-				return OperationResult.Failure( ErrorCode.InvalidArgument, "Token split amount is invalid." );
-			var split = await _tokens!.SplitAsync(
-				actor.Value, command.InventoryId, command.ItemId, (int)amount.Value, cancellationToken );
-			if ( split.Succeeded )
-			{
-				projectionDelta.Observe( split.Value );
-				projectionDelta.Inventories.Add( command.InventoryId );
-				projectionDelta.Items.Add( split.Value.PrimaryItemId );
-				if ( split.Value.SecondaryItemId is ItemId secondary ) projectionDelta.Items.Add( secondary );
-			}
-			return Untyped( split );
-		}
-		if ( executable.Route == ExecutableItemActionRoute.TokenCombine )
-		{
-			var other = new HL2RPCommandArguments( command.Arguments ).Guid( "other_item_id" );
-			if ( other.Failed ) return Failure( other.Error! );
-			var combined = await _tokens!.CombineAsync(
-				actor.Value, command.InventoryId, command.ItemId, new ItemId( other.Value ), cancellationToken );
-			if ( combined.Succeeded )
-			{
-				projectionDelta.Observe( combined.Value );
-				projectionDelta.Inventories.Add( command.InventoryId );
-				projectionDelta.Items.Add( combined.Value.PrimaryItemId );
-				if ( combined.Value.SecondaryItemId is ItemId secondary ) projectionDelta.Items.Add( secondary );
-			}
-			return Untyped( combined );
-		}
-		if ( executable.Route == ExecutableItemActionRoute.CombineLockInstall )
-		{
-			var session = CurrentSession( actor.Value, InteractionSessionKind.Door );
-			if ( session is null )
-				return OperationResult.Failure( ErrorCode.Unauthorized, "A current door session is required." );
-			var installed = await _combineLocks!.InstallAsync(
-				actor.Value, session.Id, command.InventoryId, command.ItemId, cancellationToken );
-			if ( installed.Succeeded )
-			{
-				projectionDelta.Observe( installed.Value );
-				projectionDelta.SceneEntities.Add( installed.Value.DoorEntityId );
-			}
-			return Untyped( installed );
-		}
-		if ( executable.Route == ExecutableItemActionRoute.HealthVialConsume )
-		{
-			var consumed = await _healthVials!.ConsumeAsync(
-				actor.Value, command.InventoryId, command.ItemId, cancellationToken );
-			if ( consumed.Succeeded )
-			{
-				projectionDelta.Observe( consumed.Value );
-				projectionDelta.Inventories.Add( command.InventoryId );
-				projectionDelta.Items.Add( consumed.Value.VialItemId );
-			}
-			return Untyped( consumed );
-		}
-		if ( executable.Route == ExecutableItemActionRoute.RadioTuning )
-		{
-			var frequency = new HL2RPCommandArguments( command.Arguments ).String( "frequency" );
-			if ( frequency.Failed ) return Failure( frequency.Error! );
-			var tuned = await _radio!.TuneAsync(
-				actor.Value, command.InventoryId, command.ItemId, frequency.Value, cancellationToken );
-			if ( tuned.Succeeded )
-			{
-				projectionDelta.Observe( tuned.Value );
-				projectionDelta.Items.Add( command.ItemId );
-			}
-			return Untyped( tuned );
-		}
-		if ( executable.Route == ExecutableItemActionRoute.RequestDevice )
-		{
-			var text = new HL2RPCommandArguments( command.Arguments ).String( "text" );
-			if ( text.Failed ) return Failure( text.Error! );
-			var requested = await _requests!.SendAsync(
-				actor.Value, command.InventoryId, command.ItemId, text.Value, cancellationToken );
-			if ( requested.Succeeded )
-			{
-				projectionDelta.Observe( requested.Value );
-				projectionDelta.Items.Add( command.ItemId );
-			}
-			return Untyped( requested );
-		}
-		if ( executable.Route == ExecutableItemActionRoute.NoteEditor )
-		{
-			var body = new HL2RPCommandArguments( command.Arguments ).String( "body", true );
-			if ( body.Failed ) return Failure( body.Error! );
-			var edited = await _documents!.EditNoteAsync(
-				actor.Value, command.InventoryId, command.ItemId, body.Value, cancellationToken );
-			if ( edited.Succeeded )
-			{
-				projectionDelta.Observe( edited.Value );
-				projectionDelta.Items.Add( command.ItemId );
-			}
-			return Untyped( edited );
-		}
-		if ( executable.Route == ExecutableItemActionRoute.RestraintIntent )
-			return await SetRestraintAsync(
-				actor.Value, new HL2RPCommandArguments( command.Arguments ), projectionDelta, cancellationToken );
-		if ( executable.Route == ExecutableItemActionRoute.CombatFireIntent )
-			return await FirePistolAsync(
-				actor.Value, command.InventoryId, command.ItemId, projectionDelta, cancellationToken );
-		var executed = await _itemActions.ExecuteCommittedAsync(
-			actor.Value,
-			command.InventoryId,
-			command.ItemId,
-			command.ActionId,
-			command.Arguments,
-			cancellationToken );
-		if ( executed.Succeeded )
-		{
-			projectionDelta.Observe( executed.Value );
-			projectionDelta.Inventories.Add( command.InventoryId );
-			projectionDelta.Items.Add( command.ItemId );
-		}
-		return Untyped( executed );
+		return await _execution!.RunItemActionAsync( actor.Value, command, projectionDelta, cancellationToken );
 	}
 
 	private async ValueTask<OperationResult> DropAsync(
@@ -1376,27 +1254,8 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 		if ( actor.Failed ) return Failure( actor.Error! );
 		if ( !rpc.Player.TryGetUsableAuthoritativeBody( out var authoritativeBody ) )
 			return OperationResult.Failure( ErrorCode.NotFound, "Authoritative drop body is unavailable." );
-		var transform = DropTransform( authoritativeBody );
-		if ( !IsFinite( transform ) )
-			return OperationResult.Failure( ErrorCode.InvalidArgument, "Authoritative drop transform is not finite." );
-		var result = await _worldItems.DropCommittedAsync(
-			actor.Value, command.SourceId, command.ItemId, transform, cancellationToken );
-		if ( result.Succeeded )
-		{
-			projectionDelta.Observe( result.Value );
-			try { _bags?.ItemMoved( command.ItemId ); }
-			catch ( Exception exception )
-			{
-				Log.Warning( $"HL2RP_DROP_DEGRADED item={command.ItemId.Value:D} " +
-					$"stage=bag_invalidation message={exception.Message}" );
-			}
-			var reconciled = await _worldReconciler.ReconcileCommittedAsync(
-				command.ItemId,
-				CancellationToken.None );
-			LogWorldItemReconciliation( reconciled, "drop" );
-			return WorldItemCommandResult( reconciled );
-		}
-		return Untyped( result );
+		return await _execution!.DropAsync(
+			actor.Value, command, DropTransform( authoritativeBody ), projectionDelta, cancellationToken );
 	}
 
 	private async ValueTask<OperationResult> PickupAsync(
@@ -1407,41 +1266,16 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 	{
 		var actor = RequireInventoryActor( rpc );
 		if ( actor.Failed ) return Failure( actor.Error! );
-		var result = await _worldItems.PickUpCommittedAsync(
-			actor.Value, command.ItemId, command.DestinationId, cancellationToken );
-		if ( result.Succeeded )
-		{
-			projectionDelta.Observe( result.Value );
-			try { _bags?.ItemMoved( command.ItemId ); }
-			catch ( Exception exception )
-			{
-				Log.Warning( $"HL2RP_PICKUP_DEGRADED item={command.ItemId.Value:D} " +
-					$"stage=bag_invalidation message={exception.Message}" );
-			}
-			var reconciled = await _worldReconciler.ReconcileCommittedAsync(
-				command.ItemId,
-				CancellationToken.None );
-			LogWorldItemReconciliation( reconciled, "pickup" );
-			return WorldItemCommandResult( reconciled );
-		}
-		return Untyped( result );
+		return await _execution!.PickupAsync( actor.Value, command, projectionDelta, cancellationToken );
 	}
 
 	private OperationResult SendChat( RpcActor rpc, SendChatCommand command )
 	{
 		var actor = RequireInventoryActor( rpc );
 		if ( actor.Failed ) return Failure( actor.Error! );
-		if ( command.ChannelId == HL2RPIds.Channels.Request )
-			return OperationResult.Failure(
-				ErrorCode.PolicyDenied, "Request traffic requires a validated request-device action." );
-		var character = FindActiveCharacter( actor.Value.ConnectionId )!;
-		var result = _chat!.Send( actor.Value, character, command.ChannelId, command.Text );
-		if ( result.Failed ) return Failure( result.Error! );
-		var author = _repositories.Characters.Find( DomainKeys.Character( result.Value.AuthorCharacterId ) )?.Value;
-		if ( author is null ) return OperationResult.Failure( ErrorCode.NotFound, "Chat author is unavailable." );
-		DeliverCommittedChat( result.Value, author );
-		return OperationResult.Success();
+		return _execution!.SendChat( actor.Value, command );
 	}
+
 
 	private void DeliverCommittedChat( ChatDelivery delivery, CharacterRecord author )
 	{
@@ -1468,230 +1302,30 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 	{
 		var actor = RequireInventoryActor( rpc );
 		if ( actor.Failed ) return Failure( actor.Error! );
-		var target = ToTarget( input );
-		if ( target.Failed ) return Failure( target.Error! );
-		if ( target.Value.Kind == InteractionTargetKind.SceneEntity )
-		{
-			var targetId = new SceneEntityId( target.Value.Id );
-			if ( _features.TryGetValue( targetId, out var scannerFeature ) )
-			{
-				if ( scannerFeature is HL2RPScannerDockComponent dock )
-				{
-					if ( dock.LinkedDroneId is not SceneEntityId droneId )
-						return OperationResult.Failure( ErrorCode.ConfigurationInvalid, "Scanner dock has no linked drone." );
-					return await EnterScannerTargetAsync(
-						actor.Value, droneId, projectionDelta, cancellationToken );
-				}
-				if ( scannerFeature is HL2RPScannerDroneComponent )
-					return await EnterScannerTargetAsync(
-						actor.Value, targetId, projectionDelta, cancellationToken );
-			}
-		}
-		var opened = _interactions!.Begin(
-			actor.Value.ConnectionId, actor.Value.AccountId, actor.Value.CharacterId, target.Value );
-		if ( opened.Failed ) return Failure( opened.Error! );
-		if ( opened.Value.Session is InteractionSession observedSession )
-			_projectionIndex.ObserveSceneSession( observedSession );
-		if ( target.Value.Kind != InteractionTargetKind.SceneEntity ) return OperationResult.Success();
-		var sceneId = new SceneEntityId( target.Value.Id );
-		if ( !_features.TryGetValue( sceneId, out var feature ) )
-			return OperationResult.Failure( ErrorCode.NotFound, "Scene feature is unavailable." );
-		if ( feature is HL2RPForcefieldComponent )
-		{
-			var toggled = await _sceneBehavior!.ToggleForcefieldAsync(
-				actor.Value, sceneId, cancellationToken );
-			if ( toggled.Succeeded )
-			{
-				projectionDelta.Observe( toggled.Value );
-				projectionDelta.SceneEntities.Add( toggled.Value.SceneEntityId );
-			}
-			return Untyped( toggled );
-		}
-		if ( opened.Value.Session is not InteractionSession session ) return OperationResult.Success();
-		if ( feature is HL2RPMachineComponent )
-		{
-			var main = MainInventory( actor.Value.CharacterId );
-			if ( main is null )
-				return OperationResult.Failure( ErrorCode.NotFound, "Character main inventory was not found." );
-			var purchased = await _commerce!.PurchaseFromMachineAsync(
-				actor.Value, session.Id, main.Id, cancellationToken );
-			if ( purchased.Succeeded )
-			{
-				projectionDelta.Observe( purchased.Value );
-				projectionDelta.SceneEntities.Add( purchased.Value.SceneEntityId );
-				projectionDelta.Inventories.Add( main.Id );
-				projectionDelta.Items.UnionWith( purchased.Value.ItemIds );
-			}
-			return Untyped( purchased );
-		}
-		if ( feature is HL2RPDoorComponent )
-		{
-			var toggled = await _sceneBehavior!.ToggleDoorAsync(
-				actor.Value, session.Id, cancellationToken );
-			if ( toggled.Succeeded )
-			{
-				projectionDelta.Observe( toggled.Value );
-				projectionDelta.SceneEntities.Add( toggled.Value.SceneEntityId );
-			}
-			return Untyped( toggled );
-		}
-		return OperationResult.Success();
+		return await _execution!.BeginInteractionAsync( actor.Value, input, projectionDelta, cancellationToken );
 	}
 
 	private OperationResult ContinueInteraction( RpcActor rpc, ContinueInteractionCommand command )
 	{
 		var actor = RequireInventoryActor( rpc );
 		if ( actor.Failed ) return Failure( actor.Error! );
-		var target = ToTarget( command.Target );
-		if ( target.Failed ) return Failure( target.Error! );
-		return Untyped( _interactions!.Continue(
-			command.SessionId, actor.Value.ConnectionId, actor.Value.AccountId,
-			actor.Value.CharacterId, target.Value ) );
+		return _execution!.ContinueInteraction( actor.Value, command );
 	}
 
 	private OperationResult CloseInteraction( RpcActor rpc, InteractionSessionId sessionId )
 	{
 		var actor = RequireInventoryActor( rpc );
 		if ( actor.Failed ) return Failure( actor.Error! );
-		var session = _sessions!.ActiveSessions.SingleOrDefault( value => value.Id == sessionId );
-		if ( session is null || session.ConnectionId != actor.Value.ConnectionId || session.CharacterId != actor.Value.CharacterId )
-			return OperationResult.Failure( ErrorCode.Unauthorized, "Interaction session is not bound to the actor." );
-		_interactions!.Close( sessionId );
-		return OperationResult.Success();
+		return _execution!.CloseInteraction( actor.Value, sessionId );
 	}
 
 	private OperationResult CancelAction( RpcActor rpc, Guid instanceId )
 	{
 		var actor = RequireInventoryActor( rpc );
 		if ( actor.Failed ) return Failure( actor.Error! );
-		var restraintCancellation = _activeRestraintActions.TryCancel(
-			actor.Value.ConnectionId,
-			candidate => candidate.Ticket.TicketId.Value == instanceId && candidate.Actor == actor.Value,
-			out var action );
-		if ( restraintCancellation == HL2RPTimedActionCancelOutcome.Cancelled )
-		{
-			CancelToken( action!.Cancellation );
-			var result = _restraints!.Cancel( action.Ticket.TicketId, action.Actor );
-			PublishConnections( new[] { actor.Value.ConnectionId }, invalidateRuntime: true );
-			return result;
-		}
-		if ( restraintCancellation == HL2RPTimedActionCancelOutcome.CommitOwned )
-			return OperationResult.Failure( ErrorCode.Conflict,
-				"Action commit is already in progress and can no longer be cancelled." );
-		var pistolCancellation = _activePistolActions.TryCancel(
-			actor.Value.ConnectionId,
-			candidate => candidate.InstanceId == instanceId && candidate.Actor == actor.Value,
-			out var pistol );
-		if ( pistolCancellation == HL2RPTimedActionCancelOutcome.Cancelled )
-		{
-			CancelToken( pistol!.Cancellation );
-			_combatIntent!.ClearCharacter( actor.Value.CharacterId );
-			PublishConnections( new[] { actor.Value.ConnectionId }, invalidateRuntime: true );
-			return OperationResult.Success();
-		}
-		if ( pistolCancellation == HL2RPTimedActionCancelOutcome.CommitOwned )
-			return OperationResult.Failure( ErrorCode.Conflict,
-				"Action commit is already in progress and can no longer be cancelled." );
-		return OperationResult.Failure( ErrorCode.Unauthorized, "Action instance is not bound to the actor." );
+		return _execution!.CancelAction( actor.Value, instanceId );
 	}
 
-	private async ValueTask<OperationResult> FirePistolAsync(
-		InventoryActor actor,
-		InventoryId inventoryId,
-		ItemId pistolId,
-		CommandProjectionDelta projectionDelta,
-		CancellationToken cancellationToken )
-	{
-		var raised = _pistol!.IsHostRaised( actor, inventoryId, pistolId );
-		if ( raised.Failed ) return Failure( raised.Error! );
-		CancellationTokenSource? linked = null;
-		ActivePistolRaiseAction? active = null;
-		var durableSuccess = false;
-		if ( !raised.Value )
-		{
-			linked = CancellationTokenSource.CreateLinkedTokenSource( cancellationToken );
-			active = new ActivePistolRaiseAction(
-				actor, Guid.NewGuid(), _clock.UtcNow + PistolCombatService.DefaultRaiseDelay, linked );
-			if ( !_activePistolActions.TryAdd( actor.ConnectionId, active ) )
-			{
-				linked.Dispose();
-				return OperationResult.Failure( ErrorCode.Conflict, "Another pistol raise is active." );
-			}
-			PublishConnections( new[] { actor.ConnectionId }, invalidateRuntime: true );
-		}
-		OperationResult result;
-		try
-		{
-			var fired = await _combatIntent!.FireAsync(
-				new CombatFireIntent( actor, inventoryId, pistolId, () =>
-					active is null || _activePistolActions.TryClaimCommit( actor.ConnectionId, active ) ),
-				linked?.Token ?? cancellationToken );
-			if ( fired.Succeeded )
-			{
-				projectionDelta.Observe( fired.Value.Fire.Commit );
-				projectionDelta.Inventories.Add( inventoryId );
-				projectionDelta.Items.Add( pistolId );
-				if ( fired.Value.PlayerDamage is PlayerCombatDamageOutcome playerDamage )
-				{
-					projectionDelta.Connections.Add( playerDamage.Target.Actor.ConnectionId );
-					projectionDelta.Characters.Add( playerDamage.Target.Actor.CharacterId );
-					projectionDelta.Inventories.Add( playerDamage.Target.InventoryId );
-					if ( playerDamage.VestItemId is ItemId vestId ) projectionDelta.Items.Add( vestId );
-				}
-				if ( fired.Value.Death is DeathTransitionReceipt death )
-				{
-					if ( death.Commit is not null ) projectionDelta.Observe( death.Commit );
-					projectionDelta.Broadcast = true;
-					projectionDelta.RebuildLiveInventory = death.DroppedPistol is not null;
-					projectionDelta.RebuildCombatTargets = true;
-					if ( death.BoundaryError is OperationError boundaryError )
-						Log.Warning(
-							$"HL2RP_DEATH_BOUNDARY_DEGRADED character={death.Respawn.CharacterId.Value:D} " +
-							$"code={boundaryError.Code} message={boundaryError.Message}" );
-				}
-				if ( fired.Value.DegradedDeathTransition is OperationError degraded )
-					Log.Warning(
-						$"HL2RP_COMBAT_DEGRADED character={actor.CharacterId.Value:D} " +
-						$"code={degraded.Code} message={degraded.Message}" );
-				durableSuccess = true;
-			}
-			result = Untyped( fired );
-		}
-		catch ( OperationCanceledException )
-		{
-			result = OperationResult.Failure( ErrorCode.Conflict, "Pistol raise was cancelled." );
-		}
-		catch ( Exception exception )
-		{
-			Log.Error( exception, $"HL2RP pistol fire failed for character {actor.CharacterId.Value:D}." );
-			result = OperationResult.Failure(
-				ErrorCode.InternalError,
-				"Pistol firing failed unexpectedly." );
-		}
-
-		HL2RPTimedActionCompletion completion;
-		try
-		{
-			completion = active is null
-				? default
-				: _activePistolActions.Complete( actor.ConnectionId, active, durableSuccess );
-		}
-		finally
-		{
-			linked?.Dispose();
-		}
-		if ( completion.PublishFailure )
-			PublishConnections( new[] { actor.ConnectionId }, invalidateRuntime: true );
-		if ( active is not null && completion.LifecycleCleanupRequested )
-		{
-			var cleanup = await ClearRaisedPistolsAsync( active.Actor, projectionDelta, CancellationToken.None );
-			if ( cleanup.Failed )
-				Log.Error(
-					$"HL2RP late pistol lifecycle cleanup failed for character {active.Actor.CharacterId.Value:D}: " +
-					cleanup.Error!.Message );
-		}
-		return result;
-	}
 
 	private ValueTask<OperationResult> RunSchemaCommandAsync(
 		RpcActor rpc,
@@ -1713,8 +1347,13 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 	}
 
 	ValueTask<OperationResult> IHL2RPSchemaCommandRoutes<RpcActor>.RunEntitlementCommandAsync(
-		RpcActor rpc, RunSchemaCommandCommand command, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken ) =>
-		RunEntitlementCommandAsync( rpc, command, projectionDelta, cancellationToken );
+		RpcActor rpc, RunSchemaCommandCommand command, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken )
+	{
+		var connectionId = new ConnectionId( rpc.Connection.Id );
+		return _execution!.RunEntitlementCommandAsync(
+			connectionId, rpc.AccountId, FindActiveCharacter( connectionId )?.Id,
+			command, projectionDelta, cancellationToken );
+	}
 
 	OperationResult<InventoryActor> IHL2RPSchemaCommandRoutes<RpcActor>.RequireInventoryActor( RpcActor rpc, bool allowDead ) =>
 		RequireInventoryActor( rpc, allowDead );
@@ -1723,103 +1362,57 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 		_featureAuthorization.HasPermission( actor.AccountId, actor.CharacterId, permissionId );
 
 	OperationResult IHL2RPSchemaCommandRoutes<RpcActor>.CivicData( InventoryActor actor, HL2RPCommandArguments arguments ) =>
-		CivicData( actor, arguments );
+		_execution!.CivicData( actor, arguments );
 
 	ValueTask<OperationResult> IHL2RPSchemaCommandRoutes<RpcActor>.SetObjectivesAsync(
 		InventoryActor actor, HL2RPCommandArguments arguments, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken ) =>
-		SetObjectivesAsync( actor, arguments, projectionDelta, cancellationToken );
+		_execution!.SetObjectivesAsync( actor, arguments, projectionDelta, cancellationToken );
 
 	ValueTask<OperationResult> IHL2RPSchemaCommandRoutes<RpcActor>.SetPriorityAsync(
 		InventoryActor actor, HL2RPCommandArguments arguments, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken ) =>
-		SetPriorityAsync( actor, arguments, projectionDelta, cancellationToken );
+		_execution!.SetPriorityAsync( actor, arguments, projectionDelta, cancellationToken );
 
 	ValueTask<OperationResult> IHL2RPSchemaCommandRoutes<RpcActor>.TuneRadioAsync(
 		InventoryActor actor, HL2RPCommandArguments arguments, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken ) =>
-		TuneRadioAsync( actor, arguments, projectionDelta, cancellationToken );
+		_execution!.TuneRadioAsync( actor, arguments, projectionDelta, cancellationToken );
 
 	ValueTask<OperationResult> IHL2RPSchemaCommandRoutes<RpcActor>.IntroduceAsync(
 		InventoryActor actor, HL2RPCommandArguments arguments, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken ) =>
-		IntroduceAsync( actor, arguments, projectionDelta, cancellationToken );
+		_execution!.IntroduceAsync( actor, arguments, projectionDelta, cancellationToken );
 
 	ValueTask<OperationResult> IHL2RPSchemaCommandRoutes<RpcActor>.DoorOwnershipAsync(
 		InventoryActor actor, HL2RPCommandArguments arguments, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken ) =>
-		DoorOwnershipAsync( actor, arguments, projectionDelta, cancellationToken );
+		_execution!.DoorOwnershipAsync( actor, arguments, projectionDelta, cancellationToken );
 
 	OperationResult IHL2RPSchemaCommandRoutes<RpcActor>.PublishAdministrationAudit( InventoryActor actor ) =>
-		PublishAdministrationAudit( actor );
+		_execution!.PublishAdministrationAudit( actor );
 
 	ValueTask<OperationResult> IHL2RPSchemaCommandRoutes<RpcActor>.BuyAsync(
 		InventoryActor actor, HL2RPCommandArguments arguments, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken ) =>
-		BuyAsync( actor, arguments, projectionDelta, cancellationToken );
+		_execution!.BuyAsync( actor, arguments, projectionDelta, cancellationToken );
 
 	ValueTask<OperationResult> IHL2RPSchemaCommandRoutes<RpcActor>.SellAsync(
 		InventoryActor actor, HL2RPCommandArguments arguments, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken ) =>
-		SellAsync( actor, arguments, projectionDelta, cancellationToken );
+		_execution!.SellAsync( actor, arguments, projectionDelta, cancellationToken );
 
 	ValueTask<OperationResult> IHL2RPSchemaCommandRoutes<RpcActor>.PurchasePermitAsync(
 		InventoryActor actor, HL2RPCommandArguments arguments, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken ) =>
-		PurchasePermitAsync( actor, arguments, projectionDelta, cancellationToken );
+		_execution!.PurchasePermitAsync( actor, arguments, projectionDelta, cancellationToken );
 
 	ValueTask<OperationResult> IHL2RPSchemaCommandRoutes<RpcActor>.WriteNoteAsync(
 		InventoryActor actor, HL2RPCommandArguments arguments, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken ) =>
-		WriteNoteAsync( actor, arguments, projectionDelta, cancellationToken );
+		_execution!.WriteNoteAsync( actor, arguments, projectionDelta, cancellationToken );
 
 	ValueTask<OperationResult> IHL2RPSchemaCommandRoutes<RpcActor>.SetRestraintAsync(
 		InventoryActor actor, HL2RPCommandArguments arguments, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken ) =>
-		SetRestraintAsync( actor, arguments, projectionDelta, cancellationToken );
+		_execution!.SetRestraintAsync( actor, arguments, projectionDelta, cancellationToken );
 
 	ValueTask<OperationResult> IHL2RPSchemaCommandRoutes<RpcActor>.ScannerIntentAsync(
 		InventoryActor actor, HL2RPCommandArguments arguments, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken ) =>
-		ScannerIntentAsync( actor, arguments, projectionDelta, cancellationToken );
+		_execution!.ScannerIntentAsync( actor, arguments, projectionDelta, cancellationToken );
 
 	OperationResult IHL2RPSchemaCommandRoutes<RpcActor>.RespawnCharacter( InventoryActor actor ) =>
 		RespawnCharacter( actor );
-
-	private async ValueTask<OperationResult> RunEntitlementCommandAsync(
-		RpcActor rpc,
-		RunSchemaCommandCommand command,
-		CommandProjectionDelta projectionDelta,
-		CancellationToken cancellationToken )
-	{
-		var connectionId = new ConnectionId( rpc.Connection.Id );
-		var characterId = FindActiveCharacter( connectionId )?.Id;
-		var administrator = new HL2RPEntitlementAdministrator( rpc.AccountId, characterId );
-		if ( !CanManageEntitlements( administrator ) )
-			return OperationResult.Failure(
-				ErrorCode.Unauthorized, "Authenticated account cannot manage entitlements." );
-		if ( !HL2RPPresentationPlanner.TryAccountId( command.Arguments, "account", out var targetAccountId ) )
-			return OperationResult.Failure(
-				ErrorCode.InvalidArgument, "Target account must be a non-zero unsigned account ID." );
-		if ( command.CommandId == HL2RPIds.Commands.EntitlementQuery )
-		{
-			var observed = _entitlements.Observe( targetAccountId );
-			if ( observed.Failed ) return Failure( observed.Error! );
-			if ( !observed.Value.IsPersisted && !IsKnownAccount( targetAccountId ) )
-				return OperationResult.Failure( ErrorCode.NotFound, "Target account is not known to this host." );
-			_entitlementQueries[connectionId] = targetAccountId;
-			return OperationResult.Success();
-		}
-
-		var arguments = new HL2RPCommandArguments( command.Arguments );
-		var flagText = arguments.String( "flag" );
-		var revision = arguments.Integer( "revision" );
-		if ( flagText.Failed || revision.Failed || revision.Value < 0 )
-			return OperationResult.Failure( ErrorCode.InvalidArgument, "Entitlement flag or revision is invalid." );
-		var flag = HL2RPAccountEntitlements.ParseSingleFlag( flagText.Value );
-		if ( flag.Failed ) return Failure( flag.Error! );
-		var expectedRevision = new Hexagon.V2.Persistence.DocumentRevision( revision.Value );
-		var changed = command.CommandId == HL2RPIds.Commands.EntitlementGrant
-			? await _entitlements.GrantAsync(
-				administrator, targetAccountId, flag.Value, expectedRevision, cancellationToken )
-			: await _entitlements.RevokeAsync(
-				administrator, targetAccountId, flag.Value, expectedRevision, cancellationToken );
-		if ( changed.Failed ) return Failure( changed.Error! );
-		projectionDelta.Observe( changed.Value );
-		_entitlementQueries[connectionId] = targetAccountId;
-		projectionDelta.Connections.UnionWith(
-			_entitlementPresentationInvalidation.Claim( targetAccountId ) );
-		return OperationResult.Success();
-	}
 
 	private IReadOnlyList<ConnectionId> EntitlementRecipients( AccountId accountId ) =>
 		_clients
@@ -1828,425 +1421,6 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 			.Select( pair => pair.Key )
 			.Distinct()
 			.ToArray();
-
-	private OperationResult PublishAdministrationAudit( InventoryActor actor )
-	{
-		_audit.Publish( new AdminAuditFact
-		{
-			ActorAccountId = actor.AccountId,
-			ActorCharacterId = actor.CharacterId,
-			Operation = HL2RPFeatureOperation.AdministrationAudit,
-			Target = $"character:{actor.CharacterId.Value:D}",
-			OccurredAtUtc = _clock.UtcNow,
-			CommitSequence = _context.Persistence.Health.Sequence
-		} );
-		return OperationResult.Success();
-	}
-
-	private OperationResult CivicData( InventoryActor actor, HL2RPCommandArguments arguments )
-	{
-		var target = arguments.OptionalGuid( "character" );
-		if ( target.Failed ) return Failure( target.Error! );
-		var subjectId = target.Value is Guid rawId ? new CharacterId( rawId ) : actor.CharacterId;
-		var read = _civic!.Read( subjectId );
-		if ( read.Failed ) return Failure( read.Error! );
-		if ( target.Value is null ) _civicSubjects.ClearConnection( actor.ConnectionId );
-		else _civicSubjects.Select( actor.ConnectionId, subjectId );
-		return OperationResult.Success();
-	}
-
-	private async ValueTask<OperationResult> SetObjectivesAsync(
-		InventoryActor actor,
-		HL2RPCommandArguments args,
-		CommandProjectionDelta projectionDelta,
-		CancellationToken cancellationToken )
-	{
-		var routed = await _objectiveRouter!.RouteAsync( actor, args, cancellationToken );
-		if ( routed.Receipt is not null )
-		{
-			projectionDelta.Observe( routed.Receipt.ProjectionReceipt );
-			projectionDelta.Documents.UnionWith(
-				routed.Receipt.ProjectionReceipt.Documents.Select( value => value.Address ) );
-		}
-		return routed.Command.Result;
-	}
-
-	private async ValueTask<OperationResult> SetPriorityAsync(
-		InventoryActor actor,
-		HL2RPCommandArguments args,
-		CommandProjectionDelta projectionDelta,
-		CancellationToken cancellationToken )
-	{
-		var target = args.Guid( "character" );
-		var priority = args.String( "priority" );
-		var record = args.String( "record", true );
-		if ( target.Failed || priority.Failed || record.Failed || !Enum.TryParse<CivicPriorityStatus>( priority.Value, true, out var parsed ) )
-			return OperationResult.Failure( ErrorCode.InvalidArgument, "Priority arguments are invalid." );
-		var updated = await _civic!.UpdateRecordAsync(
-			actor, new CharacterId( target.Value ), parsed, record.Value, cancellationToken );
-		if ( updated.Succeeded ) projectionDelta.Observe( updated.Value );
-		return Untyped( updated );
-	}
-
-	private async ValueTask<OperationResult> TuneRadioAsync(
-		InventoryActor actor,
-		HL2RPCommandArguments args,
-		CommandProjectionDelta projectionDelta,
-		CancellationToken cancellationToken )
-	{
-		var item = args.Guid( "item" );
-		var frequency = args.String( "frequency" );
-		var enabled = args.Boolean( "enabled" );
-		var main = MainInventory( actor.CharacterId );
-		if ( item.Failed || frequency.Failed || enabled.Failed || main is null ) return OperationResult.Failure( ErrorCode.InvalidArgument, "Radio arguments are invalid." );
-		var tuned = await _radio!.ConfigureAsync(
-			actor, main.Id, new ItemId( item.Value ), frequency.Value, enabled.Value, cancellationToken );
-		if ( tuned.Succeeded )
-		{
-			projectionDelta.Observe( tuned.Value );
-			projectionDelta.Inventories.Add( main.Id );
-			projectionDelta.Items.Add( new ItemId( item.Value ) );
-		}
-		return Untyped( tuned );
-	}
-
-	private async ValueTask<OperationResult> IntroduceAsync(
-		InventoryActor actor,
-		HL2RPCommandArguments args,
-		CommandProjectionDelta projectionDelta,
-		CancellationToken cancellationToken )
-	{
-		var target = args.Guid( "character" );
-		if ( target.Failed ) return Failure( target.Error! );
-		var introduced = await _recognition!.IntroduceAsync(
-			actor, new CharacterId( target.Value ), cancellationToken );
-		if ( introduced.Succeeded ) projectionDelta.Observe( introduced.Value );
-		return Untyped( introduced );
-	}
-
-	private async ValueTask<OperationResult> BuyAsync(
-		InventoryActor actor,
-		HL2RPCommandArguments args,
-		CommandProjectionDelta projectionDelta,
-		CancellationToken cancellationToken )
-	{
-		var session = args.Guid( "session" );
-		var definition = args.String( "definition" );
-		var quantity = args.Integer( "quantity" );
-		var main = MainInventory( actor.CharacterId );
-		if ( session.Failed || definition.Failed || quantity.Failed || quantity.Value is < 1 or > 64 || main is null )
-			return OperationResult.Failure( ErrorCode.InvalidArgument, "Vendor purchase arguments are invalid." );
-		var purchased = await _commerce!.BuyAsync(
-			actor, new InteractionSessionId( session.Value ), main.Id,
-			new DefinitionId( definition.Value ), (int)quantity.Value, cancellationToken );
-		if ( purchased.Succeeded )
-		{
-			projectionDelta.Observe( purchased.Value );
-			projectionDelta.SceneEntities.Add( purchased.Value.SceneEntityId );
-			projectionDelta.Inventories.Add( main.Id );
-			projectionDelta.Items.UnionWith( purchased.Value.ItemIds );
-		}
-		return Untyped( purchased );
-	}
-
-	private async ValueTask<OperationResult> SellAsync(
-		InventoryActor actor,
-		HL2RPCommandArguments args,
-		CommandProjectionDelta projectionDelta,
-		CancellationToken cancellationToken )
-	{
-		var session = args.Guid( "session" );
-		var inventory = args.Guid( "inventory" );
-		var item = args.Guid( "item" );
-		if ( session.Failed || inventory.Failed || item.Failed ) return OperationResult.Failure( ErrorCode.InvalidArgument, "Vendor sale arguments are invalid." );
-		var result = await _commerce!.SellAsync(
-			actor, new InteractionSessionId( session.Value ), new InventoryId( inventory.Value ), new ItemId( item.Value ), cancellationToken );
-		if ( result.Succeeded )
-		{
-			projectionDelta.Observe( result.Value );
-			projectionDelta.SceneEntities.Add( result.Value.SceneEntityId );
-			_bags?.ItemMoved( new ItemId( item.Value ) );
-			projectionDelta.Inventories.Add( new InventoryId( inventory.Value ) );
-			projectionDelta.Items.UnionWith( result.Value.ItemIds );
-		}
-		return Untyped( result );
-	}
-
-	private async ValueTask<OperationResult> PurchasePermitAsync(
-		InventoryActor actor,
-		HL2RPCommandArguments args,
-		CommandProjectionDelta projectionDelta,
-		CancellationToken cancellationToken )
-	{
-		var kind = args.String( "permit" );
-		var main = MainInventory( actor.CharacterId );
-		if ( kind.Failed || main is null ) return OperationResult.Failure( ErrorCode.InvalidArgument, "Permit purchase arguments are invalid." );
-		var parsed = HL2RPPresentationContracts.ParsePermitKind( kind.Value );
-		if ( parsed.Failed ) return Failure( parsed.Error! );
-		var purchased = await _permitPurchases!.PurchaseAsync(
-			actor, main.Id, parsed.Value, cancellationToken );
-		if ( purchased.Succeeded )
-		{
-			projectionDelta.Observe( purchased.Value );
-			projectionDelta.Inventories.Add( main.Id );
-			projectionDelta.Items.Add( purchased.Value.PermitItemId );
-		}
-		return Untyped( purchased );
-	}
-
-	private async ValueTask<OperationResult> WriteNoteAsync(
-		InventoryActor actor,
-		HL2RPCommandArguments args,
-		CommandProjectionDelta projectionDelta,
-		CancellationToken cancellationToken )
-	{
-		var item = args.Guid( "item" );
-		var body = args.String( "body", true );
-		var main = MainInventory( actor.CharacterId );
-		if ( item.Failed || body.Failed || main is null ) return OperationResult.Failure( ErrorCode.InvalidArgument, "Note arguments are invalid." );
-		var edited = await _documents!.EditNoteAsync(
-			actor, main.Id, new ItemId( item.Value ), body.Value, cancellationToken );
-		if ( edited.Succeeded )
-		{
-			projectionDelta.Observe( edited.Value );
-			projectionDelta.Inventories.Add( main.Id );
-			projectionDelta.Items.Add( edited.Value.NoteItemId );
-		}
-		return Untyped( edited );
-	}
-
-	private async ValueTask<OperationResult> SetRestraintAsync(
-		InventoryActor actor,
-		HL2RPCommandArguments args,
-		CommandProjectionDelta projectionDelta,
-		CancellationToken cancellationToken )
-	{
-		var target = args.Guid( "character" );
-		var restrain = args.Boolean( "restrain" );
-		var search = args.Boolean( "search" );
-		if ( target.Failed || restrain.Failed || search.Failed ) return OperationResult.Failure( ErrorCode.InvalidArgument, "Restraint arguments are invalid." );
-		var targetId = new CharacterId( target.Value );
-		if ( search.Value )
-		{
-			var targetInventory = MainInventory( targetId );
-			if ( targetInventory is null )
-				return OperationResult.Failure( ErrorCode.NotFound, "Search target main inventory was not found." );
-			var opened = _search!.Open( actor, targetId, targetInventory.Id );
-			if ( opened.Succeeded ) projectionDelta.Inventories.Add( targetInventory.Id );
-			return Untyped( opened );
-		}
-		if ( !restrain.Value )
-		{
-			var released = await _restraints!.UnrestrainAsync( actor, targetId, cancellationToken );
-			if ( released.Succeeded ) projectionDelta.Observe( released.Value );
-			return Untyped( released );
-		}
-		var main = MainInventory( actor.CharacterId );
-		var zip = main?.Placements.Select( value => _repositories.Items.Find( DomainKeys.Item( value.ItemId ) )?.Value )
-			.FirstOrDefault( value => value?.Definition.Value == HL2RPIds.Items.ZipTie );
-		if ( main is null || zip is null ) return OperationResult.Failure( ErrorCode.NotFound, "A zip tie is required." );
-		var ticket = _restraints!.Begin( actor, targetId, main.Id, zip.Id );
-		if ( ticket.Failed ) return Failure( ticket.Error! );
-		var linked = CancellationTokenSource.CreateLinkedTokenSource( cancellationToken );
-		var active = new ActiveRestraintAction( actor, ticket.Value, linked );
-		var durableSuccess = false;
-		var cancelledByCommand = false;
-		if ( !_activeRestraintActions.TryAdd( actor.ConnectionId, active ) )
-		{
-			linked.Dispose();
-			_restraints.Cancel( ticket.Value.TicketId, actor );
-			return OperationResult.Failure( ErrorCode.Conflict, "Another restraint action is already active." );
-		}
-		PublishConnections( new[] { actor.ConnectionId }, invalidateRuntime: true );
-		try
-		{
-			var delay = ticket.Value.CompletesAtUtc - _clock.UtcNow;
-			if ( delay > TimeSpan.Zero ) await Task.Delay( delay, linked.Token );
-			if ( !_activeRestraintActions.TryClaimCommit( actor.ConnectionId, active ) )
-				return OperationResult.Failure( ErrorCode.Conflict, "Restraint action was cancelled." );
-			var completed = await _restraints.CompleteAsync(
-				ticket.Value.TicketId, actor, CancellationToken.None );
-			if ( completed.Succeeded )
-			{
-				projectionDelta.Observe( completed.Value );
-				durableSuccess = true;
-			}
-			return Untyped( completed );
-		}
-		catch ( OperationCanceledException )
-		{
-			var cancelled = _activeRestraintActions.TryCancel(
-				actor.ConnectionId, candidate => ReferenceEquals( candidate, active ), out _ );
-			if ( cancelled == HL2RPTimedActionCancelOutcome.Cancelled )
-			{
-				cancelledByCommand = true;
-				_ = _restraints.Cancel( ticket.Value.TicketId, actor );
-			}
-			return OperationResult.Failure( ErrorCode.Conflict, "Restraint action was cancelled." );
-		}
-		finally
-		{
-			var completion = _activeRestraintActions.Complete( actor.ConnectionId, active, durableSuccess );
-			linked.Dispose();
-			if ( cancelledByCommand || completion.PublishFailure )
-				PublishConnections( new[] { actor.ConnectionId }, invalidateRuntime: true );
-		}
-	}
-
-	private async ValueTask<OperationResult> ScannerIntentAsync(
-		InventoryActor actor,
-		HL2RPCommandArguments args,
-		CommandProjectionDelta projectionDelta,
-		CancellationToken cancellationToken )
-	{
-		var intent = args.String( "intent" );
-		if ( intent.Failed ) return Failure( intent.Error! );
-		var sessionId = args.Guid( "session" );
-		var active = sessionId.Succeeded
-			? _scanner!.ActiveSessions.SingleOrDefault( value => value.SessionId.Value == sessionId.Value )
-			: null;
-		return intent.Value switch
-		{
-			"enter" => await EnterScannerAsync( actor, projectionDelta, cancellationToken ),
-			"exit" when active is not null => await _scanner!.ExitAsync( actor, active.SessionId, cancellationToken ),
-			"spotlight" when active is not null => await ToggleScannerSpotlightAsync(
-				actor, active.SessionId, projectionDelta, cancellationToken ),
-			"flash" when active is not null => _scanner!.Flash( actor, active.SessionId ),
-			"photo" when active is not null => await TakeScannerPhotoAsync(
-				actor, active.SessionId, projectionDelta, cancellationToken ),
-			"move" when active is not null => await ApplyScannerInputAsync(
-				actor, active.SessionId, args, projectionDelta, cancellationToken ),
-			_ => OperationResult.Failure( ErrorCode.InvalidArgument, "Scanner intent or session is invalid." )
-		};
-	}
-
-	private async ValueTask<OperationResult> ApplyScannerInputAsync(
-		InventoryActor actor,
-		InteractionSessionId sessionId,
-		HL2RPCommandArguments args,
-		CommandProjectionDelta projectionDelta,
-		CancellationToken cancellationToken )
-	{
-		var sequence = args.Integer( "sequence" );
-		var forward = args.Integer( "forward" );
-		var right = args.Integer( "right" );
-		var up = args.Integer( "up" );
-		var yaw = args.Integer( "yaw" );
-		var pitch = args.Integer( "pitch" );
-		if ( sequence.Failed || forward.Failed || right.Failed || up.Failed || yaw.Failed || pitch.Failed ||
-			sequence.Value <= 0 || new[] { forward.Value, right.Value, up.Value, yaw.Value, pitch.Value }
-				.Any( value => value is < -1 or > 1 ) )
-			return OperationResult.Failure( ErrorCode.InvalidArgument, "Scanner motion axes or sequence are invalid." );
-		var applied = await _scanner!.ApplyInputAsync( actor, new ScannerInputIntent(
-			sessionId, sequence.Value, forward.Value, right.Value, up.Value, yaw.Value, pitch.Value ), cancellationToken );
-		if ( applied.Succeeded )
-		{
-			if ( applied.Value.Commit is not null ) projectionDelta.Observe( applied.Value.Commit );
-			LogScannerBoundaryError( applied.Value.BoundaryError );
-		}
-		return Untyped( applied );
-	}
-
-	private async ValueTask<OperationResult> TakeScannerPhotoAsync(
-		InventoryActor actor,
-		InteractionSessionId sessionId,
-		CommandProjectionDelta projectionDelta,
-		CancellationToken cancellationToken )
-	{
-		var photo = await _scanner!.TakePhotoAsync( actor, sessionId, cancellationToken );
-		if ( photo.Succeeded )
-		{
-			projectionDelta.Observe( photo.Value );
-			LogScannerBoundaryError( photo.Value.BoundaryError );
-		}
-		return Untyped( photo );
-	}
-
-	private async ValueTask<OperationResult> EnterScannerAsync(
-		InventoryActor actor,
-		CommandProjectionDelta projectionDelta,
-		CancellationToken cancellationToken )
-	{
-		var session = CurrentSession( actor, InteractionSessionKind.Scanner );
-		if ( session is null || session.Target.Kind != InteractionTargetKind.SceneEntity )
-			return OperationResult.Failure( ErrorCode.Unauthorized, "A current scanner interaction is required." );
-		var target = new SceneEntityId( session.Target.Id );
-		if ( _features.TryGetValue( target, out var feature ) && feature is HL2RPScannerDockComponent dock )
-		{
-			if ( dock.LinkedDroneId is not SceneEntityId droneId )
-				return OperationResult.Failure( ErrorCode.ConfigurationInvalid, "Scanner dock has no linked drone." );
-			target = droneId;
-		}
-		return await EnterScannerTargetAsync( actor, target, projectionDelta, cancellationToken );
-	}
-
-	private async ValueTask<OperationResult> EnterScannerTargetAsync(
-		InventoryActor actor,
-		SceneEntityId target,
-		CommandProjectionDelta projectionDelta,
-		CancellationToken cancellationToken )
-	{
-		var entered = await _scanner!.EnterAsync( actor, target, cancellationToken );
-		if ( entered.Succeeded )
-		{
-			projectionDelta.Observe( entered.Value );
-			projectionDelta.SceneEntities.Add( entered.Value.Session.ScannerId );
-			LogScannerBoundaryError( entered.Value.BoundaryError );
-		}
-		return Untyped( entered );
-	}
-
-	private async ValueTask<OperationResult> ToggleScannerSpotlightAsync(
-		InventoryActor actor,
-		InteractionSessionId sessionId,
-		CommandProjectionDelta projectionDelta,
-		CancellationToken cancellationToken )
-	{
-		var toggled = await _scanner!.ToggleSpotlightAsync( actor, sessionId, cancellationToken );
-		if ( toggled.Succeeded )
-		{
-			projectionDelta.Observe( toggled.Value );
-			projectionDelta.SceneEntities.Add( toggled.Value.ScannerId );
-			LogScannerBoundaryError( toggled.Value.BoundaryError );
-		}
-		return Untyped( toggled );
-	}
-
-	private static void LogScannerBoundaryError( OperationError? error )
-	{
-		if ( error is not null )
-			Log.Warning( $"HL2RP_SCANNER_BOUNDARY_DEGRADED code={error.Code} message={error.Message}" );
-	}
-
-	private async ValueTask<OperationResult> DoorOwnershipAsync(
-		InventoryActor actor,
-		HL2RPCommandArguments arguments,
-		CommandProjectionDelta projectionDelta,
-		CancellationToken cancellationToken )
-	{
-		var intent = arguments.String( "intent" );
-		if ( intent.Failed ) return Failure( intent.Error! );
-		var session = CurrentSession( actor, InteractionSessionKind.Door );
-		if ( session is null )
-			return OperationResult.Failure( ErrorCode.Unauthorized, "A current door session is required." );
-		if ( session.Target.Kind != InteractionTargetKind.SceneEntity ||
-			!_features.TryGetValue( new SceneEntityId( session.Target.Id ), out var feature ) ||
-			feature is not HL2RPDoorComponent { Ownable: true } )
-			return OperationResult.Failure( ErrorCode.PolicyDenied, "Current door does not support personal ownership." );
-		OperationResult<DoorOwnershipReceipt> changed;
-		if ( intent.Value == "claim" )
-			changed = await _doorOwnership!.ClaimAsync( actor, session.Id, cancellationToken );
-		else if ( intent.Value == "release" )
-			changed = await _doorOwnership!.ReleaseAsync( actor, session.Id, cancellationToken );
-		else return OperationResult.Failure(
-			ErrorCode.InvalidArgument, "Door ownership intent must be claim or release." );
-		if ( changed.Succeeded )
-		{
-			projectionDelta.Observe( changed.Value );
-			projectionDelta.SceneEntities.Add( changed.Value.DoorEntityId );
-		}
-		return Untyped( changed );
-	}
 
 	private OperationResult RespawnCharacter( InventoryActor actor )
 	{
@@ -2431,26 +1605,6 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 	private static OperationResult Untyped<T>( OperationResult<T> result ) =>
 		result.Succeeded ? OperationResult.Success() : Failure( result.Error! );
 
-	private static OperationResult<InteractionTarget> ToTarget( InteractionTargetInput input )
-	{
-		if ( input.Id == Guid.Empty ) return OperationResult<InteractionTarget>.Failure( ErrorCode.InvalidArgument, "Interaction target ID is empty." );
-		try
-		{
-			return OperationResult<InteractionTarget>.Success( input.Kind switch
-			{
-				InteractionTargetInputKind.SceneEntity => InteractionTarget.SceneEntity( new SceneEntityId( input.Id ) ),
-				InteractionTargetInputKind.Inventory => InteractionTarget.Inventory( new InventoryId( input.Id ) ),
-				InteractionTargetInputKind.Item => InteractionTarget.Item( new ItemId( input.Id ) ),
-				InteractionTargetInputKind.Character => InteractionTarget.Character( new CharacterId( input.Id ) ),
-				_ => throw new ArgumentOutOfRangeException( nameof(input) )
-			} );
-		}
-		catch ( ArgumentException exception )
-		{
-			return OperationResult<InteractionTarget>.Failure( ErrorCode.InvalidArgument, exception.Message );
-		}
-	}
-
 	private static WorldTransformRecord DropTransform( GameObject gameObject )
 	{
 		var forward = gameObject.Components.Get<PlayerController>()?.EyeAngles.ToRotation().Forward ??
@@ -2468,11 +1622,6 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 			RotationW = rotation.w
 		};
 	}
-
-	private static bool IsFinite( WorldTransformRecord transform ) =>
-		float.IsFinite( transform.PositionX ) && float.IsFinite( transform.PositionY ) && float.IsFinite( transform.PositionZ ) &&
-		float.IsFinite( transform.RotationX ) && float.IsFinite( transform.RotationY ) &&
-		float.IsFinite( transform.RotationZ ) && float.IsFinite( transform.RotationW );
 
 	private ChatService BuildChat()
 	{
@@ -2787,6 +1936,43 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 		_features.TryGetValue( sceneEntityId, out var component ) &&
 		component is HL2RPDoorComponent { Ownable: true };
 
+	private static void LogScannerBoundaryError( OperationError? error )
+	{
+		if ( error is not null )
+			Log.Warning( $"HL2RP_SCANNER_BOUNDARY_DEGRADED code={error.Code} message={error.Message}" );
+	}
+
+	void IHL2RPCommandExecutionHost.PublishConnection( ConnectionId connectionId ) =>
+		PublishConnections( new[] { connectionId }, invalidateRuntime: true );
+
+	void IHL2RPCommandExecutionHost.PublishChanges(
+		HL2RPPresentationChangeSet changes, IReadOnlyList<CommitReceipt> receipts ) =>
+		PublishChanges( changes, receipts );
+
+	void IHL2RPCommandExecutionHost.DeliverCommittedChat( ChatDelivery delivery, CharacterRecord author ) =>
+		DeliverCommittedChat( delivery, author );
+
+	bool IHL2RPCommandExecutionHost.TryClassifySceneFeature(
+		SceneEntityId sceneEntityId, out HL2RPSceneFeatureClassification? classification )
+	{
+		classification = null;
+		if ( !_features.TryGetValue( sceneEntityId, out var scannerFeature ) ) return false;
+		if ( scannerFeature is HL2RPScannerDockComponent dock )
+			classification = new HL2RPSceneFeatureClassification(
+				HL2RPSceneFeatureKind.ScannerDock, dock.LinkedDroneId, false );
+		else if ( scannerFeature is HL2RPScannerDroneComponent )
+			classification = new HL2RPSceneFeatureClassification( HL2RPSceneFeatureKind.ScannerDrone, null, false );
+		else if ( scannerFeature is HL2RPForcefieldComponent )
+			classification = new HL2RPSceneFeatureClassification( HL2RPSceneFeatureKind.Forcefield, null, false );
+		else if ( scannerFeature is HL2RPMachineComponent )
+			classification = new HL2RPSceneFeatureClassification( HL2RPSceneFeatureKind.Machine, null, false );
+		else if ( scannerFeature is HL2RPDoorComponent door )
+			classification = new HL2RPSceneFeatureClassification( HL2RPSceneFeatureKind.Door, null, door.Ownable );
+		else
+			classification = new HL2RPSceneFeatureClassification( HL2RPSceneFeatureKind.Other, null, false );
+		return true;
+	}
+
 	private CharacterRecord? NearestCharacterTarget( CharacterId viewerId )
 	{
 		var viewer = FindPlayer( viewerId );
@@ -2959,20 +2145,6 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 		var receipt = await _worldReconciler.ReconcileCommittedAsync( itemId, CancellationToken.None );
 		LogWorldItemReconciliation( receipt, stage );
 	}
-
-	private static OperationResult WorldItemCommandResult( WorldItemReconciliationReceipt receipt ) =>
-		receipt.Disposition switch
-		{
-			WorldItemReconciliationDisposition.Applied => OperationResult.Success(),
-			WorldItemReconciliationDisposition.CommittedPendingReconciliation => OperationResult.Failure(
-				ErrorCode.ReconciliationPending,
-				"The item change committed, but its world update is pending reconciliation; do not retry." ),
-			WorldItemReconciliationDisposition.ConfigurationFailed => OperationResult.Failure(
-				receipt.Error?.Code ?? ErrorCode.ConfigurationInvalid,
-				$"The item change committed, but its world update cannot be applied: " +
-				(receipt.Error?.Message ?? "unknown configuration failure") ),
-			_ => throw new ArgumentOutOfRangeException( nameof(receipt.Disposition) )
-		};
 
 	private static void LogWorldItemReconciliation(
 		WorldItemReconciliationReceipt receipt,

@@ -35,12 +35,16 @@ public sealed class AccountEntitlementIntegrationTests
 		// the wiring markers below.
 		foreach ( var marker in new[]
 		{
-			"new HL2RPEntitlementAdministrator( rpc.AccountId, characterId )",
 			"_bootstrapOperators.Contains( administrator.AccountId )",
 			"BuildCreationAvailabilityView( pair.Key, pair.Value.AccountId",
 			"Expected exactly one HL2RP bootstrap-operator source",
 			"_entitlements.ValidateAll()"
 		} ) StringAssert.Contains( host, marker );
+		// The entitlement route body moved to the engine-neutral command execution
+		// core; the administrator identity construction is pinned there.
+		var execution = HL2RPTestSource.WithoutComments(
+			Path.Combine( root, "Code", "Runtime", "HL2RPCommandExecution.cs" ) );
+		StringAssert.Contains( execution, "new HL2RPEntitlementAdministrator( accountId, characterId )" );
 	}
 
 	[TestMethod]

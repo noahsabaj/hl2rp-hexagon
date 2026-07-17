@@ -46,6 +46,7 @@
 	<Compile Include="../Code/Runtime/HL2RPPresentationPlanning.cs" Link="Product/Runtime/HL2RPPresentationPlanning.cs" />
 	<Compile Include="../Code/Runtime/HL2RPProjectionIndex.cs" Link="Product/Runtime/HL2RPProjectionIndex.cs" />
 	<Compile Include="../Code/Runtime/HL2RPPresentationComposer.cs" Link="Product/Runtime/HL2RPPresentationComposer.cs" />
+	<Compile Include="../Code/Runtime/HL2RPCommandExecution.cs" Link="Product/Runtime/HL2RPCommandExecution.cs" />
 	<Compile Include="../Code/Runtime/HL2RPTimedActionOwnership.cs" Link="Product/Runtime/HL2RPTimedActionOwnership.cs" />
 	<Compile Include="../Code/Runtime/HL2RPWorldItemReconciliation.cs" Link="Product/Runtime/HL2RPWorldItemReconciliation.cs" />
 	<Compile Include="../Code/Runtime/HL2RPObjectHierarchy.cs" Link="Product/Runtime/HL2RPObjectHierarchy.cs" />
