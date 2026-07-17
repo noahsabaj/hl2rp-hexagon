@@ -2,6 +2,7 @@
 
 using System.IO;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace HL2RP.V2.Tests.Architecture;
 
@@ -56,7 +57,7 @@ public sealed class ShowcaseArchitectureTests
 		StringAssert.Contains( collision, "\"a\": \"forcefield\"" );
 		StringAssert.Contains( collision, "\"b\": \"combine\"" );
 		StringAssert.Contains( collision, "\"r\": \"Ignore\"" );
-		var world = File.ReadAllText( Path.Combine( FindRoot(), "Code", "World", "ShowcaseComponents.cs" ) );
+		var world = HL2RPTestSource.WithoutComments( Path.Combine( FindRoot(), "Code", "World", "ShowcaseComponents.cs" ) );
 		StringAssert.Contains( world, "ForcefieldEntityRules.IsVisible( state )" );
 		StringAssert.Contains( world, "ForcefieldEntityRules.IsSolid( state )" );
 	}
@@ -80,9 +81,12 @@ public sealed class ShowcaseArchitectureTests
 			"\"AutoSwitchToBestHost\": false"
 		} ) StringAssert.Contains( networking, permission );
 		StringAssert.Contains( networking, "\"UpdateRate\": 30" );
-		var source = File.ReadAllText( Path.Combine( root, "Code", "Runtime", "HL2RPSchemaSourceSystem.cs" ) );
+		var source = HL2RPTestSource.WithoutComments(
+			Path.Combine( root, "Code", "Runtime", "HL2RPSchemaSourceSystem.cs" ) );
 		StringAssert.Contains( source, "Component, IChatEvent" );
-		StringAssert.Contains( source, "message.Suppress = true" );
+		Assert.IsTrue( Regex.IsMatch( source,
+			@"void\s+IChatEvent\.OnChatMessage\(\s*ChatMessageEvent\s+message\s*\)\s*=>\s*message\.Suppress\s*=\s*true\s*;" ),
+			"The platform chat suppressor must remain an unconditional expression-bodied Suppress assignment." );
 	}
 
 	[TestMethod]
@@ -95,7 +99,7 @@ public sealed class ShowcaseArchitectureTests
 			Path.Combine( root, "Code", "Runtime", "HL2RPSandboxBoundaries.cs" ),
 			Path.Combine( root, "Code", "Runtime", "HL2RPSceneRuntime.cs" )
 		};
-		var source = string.Join( "\n", authorityFiles.Select( File.ReadAllText ) );
+		var source = string.Join( "\n", authorityFiles.Select( HL2RPTestSource.WithoutComments ) );
 		StringAssert.Contains( source, "AuthoritativeBody" );
 		Assert.IsFalse( source.Contains( "PlayableBody", StringComparison.Ordinal ) );
 		Assert.IsFalse( source.Contains( "Player.GameObject", StringComparison.Ordinal ) );
@@ -108,8 +112,8 @@ public sealed class ShowcaseArchitectureTests
 		StringAssert.Contains( source, "HL2RPCharacterLifecycleGate" );
 		StringAssert.Contains( source, "_access.OpenConnection( connectionId )" );
 		StringAssert.Contains( source, "HL2RPSceneFeatureAdmission.Evaluate" );
-		var showcase = File.ReadAllText( Path.Combine( root, "Code", "World", "ShowcaseComponents.cs" ) );
-		var worldItems = File.ReadAllText( Path.Combine( root, "Code", "Runtime", "HL2RPWorldItemPressable.cs" ) );
+		var showcase = HL2RPTestSource.WithoutComments( Path.Combine( root, "Code", "World", "ShowcaseComponents.cs" ) );
+		var worldItems = HL2RPTestSource.WithoutComments( Path.Combine( root, "Code", "Runtime", "HL2RPWorldItemPressable.cs" ) );
 		StringAssert.Contains( showcase, "HexPlayerBody.IsLocalPredictionSource( e.Source )" );
 		StringAssert.Contains( worldItems, "HexPlayerBody.IsLocalPredictionSource( e.Source )" );
 	}
@@ -117,7 +121,8 @@ public sealed class ShowcaseArchitectureTests
 	[TestMethod]
 	public void HostLifecycleAndWorldEffectsAreOwnedAndDrained()
 	{
-		var source = File.ReadAllText( Path.Combine( FindRoot(), "Code", "Runtime", "HL2RPHostApplication.cs" ) );
+		var source = HL2RPTestSource.WithoutComments(
+			Path.Combine( FindRoot(), "Code", "Runtime", "HL2RPHostApplication.cs" ) );
 		StringAssert.Contains( source, "IHexHostApplication, IWorldItemReconciliationBoundary" );
 		StringAssert.Contains( source, "AsyncOperationRegistry _lifecycleOperations" );
 		StringAssert.Contains( source, "_worldReconciler.ReconcileStartupAsync" );
@@ -126,14 +131,23 @@ public sealed class ShowcaseArchitectureTests
 		Assert.IsFalse( source.Contains( "RestoreWorldItem", StringComparison.Ordinal ) );
 		Assert.IsFalse( source.Contains( "_pendingLifecycle", StringComparison.Ordinal ) );
 
+		// The ordering scan is bounded to the DisposeAsync body so a later member cannot
+		// satisfy it by file layout, and the recovery marker is the snapshot assignment
+		// that genuinely executes inside the body.
 		var dispose = source.IndexOf( "public async ValueTask DisposeAsync()", StringComparison.Ordinal );
-		var stopAdmission = source.IndexOf( "_lifecycleOperations.StopAdmission()", dispose, StringComparison.Ordinal );
-		var lifecycleDrain = source.IndexOf( "_lifecycleOperations.DrainAsync()", dispose, StringComparison.Ordinal );
-		var scannerDrain = source.IndexOf( "_scanner.DrainCleanupAsync()", dispose, StringComparison.Ordinal );
-		var pistolDrain = source.IndexOf( "_pistol.ReconcileRaisedPistolsAsync()", dispose, StringComparison.Ordinal );
-		var worldDrain = source.IndexOf( "_worldReconciler.DrainAsync()", dispose, StringComparison.Ordinal );
-		var recoveryMarker = source.IndexOf( "CompleteQuiescedShutdown", dispose, StringComparison.Ordinal );
 		Assert.IsGreaterThanOrEqualTo( 0, dispose );
+		var disposeEnd = source.IndexOf( "public OperationResult CompleteQuiescedShutdown(", dispose, StringComparison.Ordinal );
+		Assert.IsGreaterThanOrEqualTo( 0, disposeEnd, "CompleteQuiescedShutdown must remain the member bounding DisposeAsync." );
+		var body = source[dispose..disposeEnd];
+		var stopAdmission = body.IndexOf( "_lifecycleOperations.StopAdmission()", StringComparison.Ordinal );
+		var lifecycleDrain = body.IndexOf( "_lifecycleOperations.DrainAsync()", StringComparison.Ordinal );
+		var scannerDrain = body.IndexOf( "_scanner.DrainCleanupAsync()", StringComparison.Ordinal );
+		var pistolDrain = body.IndexOf( "_pistol.ReconcileRaisedPistolsAsync()", StringComparison.Ordinal );
+		var worldDrain = body.IndexOf( "_worldReconciler.DrainAsync()", StringComparison.Ordinal );
+		var recoveryMarker = body.IndexOf( "_pendingShutdownSnapshot = CaptureRecoverySnapshot()", StringComparison.Ordinal );
+		Assert.IsGreaterThanOrEqualTo( 0, stopAdmission );
+		Assert.IsGreaterThanOrEqualTo( 0, recoveryMarker,
+			"DisposeAsync must capture the recovery snapshot inside its own body." );
 		Assert.IsLessThan( lifecycleDrain, stopAdmission, "Lifecycle admission must close before drain." );
 		Assert.IsLessThan( scannerDrain, lifecycleDrain, "Lifecycle work must drain before scanner cleanup." );
 		Assert.IsLessThan( pistolDrain, scannerDrain, "Scanner cleanup must precede pistol reconciliation." );
@@ -217,7 +231,7 @@ public sealed class ShowcaseArchitectureTests
 	public void PressableWorldAdaptersSubmitTargetsWithoutMutatingAuthorityState()
 	{
 		var path = Path.Combine( FindRoot(), "Code", "World", "ShowcaseComponents.cs" );
-		var source = File.ReadAllText( path );
+		var source = HL2RPTestSource.WithoutComments( path );
 		StringAssert.Contains( source, "Component.IPressable" );
 		StringAssert.Contains( source, "BeginInteractionAsync" );
 		foreach ( var forbidden in new[]

@@ -160,7 +160,7 @@ public sealed class RuntimeCompositionTests
 	public void ProductRuntimeRoutesShowcaseServicesAndCanonicalRestraintContext()
 	{
 		var root = FindRoot();
-		var host = File.ReadAllText( Path.Combine( root, "Code", "Runtime", "HL2RPHostApplication.cs" ) );
+		var host = HL2RPTestSource.WithoutComments( Path.Combine( root, "Code", "Runtime", "HL2RPHostApplication.cs" ) );
 		foreach ( var route in new[]
 		{
 			"new CombatIntentService", "_combatIntent!.FireAsync", "ReconcileRaisedPistolsAsync",
@@ -178,10 +178,10 @@ public sealed class RuntimeCompositionTests
 			"_sceneBehavior!.ToggleDoorAsync", "_context.Configuration.Snapshot()",
 			"HL2RPPersistenceInvariants.Profile"
 		} ) StringAssert.Contains( host, route );
-		var world = File.ReadAllText( Path.Combine( root, "Code", "Runtime", "HL2RPSceneRuntime.cs" ) );
+		var world = HL2RPTestSource.WithoutComments( Path.Combine( root, "Code", "Runtime", "HL2RPSceneRuntime.cs" ) );
 		StringAssert.Contains( world, "IsRestrained = _restraints.IsRestrained( characterId )" );
 		StringAssert.Contains( world, "new CharacterRestraintInteractable" );
-		var sandbox = File.ReadAllText( Path.Combine( root, "Code", "Runtime", "HL2RPSandboxBoundaries.cs" ) );
+		var sandbox = HL2RPTestSource.WithoutComments( Path.Combine( root, "Code", "Runtime", "HL2RPSandboxBoundaries.cs" ) );
 		foreach ( var route in new[]
 		{
 			"HL2RPScannerVisualEffects", "Rotation.FromYaw", "PublishPhoto",
@@ -191,7 +191,7 @@ public sealed class RuntimeCompositionTests
 			StringAssert.Contains( sandbox, route );
 		StringAssert.Contains( world, "ValidatePersistedScannerTopology" );
 		StringAssert.Contains( world, "scanner.LinkedEntityId != expected.LinkedEntityId" );
-		var operations = File.ReadAllText( Path.Combine( root, "Code", "UI", "OperationsPanel.razor" ) );
+		var operations = HL2RPTestSource.WithoutComments( Path.Combine( root, "Code", "UI", "OperationsPanel.razor" ) );
 		foreach ( var route in new[]
 		{
 			"SelectedRequestDevice", "SendRequestAsync", "HL2RPIds.Actions.Request", "OnItemWorkspace",
@@ -208,7 +208,7 @@ public sealed class RuntimeCompositionTests
 	public void HostConsumesDurableConfigurationAndIncludesItInBothRecoveryProbeDigests()
 	{
 		var root = FindRoot();
-		var host = File.ReadAllText( Path.Combine( root, "Code", "Runtime", "HL2RPHostApplication.cs" ) );
+		var host = HL2RPTestSource.WithoutComments( Path.Combine( root, "Code", "Runtime", "HL2RPHostApplication.cs" ) );
 		foreach ( var required in new[]
 		{
 			"RequiredConfigurationInt( HL2RPIds.Configs.CharacterInventoryWidth )",
@@ -1051,7 +1051,7 @@ public sealed class RuntimeCompositionTests
 	public void ProductSessionAdaptersAndUiRoutesAreWired()
 	{
 		var root = FindRoot();
-		var host = File.ReadAllText( Path.Combine( root, "Code", "Runtime", "HL2RPHostApplication.cs" ) );
+		var host = HL2RPTestSource.WithoutComments( Path.Combine( root, "Code", "Runtime", "HL2RPHostApplication.cs" ) );
 		foreach ( var required in new[]
 		{
 			"_sessions.SessionRevoked += OnInteractionSessionRevoked",
@@ -1060,20 +1060,20 @@ public sealed class RuntimeCompositionTests
 			"arguments.OptionalGuid( \"character\" )"
 		} ) StringAssert.Contains( host, required );
 
-		var presenter = File.ReadAllText( Path.Combine( root, "Code", "UI", "HL2RPClientPresenter.razor" ) );
+		var presenter = HL2RPTestSource.WithoutComments( Path.Combine( root, "Code", "UI", "HL2RPClientPresenter.razor" ) );
 		StringAssert.Contains( presenter, "private void Introduce( CharacterId characterId )" );
 		StringAssert.Contains( presenter, "private async Task InspectCivicAsync( CharacterId characterId )" );
 		StringAssert.Contains( presenter, "_characterPresentation.Workspace = ShowcaseWorkspace.CivicData" );
 		StringAssert.Contains( presenter, "request.PermitKindId" );
-		var scoreboard = File.ReadAllText( Path.Combine( root, "Code", "UI", "ScoreboardPanel.razor" ) );
+		var scoreboard = HL2RPTestSource.WithoutComments( Path.Combine( root, "Code", "UI", "ScoreboardPanel.razor" ) );
 		StringAssert.Contains( scoreboard, "OnIntroduce?.Invoke( characterId )" );
 		var combine = File.ReadAllText( Path.Combine( root, "Code", "UI", "CombineSuitePanel.razor" ) );
 		Assert.IsFalse( combine.Contains( "NoteTitle", StringComparison.Ordinal ) );
-		var rootPanel = File.ReadAllText( Path.Combine( root, "Code", "UI", "HL2RPShowcaseRoot.razor" ) );
+		var rootPanel = HL2RPTestSource.WithoutComments( Path.Combine( root, "Code", "UI", "HL2RPShowcaseRoot.razor" ) );
 		StringAssert.Contains( rootPanel, "item-presentation-backdrop" );
 		StringAssert.Contains( rootPanel, "private void CloseCombineWorkspace()" );
 		StringAssert.Contains( rootPanel, "ScannerIntent.Exit" );
-		var operations = File.ReadAllText( Path.Combine( root, "Code", "UI", "OperationsPanel.razor" ) );
+		var operations = HL2RPTestSource.WithoutComments( Path.Combine( root, "Code", "UI", "OperationsPanel.razor" ) );
 		StringAssert.Contains( operations, "×@candidate.Quantity" );
 	}
 

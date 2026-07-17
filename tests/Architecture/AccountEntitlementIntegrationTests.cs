@@ -28,7 +28,7 @@ public sealed class AccountEntitlementIntegrationTests
 	public void HostUsesAuthenticatedRpcAccountBeforeCharacterRequirementAndPublishesReceiverAvailability()
 	{
 		var root = FindRoot();
-		var host = File.ReadAllText( Path.Combine( root, "Code", "Runtime", "HL2RPHostApplication.cs" ) );
+		var host = HL2RPTestSource.WithoutComments( Path.Combine( root, "Code", "Runtime", "HL2RPHostApplication.cs" ) );
 		var specialRoute = host.IndexOf( "RunEntitlementCommandAsync(", StringComparison.Ordinal );
 		var inventoryRequirement = host.IndexOf( "var actor = RequireInventoryActor(", specialRoute, StringComparison.Ordinal );
 		Assert.IsGreaterThanOrEqualTo( 0, specialRoute );
@@ -60,9 +60,9 @@ public sealed class AccountEntitlementIntegrationTests
 			"city_administration"
 		} ) StringAssert.Contains( panel, marker );
 		Assert.IsFalse( panel.Contains( "AccountId( ", StringComparison.Ordinal ) );
-		var rootPanel = File.ReadAllText( Path.Combine( root, "Code", "UI", "HL2RPShowcaseRoot.razor" ) );
+		var rootPanel = HL2RPTestSource.WithoutComments( Path.Combine( root, "Code", "UI", "HL2RPShowcaseRoot.razor" ) );
 		StringAssert.Contains( rootPanel, "ShowcaseWorkspace.Entitlements" );
-		var characterMenu = File.ReadAllText( Path.Combine( root, "Code", "UI", "CharacterMenuPanel.razor" ) );
+		var characterMenu = HL2RPTestSource.WithoutComments( Path.Combine( root, "Code", "UI", "CharacterMenuPanel.razor" ) );
 		StringAssert.Contains( characterMenu, "EntitlementAdministrationPanel" );
 	}
 
