@@ -10,7 +10,7 @@ using HL2RP.V2.Schema;
 namespace HL2RP.V2.Tests.Features;
 
 [TestClass]
-public sealed class SceneEntityStateServiceTests
+public sealed class HL2RPSceneEntityBehaviorServiceTests
 {
 	[TestMethod]
 	public void ForcefieldRulesKeepVisibilityCollisionAndRoleAuthorizationConsistent()
