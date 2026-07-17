@@ -579,6 +579,40 @@ public sealed class RuntimeCompositionTests
 	}
 
 	[TestMethod]
+	public async Task MaintenanceSupervisorPacesFrameDrivenTicksAtTheMinimumInterval()
+	{
+		var ticks = 0;
+		var paces = new List<TimeSpan>();
+		var second = new TaskCompletionSource<bool>( TaskCreationOptions.RunContinuationsAsynchronously );
+		await using var supervisor = new HL2RPMaintenanceSupervisor(
+			_ =>
+			{
+				if ( Interlocked.Increment( ref ticks ) == 2 ) second.TrySetResult( true );
+				return ValueTask.CompletedTask;
+			},
+			_ => Assert.Fail( "No failure expected." ),
+			( duration, _ ) =>
+			{
+				paces.Add( duration );
+				return Task.CompletedTask;
+			},
+			() => DateTimeOffset.UnixEpoch,
+			minimumInterval: TimeSpan.FromMilliseconds( 100 ) );
+
+		supervisor.RequestTick();
+		for ( var spin = 0; spin < 100 && ticks < 1; spin++ ) await Task.Yield();
+		Assert.AreEqual( 1, ticks );
+		Assert.IsEmpty( paces, "The first tick after idle runs unpaced." );
+
+		supervisor.RequestTick();
+		await second.Task.WaitAsync( TimeSpan.FromSeconds( 2 ) );
+		Assert.AreEqual( 2, ticks );
+		Assert.HasCount( 1, paces );
+		Assert.AreEqual( TimeSpan.FromMilliseconds( 100 ), paces[0],
+			"With a frozen clock the full minimum interval separates consecutive ticks." );
+	}
+
+	[TestMethod]
 	public async Task MaintenanceSupervisorRecoversAfterDelayInfrastructureFailure()
 	{
 		var attempts = 0;

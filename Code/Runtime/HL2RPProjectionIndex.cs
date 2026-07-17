@@ -825,6 +825,19 @@ public sealed class HL2RPIncrementalChatConnectionDirectory : IChatConnectionPos
 		{
 			if ( version < _version )
 				throw new InvalidOperationException( "Live chat connection directory cannot move backwards." );
+			// An identical row must not invalidate the cached snapshot: the per-frame
+			// maintenance refresh re-applies unchanged rows constantly, and snapshot
+			// materialization should scale with actual state change.
+			if ( row is not null && _rows.TryGetValue( connectionId, out var existing ) && existing == row )
+			{
+				_version = version;
+				return 0;
+			}
+			if ( row is null && !_rows.ContainsKey( connectionId ) )
+			{
+				_version = version;
+				return 0;
+			}
 			if ( row is not null && _characters.TryGetValue( row.CharacterId, out var characterOwner ) &&
 				characterOwner != connectionId )
 				throw new ArgumentException( "Live chat connections must have unique active character IDs.", nameof(row) );
@@ -888,6 +901,18 @@ public sealed class HL2RPIncrementalChatAuthorityDirectory : IChatAuthorityDirec
 		{
 			if ( version < _version )
 				throw new InvalidOperationException( "Live chat authority cannot move backwards." );
+			// An identical row must not invalidate the cached snapshot; see the connection
+			// directory's Apply. LiveChatAuthority carries structural equality for this.
+			if ( row is not null && _rows.TryGetValue( connectionId, out var existing ) && existing == row )
+			{
+				_version = version;
+				return 0;
+			}
+			if ( row is null && !_rows.ContainsKey( connectionId ) )
+			{
+				_version = version;
+				return 0;
+			}
 			if ( row is not null && _characters.TryGetValue( row.CharacterId, out var characterOwner ) &&
 				characterOwner != connectionId )
 				throw new ArgumentException( "Live chat authorities must have unique active character IDs.", nameof(row) );

@@ -25,6 +25,8 @@ public sealed record HL2RPMaintenanceStatus(
 /// </summary>
 public sealed class HL2RPMaintenanceSupervisor : IAsyncDisposable
 {
+	public static readonly TimeSpan DefaultMinimumInterval = TimeSpan.FromMilliseconds( 100 );
+
 	private static readonly TimeSpan InitialRetryDelay = TimeSpan.FromMilliseconds( 250 );
 	private static readonly TimeSpan MaximumRetryDelay = TimeSpan.FromSeconds( 30 );
 	private readonly object _sync = new();
@@ -32,6 +34,7 @@ public sealed class HL2RPMaintenanceSupervisor : IAsyncDisposable
 	private readonly Func<TimeSpan, CancellationToken, Task> _delay;
 	private readonly Func<DateTimeOffset> _utcNow;
 	private readonly Action<HL2RPMaintenanceFailure> _failureSink;
+	private readonly TimeSpan _minimumInterval;
 	private readonly CancellationTokenSource _lifetime = new();
 	private Task? _runner;
 	private bool _pending;
@@ -39,18 +42,23 @@ public sealed class HL2RPMaintenanceSupervisor : IAsyncDisposable
 	private int _consecutiveFailures;
 	private DateTimeOffset? _lastSuccessAtUtc;
 	private DateTimeOffset? _lastFailureAtUtc;
+	private DateTimeOffset? _lastTickStartedAtUtc;
 	private TimeSpan? _retryDelay;
 
 	public HL2RPMaintenanceSupervisor(
 		Func<CancellationToken, ValueTask> tick,
 		Action<HL2RPMaintenanceFailure> failureSink,
 		Func<TimeSpan, CancellationToken, Task>? delay = null,
-		Func<DateTimeOffset>? utcNow = null )
+		Func<DateTimeOffset>? utcNow = null,
+		TimeSpan? minimumInterval = null )
 	{
 		_tick = tick ?? throw new ArgumentNullException( nameof(tick) );
 		_failureSink = failureSink ?? throw new ArgumentNullException( nameof(failureSink) );
 		_delay = delay ?? Task.Delay;
 		_utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
+		_minimumInterval = minimumInterval ?? DefaultMinimumInterval;
+		if ( _minimumInterval < TimeSpan.Zero )
+			throw new ArgumentOutOfRangeException( nameof(minimumInterval) );
 	}
 
 	public HL2RPMaintenanceStatus Status
@@ -83,7 +91,44 @@ public sealed class HL2RPMaintenanceSupervisor : IAsyncDisposable
 			await Task.Yield();
 			while ( true )
 			{
+				// Frame-driven tick requests arrive at render rate; pacing keeps the
+				// steady-state maintenance cost bounded regardless of frame rate. Pacing
+				// is strictly best-effort: a broken clock or delay must never stop or
+				// delay maintenance beyond skipping the pause.
+				var pace = TimeSpan.Zero;
+				try
+				{
+					lock ( _sync )
+					{
+						if ( _lastTickStartedAtUtc is DateTimeOffset last )
+							pace = _minimumInterval - (_utcNow() - last);
+					}
+				}
+				catch
+				{
+				}
+				if ( pace > TimeSpan.Zero )
+				{
+					try
+					{
+						await _delay( pace, _lifetime.Token );
+					}
+					catch ( OperationCanceledException ) when ( _lifetime.IsCancellationRequested )
+					{
+						return;
+					}
+					catch
+					{
+					}
+				}
 				lock ( _sync ) _pending = false;
+				try
+				{
+					lock ( _sync ) _lastTickStartedAtUtc = _utcNow();
+				}
+				catch
+				{
+				}
 				try
 				{
 					await _tick( _lifetime.Token );

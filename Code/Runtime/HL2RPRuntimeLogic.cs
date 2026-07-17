@@ -697,36 +697,44 @@ public static class HL2RPRuntimeProjection
 			PermissionsFor( character ) );
 	}
 
+	// The faction permission sets are constants; the per-frame maintenance refresh calls
+	// PermissionsFor once per connection, so fresh arrays were pure gen0 churn.
+	private static readonly IReadOnlyList<string> CivilProtectionPermissions = Array.AsReadOnly( new[]
+	{
+		HL2RPIds.Permissions.CivilProtection,
+		HL2RPIds.Permissions.CivicData,
+		HL2RPIds.Permissions.Priority,
+		HL2RPIds.Permissions.Restraint,
+		HL2RPIds.Permissions.DispatchChat,
+		HL2RPIds.Permissions.ScannerPilot
+	} );
+
+	private static readonly IReadOnlyList<string> OverwatchPermissions = Array.AsReadOnly( new[]
+	{
+		HL2RPIds.Permissions.Overwatch,
+		HL2RPIds.Permissions.CivicData,
+		HL2RPIds.Permissions.Priority,
+		HL2RPIds.Permissions.Restraint,
+		HL2RPIds.Permissions.DispatchChat
+	} );
+
+	private static readonly IReadOnlyList<string> CityAdministrationPermissions = Array.AsReadOnly( new[]
+	{
+		HL2RPIds.Permissions.CityAdministration,
+		HL2RPIds.Permissions.CivicData,
+		HL2RPIds.Permissions.CityObjectives,
+		HL2RPIds.Permissions.AuditedAdministration,
+		HL2RPIds.Permissions.ManageEntitlements,
+		HL2RPIds.Permissions.CommerceManagement,
+		HL2RPIds.Permissions.DispatchChat
+	} );
+
 	public static IReadOnlyList<string> PermissionsFor( CharacterRecord character ) =>
 		character.Faction.Value switch
 		{
-			HL2RPIds.Factions.CivilProtection => new[]
-			{
-				HL2RPIds.Permissions.CivilProtection,
-				HL2RPIds.Permissions.CivicData,
-				HL2RPIds.Permissions.Priority,
-				HL2RPIds.Permissions.Restraint,
-				HL2RPIds.Permissions.DispatchChat,
-				HL2RPIds.Permissions.ScannerPilot
-			},
-			HL2RPIds.Factions.Overwatch => new[]
-			{
-				HL2RPIds.Permissions.Overwatch,
-				HL2RPIds.Permissions.CivicData,
-				HL2RPIds.Permissions.Priority,
-				HL2RPIds.Permissions.Restraint,
-				HL2RPIds.Permissions.DispatchChat
-			},
-			HL2RPIds.Factions.CityAdministration => new[]
-			{
-				HL2RPIds.Permissions.CityAdministration,
-				HL2RPIds.Permissions.CivicData,
-				HL2RPIds.Permissions.CityObjectives,
-				HL2RPIds.Permissions.AuditedAdministration,
-				HL2RPIds.Permissions.ManageEntitlements,
-				HL2RPIds.Permissions.CommerceManagement,
-				HL2RPIds.Permissions.DispatchChat
-			},
+			HL2RPIds.Factions.CivilProtection => CivilProtectionPermissions,
+			HL2RPIds.Factions.Overwatch => OverwatchPermissions,
+			HL2RPIds.Factions.CityAdministration => CityAdministrationPermissions,
 			_ => Array.Empty<string>()
 		};
 

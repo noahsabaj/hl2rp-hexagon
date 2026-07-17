@@ -28,6 +28,29 @@ public sealed record LiveChatAuthority
 	public FactionId FactionId { get; }
 	public IReadOnlyList<string> Permissions { get; }
 	public bool HasPermission( string permissionId ) => Permissions.Contains( permissionId, StringComparer.Ordinal );
+
+	// Structural equality over the canonicalized permission list: the default record
+	// comparison is reference equality on the list, so per-frame refreshes producing
+	// value-identical rows would never compare equal and directory compare-and-skip
+	// could never fire.
+	public bool Equals( LiveChatAuthority? other ) =>
+		other is not null &&
+		ConnectionId == other.ConnectionId &&
+		AccountId == other.AccountId &&
+		CharacterId == other.CharacterId &&
+		FactionId == other.FactionId &&
+		Permissions.SequenceEqual( other.Permissions, StringComparer.Ordinal );
+
+	public override int GetHashCode()
+	{
+		var hash = new HashCode();
+		hash.Add( ConnectionId );
+		hash.Add( AccountId );
+		hash.Add( CharacterId );
+		hash.Add( FactionId );
+		foreach ( var permission in Permissions ) hash.Add( permission, StringComparer.Ordinal );
+		return hash.ToHashCode();
+	}
 }
 
 public sealed record ChatAuthoritySnapshot

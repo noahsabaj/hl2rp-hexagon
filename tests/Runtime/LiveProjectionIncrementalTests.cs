@@ -304,6 +304,61 @@ public sealed class LiveProjectionIncrementalTests
 	}
 
 	[TestMethod]
+	public void IdenticalRowDeltasSkipSnapshotInvalidationInBothDirectories()
+	{
+		var positions = new HL2RPIncrementalChatConnectionDirectory();
+		var authorities = new HL2RPIncrementalChatAuthorityDirectory();
+		var connection = new ConnectionId( DeterministicGuid( 1, 0x71 ) );
+		var character = new CharacterId( DeterministicGuid( 1, 0x72 ) );
+		var account = new AccountId( 5UL );
+		positions.Rebuild( 1, new[]
+		{
+			new LiveChatConnection( connection, character, new ChatPosition( 1, 2, 3 ) )
+		} );
+		authorities.Rebuild( 1, new[]
+		{
+			new LiveChatAuthority( connection, account, character, new FactionId( "citizen" ), new[] { "chat.local" } )
+		} );
+		var positionSnapshot = positions.Capture();
+		var authoritySnapshot = authorities.Capture();
+
+		Assert.AreEqual( 0, positions.Apply( 2, connection,
+			new LiveChatConnection( connection, character, new ChatPosition( 1, 2, 3 ) ) ) );
+		Assert.AreEqual( 0, authorities.Apply( 2, connection,
+			new LiveChatAuthority( connection, account, character, new FactionId( "citizen" ), new[] { "chat.local" } ) ) );
+		Assert.AreSame( positionSnapshot, positions.Capture(),
+			"A value-identical connection row must not invalidate the cached snapshot." );
+		Assert.AreSame( authoritySnapshot, authorities.Capture(),
+			"A value-identical authority row must not invalidate the cached snapshot." );
+		Assert.AreEqual( 0, authorities.Apply( 3, new ConnectionId( DeterministicGuid( 2, 0x73 ) ), null ),
+			"Removing an absent row is also a snapshot-preserving no-op." );
+		Assert.AreSame( authoritySnapshot, authorities.Capture() );
+
+		Assert.AreEqual( 1, authorities.Apply( 4, connection, new LiveChatAuthority(
+			connection, account, character, new FactionId( "citizen" ),
+			new[] { "chat.local", "chat.dispatch" } ) ) );
+		Assert.AreNotSame( authoritySnapshot, authorities.Capture(),
+			"A genuinely changed row still invalidates and rematerializes." );
+	}
+
+	[TestMethod]
+	public void LiveChatAuthorityEqualityIsStructuralOverTheCanonicalizedPermissionList()
+	{
+		var connection = new ConnectionId( DeterministicGuid( 1, 0x74 ) );
+		var character = new CharacterId( DeterministicGuid( 1, 0x75 ) );
+		var left = new LiveChatAuthority(
+			connection, new AccountId( 7 ), character, new FactionId( "citizen" ), new[] { "b", "a" } );
+		var right = new LiveChatAuthority(
+			connection, new AccountId( 7 ), character, new FactionId( "citizen" ), new[] { "a", "b" } );
+		var different = new LiveChatAuthority(
+			connection, new AccountId( 7 ), character, new FactionId( "citizen" ), new[] { "a" } );
+
+		Assert.AreEqual( left, right, "The constructor canonicalizes ordering; equality is structural." );
+		Assert.AreEqual( left.GetHashCode(), right.GetHashCode() );
+		Assert.AreNotEqual( left, different );
+	}
+
+	[TestMethod]
 	public void OneConnectionDeltaTouchesOneOfSixtyFourRowsAndMatchesFreshRebuild()
 	{
 		var positions = new HL2RPIncrementalChatConnectionDirectory();
