@@ -73,7 +73,11 @@ public sealed class ShowcaseArchitectureTests
 		{
 			"\"ClientsCanSpawnObjects\": false",
 			"\"ClientsCanRefreshObjects\": false",
-			"\"ClientsCanDestroyObjects\": false"
+			"\"ClientsCanDestroyObjects\": false",
+			// Host migration would hand authority to a machine with no host application,
+			// no domain services, and no persistence lease; both flags must stay closed.
+			"\"DestroyLobbyWhenHostLeaves\": true",
+			"\"AutoSwitchToBestHost\": false"
 		} ) StringAssert.Contains( networking, permission );
 		StringAssert.Contains( networking, "\"UpdateRate\": 30" );
 		var source = File.ReadAllText( Path.Combine( root, "Code", "Runtime", "HL2RPSchemaSourceSystem.cs" ) );
