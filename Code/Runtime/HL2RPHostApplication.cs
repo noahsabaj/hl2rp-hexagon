@@ -32,7 +32,7 @@ namespace HL2RP.V2.Runtime;
 /// the relevant service has completed successfully.
 /// </summary>
 public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconciliationBoundary,
-	IHL2RPClientCommandRoutes<RpcActor>, IHL2RPSchemaCommandRoutes<RpcActor>
+	IHL2RPClientCommandRoutes<RpcActor>, IHL2RPSchemaCommandRoutes<RpcActor>, IHL2RPPresentationHost
 {
 	private const InventoryCapability CharacterCapabilities =
 		InventoryCapability.View | InventoryCapability.Move | InventoryCapability.TransferIn |
@@ -74,6 +74,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 	private readonly HL2RPRecoverySnapshotLifecycle _recoverySnapshots;
 	private readonly HL2RPPresentationSequence _itemPresentationSequence = new();
 	private readonly HL2RPProjectionIndex _projectionIndex = new();
+	private readonly HL2RPPresentationComposer _presentation;
 	private readonly HL2RPCivicSubjectSelections _civicSubjects = new();
 	private readonly HL2RPExecutableItemActionCatalog _executableActions =
 		HL2RPExecutableItemActionCatalog.CreateDefault();
@@ -219,6 +220,31 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 			RequirePolicy( new PolicyHandler<ItemActionContext>(
 				"hl2rp.runtime.restrained", new RestrainedItemActionPolicy( _restraintState ) ) ),
 			itemActionEvents );
+		_presentation = new HL2RPPresentationComposer( new HL2RPPresentationComposerServices
+		{
+			Repositories = _repositories,
+			Schema = context.Schema,
+			Access = _access,
+			Clock = _clock,
+			Entitlements = _entitlements,
+			EntitlementQueries = _entitlementQueries,
+			ItemActionPresentations = _itemActionPresentations,
+			ActiveRestraintActions = _activeRestraintActions,
+			ActivePistolActions = _activePistolActions,
+			ProjectionIndex = _projectionIndex,
+			PresentationInvalidation = _presentationInvalidation,
+			CivicSubjects = _civicSubjects,
+			CombatHealth = _combatHealth,
+			ExecutableActions = _executableActions,
+			FeaturePolicy = _featurePolicy,
+			FeatureAuthorization = _featureAuthorization,
+			RestraintState = _restraintState,
+			WorldModels = _worldModels,
+			CanManageEntitlements = CanManageEntitlements,
+			Sessions = () => _sessions,
+			Scanner = () => _scanner,
+			CombatLifecycle = () => _combatLifecycle
+		}, this );
 	}
 
 	private bool IsVerification => !string.IsNullOrWhiteSpace( _context.VerificationProbe );
@@ -2316,12 +2342,11 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 	private bool IsKnownAccount( AccountId accountId ) =>
 		_clients.Values.Any( value => value.AccountId == accountId ) || _projectionIndex.IsKnownAccount( accountId );
 
-	private InventoryRecord? MainInventory( CharacterId characterId )
-	{
-		var owner = InventoryOwner.Character( characterId );
-		var index = _repositories.OwnerInventories.Find( DomainKeys.OwnerInventory( owner, InventoryRoles.Main ) );
-		return index is null ? null : _repositories.Inventories.Find( DomainKeys.Inventory( index.Value.InventoryId ) )?.Value;
-	}
+	private InventoryRecord? MainInventory( CharacterId characterId ) =>
+		_presentation.MainInventory( characterId );
+
+	private string DisplayNameFor( CharacterRecord? viewer, CharacterRecord subject ) =>
+		_presentation.DisplayNameFor( viewer, subject );
 
 	private InteractionSession? CurrentSession( InventoryActor actor, InteractionSessionKind kind ) =>
 		_sessions?.ActiveSessions.SingleOrDefault( value =>
@@ -2673,27 +2698,6 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 				_characters.ListForAccount( accountId ),
 				_clock.UtcNow ) );
 
-	private SchemaViewSnapshot BuildCreationAvailabilityView(
-		ConnectionId connectionId,
-		AccountId accountId,
-		CharacterId? characterId,
-		long revision )
-	{
-		var self = _entitlements.Observe( accountId );
-		var selfSnapshot = self.Succeeded
-			? self.Value
-			: new HL2RPAccountEntitlementSnapshot(
-				accountId, HL2RPWhitelist.None, Hexagon.V2.Persistence.DocumentRevision.None, false );
-		var canManage = CanManageEntitlements( new HL2RPEntitlementAdministrator( accountId, characterId ) );
-		HL2RPAccountEntitlementSnapshot? queried = null;
-		if ( canManage && _entitlementQueries.TryGetValue( connectionId, out var queriedAccountId ) )
-		{
-			var observed = _entitlements.Observe( queriedAccountId );
-			if ( observed.Succeeded ) queried = observed.Value;
-		}
-		return HL2RPCreationAvailability.Build( revision, selfSnapshot, canManage, queried );
-	}
-
 	private void PublishAll()
 	{
 		if ( _disposed ) return;
@@ -2727,12 +2731,14 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 			if ( !_clients.TryGetValue( connectionId, out var binding ) ) continue;
 			var pair = new KeyValuePair<ConnectionId, ClientBinding>( connectionId, binding );
 			var character = FindActiveCharacter( pair.Key );
-			var publicSnapshot = PublicSnapshot( pair.Key, pair.Value, character );
+			var clientView = new HL2RPClientPresentationView(
+				pair.Key, pair.Value.AccountId, pair.Value.CharacterId, pair.Value.Connection.DisplayName );
+			var publicSnapshot = _presentation.PublicSnapshot( clientView, character );
 			PlayerPrivateSnapshot? privateSnapshot = null;
 			IReadOnlyList<InventorySnapshot> inventories = Array.Empty<InventorySnapshot>();
 			IReadOnlyList<SchemaViewSnapshot> views = new[]
 			{
-				BuildCreationAvailabilityView( pair.Key, pair.Value.AccountId, character?.Id, revision )
+				_presentation.BuildCreationAvailabilityView( pair.Key, pair.Value.AccountId, character?.Id, revision )
 			};
 			if ( character is not null )
 			{
@@ -2741,17 +2747,17 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 					pair.Key,
 					HL2RPProjectionSliceKind.PrivatePlayer,
 					() => new HL2RPProjectionSlice<PlayerPrivateSnapshot>(
-						BuildPrivateSnapshot( character, mainInventoryId ),
-						PrivateProjectionDocuments( character.Id, mainInventoryId ),
+						_presentation.BuildPrivateSnapshot( character, mainInventoryId ),
+						_presentation.PrivateProjectionDocuments( character.Id, mainInventoryId ),
 						new[] { HL2RPProjectionIndex.RuntimeDependency( "connection", pair.Key.ToString() ) } ) );
 				inventories = _projectionIndex.GetOrCreateSlice(
 					pair.Key,
 					HL2RPProjectionSliceKind.Inventories,
-					() => BuildInventoryProjectionSlice( pair.Key, character.Id ) );
+					() => _presentation.BuildInventoryProjectionSlice( pair.Key, character.Id ) );
 				var cachedViews = _projectionIndex.GetOrCreateSlice(
 					pair.Key,
 					HL2RPProjectionSliceKind.SchemaViews,
-					() => BuildSchemaProjectionSlice( pair.Key, character ) );
+					() => _presentation.BuildSchemaProjectionSlice( pair.Key, character ) );
 				views = views.Concat( cachedViews.Select( view => new SchemaViewSnapshot(
 					view.PanelId, revision, view.Fields, view.Rows ) ) ).ToArray();
 			}
@@ -2762,582 +2768,24 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 				_projectionIndex.GetOrCreateSlice(
 					pair.Key,
 					HL2RPProjectionSliceKind.Roster,
-					() => BuildRosterProjectionSlice( pair.Key ) ).WithRevision( revision ),
+					() => _presentation.BuildRosterProjectionSlice( pair.Key ) ).WithRevision( revision ),
 				views,
 				inventories,
-				BuildActionProgress( pair.Key ) );
+				_presentation.BuildActionProgress( pair.Key ) );
 		}
 		_presentationInvalidation.AcknowledgePublished( coveredInvalidations );
 	}
 
-	private IReadOnlyList<DocumentAddress> PrivateProjectionDocuments(
-		CharacterId characterId,
-		InventoryId? mainInventoryId )
-	{
-		var documents = new List<DocumentAddress>
-		{
-			new( DomainCollections.Characters, DomainKeys.Character( characterId ) )
-		};
-		if ( mainInventoryId is InventoryId inventoryId )
-			documents.Add( new DocumentAddress( DomainCollections.Inventories, DomainKeys.Inventory( inventoryId ) ) );
-		return documents;
-	}
+	IReadOnlyList<HL2RPClientPresentationView> IHL2RPPresentationHost.Clients =>
+		_clients.Select( pair => new HL2RPClientPresentationView(
+			pair.Key, pair.Value.AccountId, pair.Value.CharacterId, pair.Value.Connection.DisplayName ) ).ToArray();
 
-	private HL2RPProjectionSlice<IReadOnlyList<InventorySnapshot>> BuildInventoryProjectionSlice(
-		ConnectionId connectionId,
-		CharacterId characterId )
-	{
-		var value = BuildInventories( connectionId, characterId );
-		_projectionIndex.ObserveVisibleInventories(
-			connectionId, value.Select( inventory => inventory.InventoryId ) );
-		var documents = new HashSet<DocumentAddress>
-		{
-			new( DomainCollections.Characters, DomainKeys.Character( characterId ) )
-		};
-		foreach ( var inventory in value )
-		{
-			documents.Add( new DocumentAddress(
-				DomainCollections.Inventories, DomainKeys.Inventory( inventory.InventoryId ) ) );
-			foreach ( var item in inventory.Items )
-				documents.Add( new DocumentAddress( DomainCollections.Items, DomainKeys.Item( item.ItemId ) ) );
-		}
-		foreach ( var session in _sessions?.ActiveSessions.Where( value =>
-			value.ConnectionId == connectionId && value.Target.Kind == InteractionTargetKind.SceneEntity ) ??
-			Array.Empty<InteractionSession>() )
-			documents.Add( new DocumentAddress( DomainCollections.SceneEntities,
-				DomainKeys.SceneEntity( new SceneEntityId( session.Target.Id ) ) ) );
-		return new HL2RPProjectionSlice<IReadOnlyList<InventorySnapshot>>(
-			value, documents.ToArray(),
-			new[] { HL2RPProjectionIndex.RuntimeDependency( "connection", connectionId.ToString() ) } );
-	}
+	CharacterRecord? IHL2RPPresentationHost.NearestCharacterTarget( CharacterId viewerId ) =>
+		NearestCharacterTarget( viewerId );
 
-	private HL2RPProjectionSlice<IReadOnlyList<SchemaViewSnapshot>> BuildSchemaProjectionSlice(
-		ConnectionId connectionId,
-		CharacterRecord character )
-	{
-		var value = BuildSchemaViews( connectionId, character, 0 );
-		var documents = new HashSet<DocumentAddress>
-		{
-			new( DomainCollections.Characters, DomainKeys.Character( character.Id ) )
-		};
-		var civicSubject = _civicSubjects.Resolve(
-			connectionId, character.Id,
-			candidate => _repositories.Characters.Find( DomainKeys.Character( candidate ) ) is not null );
-		documents.Add( new DocumentAddress( DomainCollections.Characters, DomainKeys.Character( civicSubject ) ) );
-		if ( _projectionIndex.FirstSceneEntity( "city" ) is PersistentSceneEntityRecord city )
-			documents.Add( new DocumentAddress( DomainCollections.SceneEntities, DomainKeys.SceneEntity( city.Id ) ) );
-		foreach ( var reference in _projectionIndex.CharacterReferenceKeys( character.Id ) )
-			documents.Add( new DocumentAddress( DomainCollections.CharacterReferences, reference ) );
-		foreach ( var session in _sessions?.ActiveSessions.Where( session =>
-			session.ConnectionId == connectionId && session.Target.Kind == InteractionTargetKind.SceneEntity ) ??
-			Array.Empty<InteractionSession>() )
-		{
-			var scene = new SceneEntityId( session.Target.Id );
-			documents.Add( new DocumentAddress( DomainCollections.SceneEntities, DomainKeys.SceneEntity( scene ) ) );
-			foreach ( var reference in _projectionIndex.CharacterReferenceAddressesForScene( scene ) ) documents.Add( reference );
-		}
-		return new HL2RPProjectionSlice<IReadOnlyList<SchemaViewSnapshot>>(
-			value, documents.ToArray(),
-			new[] { HL2RPProjectionIndex.RuntimeDependency( "connection", connectionId.ToString() ) } );
-	}
-
-	private ActionProgressSnapshot? BuildActionProgress( ConnectionId connectionId )
-	{
-		if ( _activeRestraintActions.TryGet( connectionId, out var action ) )
-			return new ActionProgressSnapshot(
-				action.Ticket.TicketId.Value,
-				new ActionId( HL2RPIds.Actions.Restrain ),
-				"Applying restraint",
-				action.Ticket.CompletesAtUtc - RestraintService.RestraintDuration,
-				RestraintService.RestraintDuration,
-				true );
-		if ( _activePistolActions.TryGet( connectionId, out var pistol ) )
-			return new ActionProgressSnapshot(
-				pistol.InstanceId,
-				new ActionId( HL2RPIds.Actions.Fire ),
-				"Raising pistol",
-				pistol.ReadyAtUtc - PistolCombatService.DefaultRaiseDelay,
-				PistolCombatService.DefaultRaiseDelay,
-				true );
-		return null;
-	}
-
-	private PlayerPublicSnapshot PublicSnapshot(
-		ConnectionId connectionId,
-		ClientBinding binding,
-		CharacterRecord? character ) => new(
-		connectionId,
-		binding.AccountId.Value,
-		binding.Connection.DisplayName,
-		character?.Id,
-		character?.Name ?? string.Empty,
-		character?.Description ?? string.Empty,
-		character?.Model,
-		character?.Faction,
-		character?.Class,
-		character is not null && _combatLifecycle?.GetState( character.Id ) is not null,
-		character is not null && IsPistolRaised( character.Id ),
-		character is null ? string.Empty : HL2RPRuntimeProjection.SafeReplicatedLabel( character ) );
-
-	private bool IsPistolRaised( CharacterId characterId )
-	{
-		var main = MainInventory( characterId );
-		if ( main is null ) return false;
-		foreach ( var placement in main.Placements )
-		{
-			var item = _repositories.Items.Find( DomainKeys.Item( placement.ItemId ) )?.Value;
-			if ( item?.Definition.Value != HL2RPIds.Items.Pistol || !item.Traits.TryGetValue( "pistol", out var payload ) ) continue;
-			try
-			{
-				var pistol = HL2RPPersistence.Pistol.Deserialize( payload.Data, payload.TypeVersion );
-				if ( pistol.Equipped && pistol.Raised ) return true;
-			}
-			catch ( Exception ) { }
-		}
-		return false;
-	}
-
-	private PlayerPrivateSnapshot BuildPrivateSnapshot( CharacterRecord character, InventoryId? mainInventoryId )
-	{
-		var baseline = HL2RPRuntimeProjection.PrivateSnapshot( character, mainInventoryId );
-		var values = new Dictionary<string, SnapshotValue>( baseline.Values, StringComparer.Ordinal );
-		var health = _combatHealth.Require( character.Id );
-		values["vitals.health"] = SnapshotValue.Integer( health.Succeeded ? health.Value.CurrentHealth : 0 );
-		values["vitals.health_max"] = SnapshotValue.Integer( health.Succeeded ? health.Value.MaximumHealth : 100 );
-		values["vitals.armor_max"] = SnapshotValue.Integer( 100 );
-		var death = _combatLifecycle?.GetState( character.Id );
-		values["death.cause"] = SnapshotValue.String( death?.Cause ?? string.Empty );
-		values["death.can_respawn"] = SnapshotValue.Boolean( death?.CanRespawn( _clock.UtcNow ) == true );
-		values["death.respawn_available_at_ms"] = SnapshotValue.Integer(
-			death?.RespawnAvailableAtUtc.ToUnixTimeMilliseconds() ?? 0 );
-		values["restraint.active"] = SnapshotValue.Boolean( _restraintState.IsRestrained( character.Id ) );
-		var activeSessions = _sessions?.ActiveSessions.Where( value => value.CharacterId == character.Id ).ToArray() ?? Array.Empty<InteractionSession>();
-		foreach ( var session in activeSessions )
-			values[$"interaction.{session.Kind.ToString().ToLowerInvariant()}_session"] = SnapshotValue.String( session.Id.Value.ToString( "D" ) );
-		var connection = _clients.FirstOrDefault( value => value.Value.CharacterId == character.Id ).Key;
-		values["action.active"] = SnapshotValue.Boolean(
-			_activeRestraintActions.Contains( connection ) || _activePistolActions.Contains( connection ) );
-		if ( _itemActionPresentations.TryGetValue( connection, out var itemPresentation ) &&
-			itemPresentation.CharacterId == character.Id )
-		{
-			values["item.presentation.sequence"] = SnapshotValue.Integer( itemPresentation.PresentationSequence );
-			values["item.presentation.kind"] = SnapshotValue.Choice( itemPresentation.Receipt.Kind switch
-			{
-				ItemActionPresentationKind.IdentityDocument => "identity_document",
-				ItemActionPresentationKind.ReferenceDocument => "reference_document",
-				ItemActionPresentationKind.PersonalNote => "personal_note",
-				ItemActionPresentationKind.PermitCredential => "permit_credential",
-				_ => "unknown"
-			} );
-			values["item.presentation.title"] = SnapshotValue.String( itemPresentation.Receipt.Title );
-			foreach ( var field in itemPresentation.Receipt.Fields )
-				values[$"item.presentation.field.{field.Key}"] = field.Value;
-		}
-		return new PlayerPrivateSnapshot( character.Id, character.Balance, mainInventoryId, values, baseline.Permissions );
-	}
-
-	private HL2RPProjectionSlice<PlayerRosterSnapshot> BuildRosterProjectionSlice( ConnectionId recipient )
-	{
-		var rows = new List<PlayerRosterRowSnapshot>();
-		var documents = new HashSet<DocumentAddress>();
-		var viewer = FindActiveCharacter( recipient );
-		if ( viewer is not null )
-			documents.Add( new DocumentAddress( DomainCollections.Characters, DomainKeys.Character( viewer.Id ) ) );
-		foreach ( var pair in _clients.OrderBy( value => value.Key.Value ) )
-		{
-			var character = FindActiveCharacter( pair.Key );
-			if ( character is not null )
-			{
-				documents.Add( new DocumentAddress(
-					DomainCollections.Characters, DomainKeys.Character( character.Id ) ) );
-				if ( viewer is not null && viewer.Id != character.Id &&
-					character.Faction.Value is not (HL2RPIds.Factions.CivilProtection or HL2RPIds.Factions.Overwatch) )
-					documents.Add( new DocumentAddress(
-						DomainCollections.CharacterReferences,
-						$"recognition-{viewer.Id}-{character.Id}" ) );
-			}
-			var isDead = character is not null && _combatLifecycle?.GetState( character.Id ) is not null;
-			var fields = new Dictionary<string, SnapshotValue>( StringComparer.Ordinal )
-			{
-				[HL2RPPresentationFields.Roster.DisplayName] = SnapshotValue.String(
-					character is null ? pair.Value.Connection.DisplayName : DisplayNameFor( viewer, character ) ),
-				[HL2RPPresentationFields.Roster.FactionId] = SnapshotValue.String( character?.Faction.Value ?? string.Empty ),
-				[HL2RPPresentationFields.Roster.ClassId] = SnapshotValue.String( character?.Class?.Value ?? string.Empty ),
-				[HL2RPPresentationFields.Roster.IsDead] = SnapshotValue.Boolean( isDead ),
-				[HL2RPPresentationFields.Roster.Status] = SnapshotValue.String(
-					character is null ? "Selecting" : isDead ? "Deceased" : "Active" ),
-				[HL2RPPresentationFields.Roster.IsLocal] = SnapshotValue.Boolean( pair.Key == recipient )
-			};
-			rows.Add( new PlayerRosterRowSnapshot( pair.Key, character?.Id, fields ) );
-		}
-		return new HL2RPProjectionSlice<PlayerRosterSnapshot>(
-			new PlayerRosterSnapshot( 0, rows ), documents.ToArray(),
-			new[]
-			{
-				HL2RPProjectionIndex.RuntimeDependency( "roster-membership", "global" ),
-				HL2RPProjectionIndex.RuntimeDependency( "combat-lifecycle", "global" )
-			} );
-	}
-
-	private string DisplayNameFor( CharacterRecord? viewer, CharacterRecord subject )
-		=> HL2RPRuntimeProjection.PresentationName( viewer, subject, _repositories );
-
-	private IReadOnlyList<InventorySnapshot> BuildInventories( ConnectionId connectionId, CharacterId characterId )
-	{
-		var snapshots = new List<InventorySnapshot>();
-		var character = _repositories.Characters.Find( DomainKeys.Character( characterId ) )?.Value;
-		if ( character is null ) return snapshots;
-		foreach ( var document in _projectionIndex.VisibleInventories(
-			connectionId, characterId,
-			inventoryId => _access.Has( connectionId, characterId, inventoryId, InventoryCapability.View ) ) )
-		{
-			var inventory = document.Value;
-			var kind = inventory.Owner == InventoryOwner.Character( characterId )
-				? InventoryViewKind.Main
-				: inventory.Owner.Kind == InventoryOwnerKind.SceneEntity
-					? InventoryViewKind.Storage
-					: inventory.Owner.Kind == InventoryOwnerKind.Character ? InventoryViewKind.Search : InventoryViewKind.Bag;
-			var inventoryItems = inventory.Placements
-				.Select( placement => _projectionIndex.TryGetItem( placement.ItemId, out var item ) ? item : null )
-				.Where( item => item is not null )
-				.ToDictionary( item => item!.Id, item => item! );
-			var items = new List<InventoryItemSnapshot>();
-			foreach ( var placement in inventory.Placements )
-			{
-				inventoryItems.TryGetValue( placement.ItemId, out var item );
-				if ( item is null || !_context.Schema.Items.TryGet( item.Definition.Value, out var definition ) ) continue;
-				var actions = definition!.ActionIds.Select( action => ActionSnapshot(
-					connectionId, character, inventory, item, inventoryItems, action ) );
-				var state = new Dictionary<string, SnapshotValue>(
-					HL2RPInventoryItemState.Project( item, characterId, _clock.UtcNow ), StringComparer.Ordinal );
-				TrackItemPresentationDeadline( item );
-				var sell = VendorSellAvailabilityFor( connectionId, character, inventory, item );
-				if ( sell is not null )
-				{
-					state[HL2RPInventoryItemFields.VendorSellEnabled] = SnapshotValue.Boolean( sell.Enabled );
-					state[HL2RPInventoryItemFields.VendorSellPayout] = SnapshotValue.Integer( sell.Payout );
-					state[HL2RPInventoryItemFields.VendorSellReason] = SnapshotValue.String( sell.DisabledReason );
-				}
-				var drop = HL2RPItemDropAvailability.Project(
-					definition,
-					_access.Has( connectionId, characterId, inventory.Id, InventoryCapability.Move | InventoryCapability.Drop ),
-					!string.IsNullOrWhiteSpace( definition.WorldModel ) && _worldModels.IsValidModel( definition.WorldModel ),
-					_restraintState.IsRestrained( characterId ) );
-				items.Add( new InventoryItemSnapshot(
-					item.Id, item.Definition, definition.DisplayName ?? item.Definition.Value,
-					definition.Description ?? string.Empty, definition.Category ?? string.Empty,
-					placement.X, placement.Y, definition.Width, definition.Height, Quantity( item ),
-					actions, state, drop.CanDrop, drop.DisabledReason ) );
-			}
-			snapshots.Add( new InventorySnapshot(
-				inventory.Id, Math.Max( document.Revision.Value, 0 ), kind, kind.ToString(),
-				inventory.Width, inventory.Height, items ) );
-		}
-		return snapshots;
-	}
-
-	private void TrackItemPresentationDeadline( ItemRecord item )
-	{
-		try
-		{
-			DateTimeOffset? refreshAt = null;
-			if ( item.Definition.Value == HL2RPIds.Items.RequestDevice &&
-				item.Traits.TryGetValue( "request_device", out var requestPayload ) )
-			{
-				var request = HL2RPPersistence.RequestDevice.Deserialize( requestPayload.Data, requestPayload.TypeVersion );
-				if ( request.LastRequestAtUtc is DateTimeOffset last )
-					refreshAt = last + RequestDeviceService.RequestCooldown;
-			}
-			else if ( item.Definition.Value == HL2RPIds.Items.Pistol &&
-				item.Traits.TryGetValue( "pistol", out var pistolPayload ) )
-			{
-				var pistol = HL2RPPersistence.Pistol.Deserialize( pistolPayload.Data, pistolPayload.TypeVersion );
-				if ( pistol.LastFiredAtUtc is DateTimeOffset last )
-					refreshAt = last + PistolCombatService.DefaultFireInterval;
-			}
-			else if ( item.Definition.Value == HL2RPIds.Items.BusinessPermit &&
-				item.Traits.TryGetValue( "permit", out var permitPayload ) )
-			{
-				refreshAt = HL2RPPersistence.BusinessPermit.Deserialize(
-					permitPayload.Data, permitPayload.TypeVersion ).ExpiresAtUtc;
-			}
-			if ( refreshAt is DateTimeOffset deadline && deadline > _clock.UtcNow )
-				_presentationInvalidation.TrackRefreshDeadline( $"item:{item.Id}", deadline );
-		}
-		catch ( Exception ) { }
-	}
-
-	private ItemActionSnapshot ActionSnapshot(
-		ConnectionId connectionId,
-		CharacterRecord character,
-		InventoryRecord inventory,
-		ItemRecord item,
-		IReadOnlyDictionary<ItemId, ItemRecord> inventoryItems,
-		string action )
-	{
-		var routed = _executableActions.CreateSnapshot(
-			item.Definition, new ActionId( action ), action.Replace( '_', ' ' ) );
-		var health = _combatHealth.Require( character.Id );
-		var nestedBags = _projectionIndex.NestedInventoryCount( item.Id );
-		return HL2RPItemActionAvailability.Project( routed, new HL2RPItemActionAvailabilityContext
-		{
-			Character = character,
-			Inventory = inventory,
-			Item = item,
-			InventoryItems = inventoryItems,
-			NowUtc = _clock.UtcNow,
-			HasUseCapability = _access.Has(
-				connectionId, character.Id, inventory.Id, InventoryCapability.View | InventoryCapability.Use ),
-			IsRestrained = _restraintState.IsRestrained( character.Id ),
-			IsDead = _combatLifecycle?.GetState( character.Id ) is not null,
-			Health = health.Succeeded ? health.Value : null,
-			HasNestedBagInventory = nestedBags == 1,
-			CombineLock = action == HL2RPIds.Actions.Install
-				? CombineLockAvailabilityFor( connectionId, character, item )
-				: null
-		} );
-	}
-
-	private CombineLockActionAvailability CombineLockAvailabilityFor(
-		ConnectionId connectionId,
-		CharacterRecord character,
-		ItemRecord item )
-	{
-		var session = _sessions?.ActiveSessions.FirstOrDefault( value =>
-			value.ConnectionId == connectionId && value.CharacterId == character.Id &&
-			value.Kind == InteractionSessionKind.Door && value.Target.Kind == InteractionTargetKind.SceneEntity );
-		if ( session is null ) return new CombineLockActionAvailability( false, "A current door session is required." );
-		var door = _repositories.SceneEntities.Find(
-			DomainKeys.SceneEntity( new SceneEntityId( session.Target.Id ) ) )?.Value;
-		if ( door is null || door.Kind != "door" )
-			return new CombineLockActionAvailability( false, "Bound session target is not a door." );
-		var state = HL2RPFeaturePersistence.Decode( door.State, HL2RPPersistence.DoorState );
-		if ( state.Failed ) return new CombineLockActionAvailability( false, "Door state is malformed." );
-		if ( state.Value.CombineLocked ) return new CombineLockActionAvailability( false, "Door already has a Combine lock." );
-		var policy = _featurePolicy.Evaluate( new HL2RPFeaturePolicyContext
-		{
-			Actor = new InventoryActor( connectionId, character.AccountId, character.Id ),
-			Operation = HL2RPFeatureOperation.InstallCombineLock,
-			SceneEntityId = new SceneEntityId( session.Target.Id ),
-			ItemId = item.Id
-		} );
-		return policy.Succeeded
-			? new CombineLockActionAvailability( true, null )
-			: new CombineLockActionAvailability( false, policy.Error!.Message );
-	}
-
-	private VendorSellAvailability? VendorSellAvailabilityFor(
-		ConnectionId connectionId,
-		CharacterRecord character,
-		InventoryRecord inventory,
-		ItemRecord item )
-	{
-		if ( inventory.Owner != InventoryOwner.Character( character.Id ) ) return null;
-		var session = _sessions?.ActiveSessions.FirstOrDefault( value =>
-			value.ConnectionId == connectionId && value.CharacterId == character.Id &&
-			value.Kind == InteractionSessionKind.Vendor && value.Target.Kind == InteractionTargetKind.SceneEntity );
-		if ( session is null ) return null;
-		var sceneEntityId = new SceneEntityId( session.Target.Id );
-		var vendorEntity = _repositories.SceneEntities.Find( DomainKeys.SceneEntity( sceneEntityId ) )?.Value;
-		if ( vendorEntity is null || vendorEntity.Kind != "vendor" )
-			return new VendorSellAvailability( false, 0, "Bound session target is not a vendor." );
-		var vendor = HL2RPFeaturePersistence.Decode( vendorEntity.State, HL2RPPersistence.VendorState );
-		if ( vendor.Failed ) return new VendorSellAvailability( false, 0, "Vendor state is malformed." );
-		var actor = new InventoryActor( connectionId, character.AccountId, character.Id );
-		var policy = _featurePolicy.Evaluate( new HL2RPFeaturePolicyContext
-		{
-			Actor = actor,
-			Operation = HL2RPFeatureOperation.VendorSell,
-			SceneEntityId = sceneEntityId,
-			ItemId = item.Id
-		} );
-		return HL2RPVendorSellAvailability.Project(
-			character,
-			item,
-			vendor.Value,
-			_access.Has( connectionId, character.Id, inventory.Id,
-				InventoryCapability.View | InventoryCapability.TransferOut | InventoryCapability.Sell ),
-			_projectionIndex.NestedInventoryCount( item.Id ) > 0,
-			PermitInspector.HasValidPermit(
-				_repositories, character.Id, vendor.Value.RequiredPermit, _clock.UtcNow ),
-			policy.Succeeded );
-	}
-
-	private static long Quantity( ItemRecord item )
-	{
-		if ( !item.Traits.TryGetValue( "tokens", out var payload ) ) return 1;
-		try { return Math.Max( 1, HL2RPPersistence.TokenStack.Deserialize( payload.Data, payload.TypeVersion ).Amount ); }
-		catch ( Exception ) { return 1; }
-	}
-
-	private IReadOnlyList<SchemaViewSnapshot> BuildSchemaViews(
-		ConnectionId connectionId,
-		CharacterRecord character,
-		long revision )
-	{
-		var views = new List<SchemaViewSnapshot>();
-		var civicSubjectId = _civicSubjects.Resolve(
-			connectionId,
-			character.Id,
-			candidate => _repositories.Characters.Find( DomainKeys.Character( candidate ) ) is not null );
-		var civicSubject = _repositories.Characters.Find( DomainKeys.Character( civicSubjectId ) )?.Value ?? character;
-		var state = HL2RPRuntimeProjection.DecodeState( civicSubject );
-		if ( state.Failed && civicSubject.Id != character.Id )
-		{
-			_civicSubjects.ClearConnection( connectionId );
-			civicSubject = character;
-			state = HL2RPRuntimeProjection.DecodeState( character );
-		}
-		if ( state.Succeeded ) views.Add( CivicView( character, civicSubject, state.Value, revision ) );
-		views.Add( ObjectiveView( character, revision ) );
-		views.Add( RestraintView( connectionId, character, revision ) );
-		var vendorSession = _sessions?.ActiveSessions.SingleOrDefault( value =>
-			value.ConnectionId == connectionId && value.CharacterId == character.Id && value.Kind == InteractionSessionKind.Vendor );
-		if ( vendorSession is not null )
-		{
-			var view = VendorView( character, vendorSession, revision );
-			if ( view is not null ) views.Add( view );
-		}
-		var doorSession = _sessions?.ActiveSessions.SingleOrDefault( value =>
-			value.ConnectionId == connectionId && value.CharacterId == character.Id &&
-			value.Kind == InteractionSessionKind.Door );
-		if ( doorSession is not null )
-		{
-			var view = DoorView( character, doorSession, revision );
-			if ( view is not null ) views.Add( view );
-		}
-		var scannerSession = _scanner?.ActiveSessions.SingleOrDefault( value => value.Actor.ConnectionId == connectionId );
-		if ( scannerSession is not null ) views.Add( ScannerView( scannerSession, revision ) );
-		return views;
-	}
-
-	private SchemaViewSnapshot? DoorView(
-		CharacterRecord character,
-		InteractionSession session,
-		long revision )
-	{
-		if ( session.Target.Kind != InteractionTargetKind.SceneEntity ) return null;
-		var id = new SceneEntityId( session.Target.Id );
-		if ( !_features.TryGetValue( id, out var component ) ||
-			component is not HL2RPDoorComponent { Ownable: true } ) return null;
-		var document = _repositories.SceneEntities.Find( DomainKeys.SceneEntity( id ) )?.Value;
-		if ( document is null || document.Kind != "door" ) return null;
-		var decoded = HL2RPFeaturePersistence.Decode( document.State, HL2RPPersistence.DoorState );
-		if ( decoded.Failed ) return null;
-		var owners = _projectionIndex.DoorOwners( id );
-		var ownerStatus = owners.Count switch
-		{
-			0 => "unowned",
-			1 when owners[0] == character.Id => "self",
-			1 => "other",
-			_ => "conflict"
-		};
-		var canClaim = owners.Count == 0 && !decoded.Value.CombineLocked;
-		var claimReason = canClaim ? string.Empty : owners.Count switch
-		{
-			> 1 => "Door ownership is ambiguous.",
-			1 when owners[0] == character.Id => "You already own this door.",
-			1 => "This door is owned by another character.",
-			_ => "A Combine-locked door cannot be claimed."
-		};
-		var canRelease = owners.Count == 1 && owners[0] == character.Id;
-		var releaseReason = canRelease ? string.Empty : owners.Count switch
-		{
-			> 1 => "Door ownership is ambiguous.",
-			1 => "Only the current owner may release this door.",
-			_ => "This door has no owner."
-		};
-		return new SchemaViewSnapshot(
-			HL2RPIds.Panels.Door,
-			revision,
-			new Dictionary<string, SnapshotValue>( StringComparer.Ordinal )
-			{
-				[HL2RPPresentationFields.Door.SessionId] = SnapshotValue.String( session.Id.Value.ToString( "D" ) ),
-				[HL2RPPresentationFields.Door.SceneEntityId] = SnapshotValue.String( id.Value.ToString( "D" ) ),
-				[HL2RPPresentationFields.Door.IsOpen] = SnapshotValue.Boolean( decoded.Value.IsOpen ),
-				[HL2RPPresentationFields.Door.CombineLocked] = SnapshotValue.Boolean( decoded.Value.CombineLocked ),
-				[HL2RPPresentationFields.Door.OwnerStatus] = SnapshotValue.Choice( ownerStatus ),
-				[HL2RPPresentationFields.Door.CanClaim] = SnapshotValue.Boolean( canClaim ),
-				[HL2RPPresentationFields.Door.ClaimDisabledReason] = SnapshotValue.String( claimReason ),
-				[HL2RPPresentationFields.Door.CanRelease] = SnapshotValue.Boolean( canRelease ),
-				[HL2RPPresentationFields.Door.ReleaseDisabledReason] = SnapshotValue.String( releaseReason )
-			} );
-	}
-
-	private SchemaViewSnapshot CivicView(
-		CharacterRecord viewer,
-		CharacterRecord subject,
-		HL2RPCharacterState state,
-		long revision )
-	{
-		var fields = new Dictionary<string, SnapshotValue>( StringComparer.Ordinal )
-		{
-			[HL2RPPresentationFields.CivicData.CharacterId] = SnapshotValue.String( subject.Id.Value.ToString( "D" ) ),
-			[HL2RPPresentationFields.CivicData.DisplayName] = SnapshotValue.String( subject.Name ),
-			[HL2RPPresentationFields.CivicData.CitizenId] = SnapshotValue.String( state.CitizenId ),
-			[HL2RPPresentationFields.CivicData.Points] = SnapshotValue.Integer( state.CivicRecord.Points ),
-			[HL2RPPresentationFields.CivicData.InfractionCount] = SnapshotValue.Integer( state.CivicRecord.Infractions.Count ),
-			[HL2RPPresentationFields.CivicData.Priority] = SnapshotValue.Integer( (int)state.CivicRecord.Priority ),
-			[HL2RPPresentationFields.CivicData.Record] = SnapshotValue.String( state.CivicRecord.RecordText ),
-			[HL2RPPresentationFields.CivicData.CanEdit] = SnapshotValue.Boolean(
-				_featureAuthorization.HasPermission( viewer.AccountId, viewer.Id, HL2RPIds.Permissions.Priority ) )
-		};
-		var rows = state.CivicRecord.Infractions.Select( (infraction, index) =>
-			(IReadOnlyDictionary<string, SnapshotValue>)new Dictionary<string, SnapshotValue>( StringComparer.Ordinal )
-			{
-				[HL2RPPresentationFields.CivicData.InfractionId] = SnapshotValue.String( DeterministicGuid( $"{state.CitizenId}:{index}" ).ToString( "D" ) ),
-				[HL2RPPresentationFields.CivicData.Summary] = SnapshotValue.String( infraction.Summary ),
-				[HL2RPPresentationFields.CivicData.InfractionPoints] = SnapshotValue.Integer( infraction.Points ),
-				[HL2RPPresentationFields.CivicData.IssuedAtUnixMilliseconds] = SnapshotValue.Integer( infraction.IssuedAtUtc.ToUnixTimeMilliseconds() ),
-				[HL2RPPresentationFields.CivicData.IssuedBy] = SnapshotValue.String( infraction.IssuedBy.ToString() )
-			} ).ToArray();
-		return new SchemaViewSnapshot( HL2RPIds.Panels.CivicData, revision, fields, rows );
-	}
-
-	private SchemaViewSnapshot ObjectiveView( CharacterRecord character, long revision )
-	{
-		var rows = new List<IReadOnlyDictionary<string, SnapshotValue>>();
-		var city = _projectionIndex.FirstSceneEntity( "city" );
-		if ( city is not null )
-		{
-			try
-			{
-				var state = HL2RPPersistence.CityState.Deserialize( city.State.Data, city.State.TypeVersion );
-				foreach ( var objective in HL2RPObjectiveProjection.Rows( state ) )
-					rows.Add( new Dictionary<string, SnapshotValue>( objective, StringComparer.Ordinal ) );
-			}
-			catch ( Exception ) { rows.Clear(); }
-		}
-		return new SchemaViewSnapshot( HL2RPIds.Panels.Objectives, revision,
-			new Dictionary<string, SnapshotValue>
-			{
-				[HL2RPPresentationFields.Objectives.CanEdit] = SnapshotValue.Boolean(
-					_featureAuthorization.HasPermission( character.AccountId, character.Id, HL2RPIds.Permissions.CityObjectives ) )
-			}, rows );
-	}
-
-	private SchemaViewSnapshot RestraintView(
-		ConnectionId connectionId,
-		CharacterRecord character,
-		long revision )
-	{
-		var target = NearestCharacterTarget( character.Id );
-		_presentationInvalidation.RememberRestraintTarget( connectionId, target?.Id );
-		var subjectId = target?.Id ?? character.Id;
-		var restrained = _restraintState.IsRestrained( subjectId );
-		return new SchemaViewSnapshot( HL2RPIds.Panels.RestraintStatus, revision,
-			new Dictionary<string, SnapshotValue>( StringComparer.Ordinal )
-			{
-				[HL2RPPresentationFields.RestraintStatus.Restrained] = SnapshotValue.Boolean( restrained ),
-				[HL2RPPresentationFields.RestraintStatus.RemainingMilliseconds] = SnapshotValue.Integer( -1 ),
-				[HL2RPPresentationFields.RestraintStatus.TargetCharacterId] = SnapshotValue.String(
-					target?.Id.Value.ToString( "D" ) ?? string.Empty ),
-				[HL2RPPresentationFields.RestraintStatus.CanSearch] = SnapshotValue.Boolean( target is not null && restrained ),
-				[HL2RPPresentationFields.RestraintStatus.Status] = SnapshotValue.String( target is null
-					? (restrained ? "Movement restricted." : "No character in authoritative reach.")
-					: (restrained ? $"{target.Name} is restrained and searchable." : $"{target.Name} can be restrained.") )
-			} );
-	}
+	bool IHL2RPPresentationHost.IsOwnableDoor( SceneEntityId sceneEntityId ) =>
+		_features.TryGetValue( sceneEntityId, out var component ) &&
+		component is HL2RPDoorComponent { Ownable: true };
 
 	private CharacterRecord? NearestCharacterTarget( CharacterId viewerId )
 	{
@@ -3359,64 +2807,6 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 			nearestDistance = distance;
 		}
 		return nearest;
-	}
-
-	private SchemaViewSnapshot? VendorView( CharacterRecord character, InteractionSession session, long revision )
-	{
-		if ( session.Target.Kind != InteractionTargetKind.SceneEntity ) return null;
-		var document = _repositories.SceneEntities.Find( DomainKeys.SceneEntity( new SceneEntityId( session.Target.Id ) ) );
-		if ( document is null || document.Value.Kind != "vendor" ) return null;
-		try
-		{
-			var vendor = HL2RPPersistence.VendorState.Deserialize( document.Value.State.Data, document.Value.State.TypeVersion );
-			var hasPermit = PermitInspector.HasValidPermit(
-				_repositories, character.Id, vendor.RequiredPermit, _clock.UtcNow );
-			var rows = vendor.Stock.Select( entry =>
-			{
-				_context.Schema.Items.TryGet( entry.Definition.Value, out var item );
-				var availability = HL2RPPresentationContracts.VendorOffer(
-					hasPermit, entry.Quantity, entry.UnitPrice, character.Balance );
-				return (IReadOnlyDictionary<string, SnapshotValue>)new Dictionary<string, SnapshotValue>( StringComparer.Ordinal )
-				{
-					[HL2RPPresentationFields.Vendor.DefinitionId] = SnapshotValue.Choice( entry.Definition.Value ),
-					[HL2RPPresentationFields.Vendor.DisplayName] = SnapshotValue.String( item?.DisplayName ?? entry.Definition.Value ),
-					[HL2RPPresentationFields.Vendor.ItemDescription] = SnapshotValue.String( item?.Description ?? string.Empty ),
-					[HL2RPPresentationFields.Vendor.Price] = SnapshotValue.Integer( entry.UnitPrice ),
-					[HL2RPPresentationFields.Vendor.Stock] = SnapshotValue.Integer( entry.Quantity ),
-					[HL2RPPresentationFields.Vendor.CanBuy] = SnapshotValue.Boolean( availability.CanBuy ),
-					[HL2RPPresentationFields.Vendor.DisabledReason] = SnapshotValue.String( availability.DisabledReason )
-				};
-			} ).ToArray();
-			return new SchemaViewSnapshot( HL2RPIds.Panels.Vendor, revision,
-				new Dictionary<string, SnapshotValue>( StringComparer.Ordinal )
-				{
-					[HL2RPPresentationFields.Vendor.SessionId] = SnapshotValue.String( session.Id.Value.ToString( "D" ) ),
-					[HL2RPPresentationFields.Vendor.Name] = SnapshotValue.String( "Civil Distribution" ),
-					[HL2RPPresentationFields.Vendor.Description] = SnapshotValue.String( "Session-bound regulated goods." ),
-					[HL2RPPresentationFields.Vendor.Balance] = SnapshotValue.Integer( character.Balance )
-				}, rows );
-		}
-		catch ( Exception ) { return null; }
-	}
-
-	private SchemaViewSnapshot ScannerView( ScannerPilotSession session, long revision )
-	{
-		var document = _repositories.SceneEntities.Find( DomainKeys.SceneEntity( session.ScannerId ) );
-		var state = document is null
-			? null
-			: ScannerPersistence.Decode( document.Value.State, HL2RPPersistence.ScannerState ).Value;
-		return new SchemaViewSnapshot(
-			HL2RPIds.Panels.ScannerOverlay,
-			revision,
-			new Dictionary<string, SnapshotValue>( StringComparer.Ordinal )
-			{
-				[HL2RPPresentationFields.ScannerOverlay.Piloting] = SnapshotValue.Boolean( state?.PilotCharacterId == session.Actor.CharacterId ),
-				[HL2RPPresentationFields.ScannerOverlay.UnitName] = SnapshotValue.String( $"SCN-{session.ScannerId.Value.ToString( "N" )[..2].ToUpperInvariant()}" ),
-				[HL2RPPresentationFields.ScannerOverlay.Spotlight] = SnapshotValue.Boolean( state?.SpotlightEnabled == true ),
-				[HL2RPPresentationFields.ScannerOverlay.PhotoReadyAtUnixMilliseconds] = SnapshotValue.Integer(
-					(state?.PhotoCooldownUntilUtc ?? _clock.UtcNow).ToUnixTimeMilliseconds() ),
-				[HL2RPPresentationFields.ScannerOverlay.SessionId] = SnapshotValue.String( session.SessionId.Value.ToString( "D" ) )
-			} );
 	}
 
 	WorldItemBoundaryAttempt IWorldItemReconciliationBoundary.ApplyDesiredState( ItemId itemId ) =>
@@ -3750,13 +3140,8 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 		return new InventoryActor( connectionId, accountId, character.Id );
 	}
 
-	private static Guid DeterministicGuid( string value )
-	{
-		var bytes = new byte[16];
-		for ( var index = 0; index < value.Length; index++ ) bytes[index % bytes.Length] ^= (byte)value[index];
-		bytes[0] |= 1;
-		return new Guid( bytes );
-	}
+	private static Guid DeterministicGuid( string value ) =>
+		HL2RPPresentationComposer.DeterministicGuid( value );
 
 	private int RequiredConfigurationInt( string key )
 	{
@@ -3831,11 +3216,6 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 		CharacterId? CharacterId,
 		GameObject? Body );
 
-	private sealed record ItemActionPresentationEnvelope(
-		CharacterId CharacterId,
-		long PresentationSequence,
-		ItemActionPresentationReceipt Receipt );
-
 	private sealed class HL2RPItemActionPresentationHandler : IEventHandler<ItemActionCommittedEvent>
 	{
 		private readonly HL2RPHostApplication _owner;
@@ -3850,17 +3230,6 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 		public void Deliver( ChatDelivery delivery, CharacterRecord author ) =>
 			_owner.DeliverCommittedChat( delivery, author );
 	}
-
-	private sealed record ActiveRestraintAction(
-		InventoryActor Actor,
-		RestraintTicket Ticket,
-		CancellationTokenSource Cancellation );
-
-	private sealed record ActivePistolRaiseAction(
-		InventoryActor Actor,
-		Guid InstanceId,
-		DateTimeOffset ReadyAtUtc,
-		CancellationTokenSource Cancellation );
 
 	private sealed class HL2RPCombatLifecycleBoundary : ICombatLifecycleBoundary
 	{

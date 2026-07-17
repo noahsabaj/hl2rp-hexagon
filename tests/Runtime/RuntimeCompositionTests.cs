@@ -168,8 +168,7 @@ public sealed class RuntimeCompositionTests
 			"PurchaseFromMachineAsync", "_doorOwnership!.ClaimAsync", "_doorOwnership!.ReleaseAsync",
 			"ReconcilePersistedPilotsAsync", "DrainCleanupAsync", "_executableActions.Validate",
 			"ExecutableItemActionRoute.HealthVialConsume", "ApplyScannerInputAsync",
-			"NearestCharacterTarget", "death.respawn_available_at_ms", "HL2RPInventoryItemState.Project",
-			"HL2RPItemDropAvailability.Project", "HL2RPItemActionAvailability.Project", "VendorSellAvailabilityFor",
+			"NearestCharacterTarget",
 			"_search!.Open", "scannerFeature is HL2RPScannerDockComponent", "UpdateRecordAsync",
 			"ConfigureAsync", "new HL2RPAuditLogHandler",
 			"audit: _audit", "IHL2RPSchemaCommandRoutes<RpcActor>.PublishAdministrationAudit(",
@@ -179,6 +178,16 @@ public sealed class RuntimeCompositionTests
 			"_sceneBehavior!.ToggleDoorAsync", "_context.Configuration.Snapshot()",
 			"HL2RPPersistenceInvariants.Profile"
 		} ) StringAssert.Contains( host, route );
+		// The snapshot/view builders moved to the engine-neutral presentation composer;
+		// their projection contracts are pinned against that source and exercised
+		// directly by HL2RPPresentationComposerTests.
+		var composer = HL2RPTestSource.WithoutComments( Path.Combine( root, "Code", "Runtime", "HL2RPPresentationComposer.cs" ) );
+		foreach ( var route in new[]
+		{
+			"death.respawn_available_at_ms", "HL2RPInventoryItemState.Project",
+			"HL2RPItemDropAvailability.Project", "HL2RPItemActionAvailability.Project", "VendorSellAvailabilityFor",
+			"_host.NearestCharacterTarget", "_host.IsOwnableDoor"
+		} ) StringAssert.Contains( composer, route );
 		var world = HL2RPTestSource.WithoutComments( Path.Combine( root, "Code", "Runtime", "HL2RPSceneRuntime.cs" ) );
 		StringAssert.Contains( world, "IsRestrained = _restraints.IsRestrained( characterId )" );
 		StringAssert.Contains( world, "new CharacterRestraintInteractable" );
