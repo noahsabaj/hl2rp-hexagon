@@ -77,7 +77,7 @@ public sealed class PermitPurchaseService
 				ErrorCode.Unauthorized, "Permit purchaser binding is invalid.");
 
 		var ownerIndex = _repositories.OwnerInventories.Find( DomainKeys.OwnerInventory(
-			InventoryOwner.Character( actor.CharacterId ), "main" ) );
+			InventoryOwner.Character( actor.CharacterId ), InventoryRoles.Main ) );
 		var destination = ownerIndex is null ? null : _repositories.Inventories.Find(
 			DomainKeys.Inventory( ownerIndex.Value.InventoryId ) );
 		if (destination is null || destination.Value.Id != mainInventoryId ||

@@ -297,11 +297,11 @@ internal static class HL2RPSceneStateInitializer
 			unit.Create( repositories.Inventories, DomainKeys.Inventory( plan.Storage.Id ), plan.Storage );
 			unit.Create(
 				repositories.OwnerInventories,
-				DomainKeys.OwnerInventory( plan.Storage.Owner, "storage" ),
+				DomainKeys.OwnerInventory( plan.Storage.Owner, InventoryRoles.Storage ),
 				new OwnerInventoryRecord
 				{
 					Owner = plan.Storage.Owner,
-					Role = "storage",
+					Role = InventoryRoles.Storage,
 					InventoryId = plan.Storage.Id
 				} );
 		}

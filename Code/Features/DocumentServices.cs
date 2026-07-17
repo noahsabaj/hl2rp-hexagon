@@ -314,7 +314,7 @@ internal static class PermitInspector
 		var inventories = new Dictionary<InventoryId, DocumentSnapshot<InventoryRecord>>();
 		var items = new Dictionary<ItemId, DocumentSnapshot<ItemRecord>>();
 		var pending = new Queue<DocumentSnapshot<InventoryRecord>>();
-		var mainKey = DomainKeys.OwnerInventory( InventoryOwner.Character( characterId ), "main" );
+		var mainKey = DomainKeys.OwnerInventory( InventoryOwner.Character( characterId ), InventoryRoles.Main );
 		var mainIndex = repositories.OwnerInventories.Find( mainKey );
 		if ( mainIndex is null ) absentOwnerIndexes.Add( mainKey );
 		else ownerIndexes[mainIndex.Key] = mainIndex;
@@ -343,7 +343,7 @@ internal static class PermitInspector
 						return BuildProof( true, ownerIndexes, absentOwnerIndexes, inventories, items );
 				}
 				var childKey = DomainKeys.OwnerInventory(
-					InventoryOwner.ParentItem( placement.ItemId ), "bag" );
+					InventoryOwner.ParentItem( placement.ItemId ), InventoryRoles.Bag );
 				var childIndex = repositories.OwnerInventories.Find( childKey );
 				if ( childIndex is null ) absentOwnerIndexes.Add( childKey );
 				else ownerIndexes[childIndex.Key] = childIndex;

@@ -2215,7 +2215,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 	private InventoryRecord? MainInventory( CharacterId characterId )
 	{
 		var owner = InventoryOwner.Character( characterId );
-		var index = _repositories.OwnerInventories.Find( DomainKeys.OwnerInventory( owner, "main" ) );
+		var index = _repositories.OwnerInventories.Find( DomainKeys.OwnerInventory( owner, InventoryRoles.Main ) );
 		return index is null ? null : _repositories.Inventories.Find( DomainKeys.Inventory( index.Value.InventoryId ) )?.Value;
 	}
 

@@ -203,7 +203,7 @@ public sealed class CommerceService
 			access is null )
 			return OperationResult<CommerceReceipt>.Failure( ErrorCode.Unauthorized, "Sell capability is missing." );
 		if ( _repositories.OwnerInventories.Find( DomainKeys.OwnerInventory(
-			InventoryOwner.ParentItem( itemId ), "bag" ) ) is not null )
+			InventoryOwner.ParentItem( itemId ), InventoryRoles.Bag ) ) is not null )
 			return OperationResult<CommerceReceipt>.Failure( ErrorCode.PolicyDenied, "Container items cannot be sold with nested inventory." );
 		var vendor = HL2RPFeaturePersistence.Decode(
 			loaded.Value.Entity.Value.State,

@@ -133,7 +133,7 @@ public sealed class BagInteractionService
 			InventoryCapability.View | InventoryCapability.Use ) )
 			return OperationResult<InventoryRecord>.Failure( ErrorCode.Unauthorized, "Bag use capability is missing." );
 		var ownerIndex = _repositories.OwnerInventories.Find(
-			DomainKeys.OwnerInventory( InventoryOwner.ParentItem( bagItemId ), "bag" ) );
+			DomainKeys.OwnerInventory( InventoryOwner.ParentItem( bagItemId ), InventoryRoles.Bag ) );
 		var child = ownerIndex is null ? null : _repositories.Inventories.Find(
 			DomainKeys.Inventory( ownerIndex.Value.InventoryId ) )?.Value;
 		return child is not null && child.Owner == InventoryOwner.ParentItem( bagItemId )
