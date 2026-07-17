@@ -32,12 +32,26 @@ public interface ICombatHealthDirectory
 	void RestoreFull(CharacterId characterId);
 }
 
+public enum CombatHealthRemoval
+{
+	NotTracked = 0,
+	Removed = 1,
+	RemovedWithDoomedReservation = 2
+}
+
 /// <summary>Host-owned transient body health. Persistence owns items; bodies own health.</summary>
 public sealed class CanonicalCombatHealthDirectory : ICombatHealthDirectory
 {
 	private readonly object _sync = new();
 	private readonly Dictionary<CharacterId, CombatHealthSnapshot> _health = new();
 	private readonly Dictionary<CharacterId, Guid> _reservations = new();
+	private readonly HashSet<Guid> _doomed = new();
+
+	/// <summary>
+	/// Observes health mutations that arrived after their character's lifecycle exit
+	/// doomed the reservation; wired to host logging. Must not throw.
+	/// </summary>
+	public Action<string>? Diagnostic { get; set; }
 
 	public void Publish(CharacterId characterId, long maximumHealth, long currentHealth)
 	{
@@ -52,9 +66,22 @@ public sealed class CanonicalCombatHealthDirectory : ICombatHealthDirectory
 		}
 	}
 
-	public bool Remove(CharacterId characterId)
+	public CombatHealthRemoval Remove(CharacterId characterId)
 	{
-		lock (_sync) return !_reservations.ContainsKey(characterId) && _health.Remove(characterId);
+		lock (_sync)
+		{
+			// A lifecycle exit always wins: any in-flight reservation is doomed so its
+			// eventual CommitDamage/CommitHealing no-ops instead of mutating (and thereby
+			// reviving) an entry for a character that already left play.
+			var doomed = _reservations.Remove(characterId, out var reservationId);
+			if (doomed) _doomed.Add(reservationId);
+			var removed = _health.Remove(characterId);
+			return removed
+				? doomed
+					? CombatHealthRemoval.RemovedWithDoomedReservation
+					: CombatHealthRemoval.Removed
+				: CombatHealthRemoval.NotTracked;
+		}
 	}
 
 	public OperationResult<CombatHealthSnapshot> Require(CharacterId characterId)
@@ -87,6 +114,11 @@ public sealed class CanonicalCombatHealthDirectory : ICombatHealthDirectory
 		ArgumentNullException.ThrowIfNull(reservation);
 		lock (_sync)
 		{
+			if (_doomed.Remove(reservation.Id))
+			{
+				ObserveDoomedCommit(reservation, "damage");
+				return;
+			}
 			var characterId = reservation.Snapshot.CharacterId;
 			if (!_health.TryGetValue(characterId, out var current) ||
 				!_reservations.Remove(characterId, out var id) || id != reservation.Id)
@@ -104,6 +136,13 @@ public sealed class CanonicalCombatHealthDirectory : ICombatHealthDirectory
 		if (amount <= 0) throw new ArgumentOutOfRangeException(nameof(amount));
 		lock (_sync)
 		{
+			if (_doomed.Remove(reservation.Id))
+			{
+				// The character left play mid-mutation; the stale snapshot is returned for
+				// the caller's presentation only and no directory entry is revived.
+				ObserveDoomedCommit(reservation, "healing");
+				return reservation.Snapshot;
+			}
 			var characterId = reservation.Snapshot.CharacterId;
 			if (!_health.TryGetValue(characterId, out var current) ||
 				!_reservations.Remove(characterId, out var id) || id != reservation.Id)
@@ -124,9 +163,24 @@ public sealed class CanonicalCombatHealthDirectory : ICombatHealthDirectory
 		ArgumentNullException.ThrowIfNull(reservation);
 		lock (_sync)
 		{
+			if (_doomed.Remove(reservation.Id)) return;
 			var characterId = reservation.Snapshot.CharacterId;
 			if (_reservations.TryGetValue(characterId, out var id) && id == reservation.Id)
 				_reservations.Remove(characterId);
+		}
+	}
+
+	private void ObserveDoomedCommit(CombatHealthReservation reservation, string kind)
+	{
+		try
+		{
+			Diagnostic?.Invoke(
+				$"HL2RP_COMBAT_COMMIT_DOOMED character={reservation.Snapshot.CharacterId.Value:D} " +
+				$"kind={kind} detail=\"the character exited play before its health mutation committed\"");
+		}
+		catch
+		{
+			// Diagnostics must never turn a doomed no-op into a throw.
 		}
 	}
 

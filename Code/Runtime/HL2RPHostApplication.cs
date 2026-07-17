@@ -62,7 +62,10 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 	private readonly HL2RPIncrementalChatConnectionDirectory _chatPositions = new();
 	private readonly HL2RPIncrementalChatAuthorityDirectory _chatAuthorities = new();
 	private readonly ChatAdmissionService _chatAdmission = new();
-	private readonly CanonicalCombatHealthDirectory _combatHealth = new();
+	private readonly CanonicalCombatHealthDirectory _combatHealth = new()
+	{
+		Diagnostic = static message => Log.Info( message )
+	};
 	private readonly HL2RPIncrementalCombatPlayerTargetDirectory _combatTargets = new();
 	private readonly HL2RPPresentationInvalidation _presentationInvalidation = new();
 	private readonly HL2RPEntitlementPresentationInvalidation _entitlementPresentationInvalidation;
@@ -424,9 +427,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 				$"pistol-disconnect:{connectionId.Value:D}",
 				() => ClearRaisedPistolsForLifecycleAsync(
 					new InventoryActor( connectionId, binding.AccountId, characterId ), CancellationToken.None ) );
-			_access.RevokeCharacter( connectionId, characterId );
-			_interactions?.CharacterChanged( connectionId, characterId );
-			_combatIntent?.ClearCharacter( characterId );
+			ObserveCharacterExit( connectionId, characterId );
 		}
 		_interactions?.Disconnected( connectionId );
 		_chat?.RevokeConnection( connectionId );
@@ -436,8 +437,6 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 				$"scanner-disconnect:{connectionId.Value:D}",
 				() => _scanner.DisconnectAsync( connectionId ).AsTask() );
 		_ = binding.Player.HostStripAuthoritativeBody();
-		if ( binding.CharacterId is CharacterId disconnectedCharacter )
-			_combatHealth.Remove( disconnectedCharacter );
 		_projectionIndex.InvalidateRuntimeDependency( "roster-membership", "global" );
 		RemoveLiveConnection( connectionId );
 		PublishAll();
@@ -943,12 +942,10 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 		}
 		_itemActionPresentations.Remove( connectionId );
 		_civicSubjects.ClearConnection( connectionId );
-		if ( previous is not null )
-		{
-			_access.RevokeCharacter( connectionId, previous.Id );
-			_interactions?.CharacterChanged( connectionId, previous.Id );
-			_combatIntent?.ClearCharacter( previous.Id );
-		}
+		// The inline switch path is a lifecycle exit for the previous character and must
+		// clean the same transient combat state as unload/disconnect, or reloading the
+		// previous character later adopts its stale damage and death lifecycle.
+		if ( previous is not null ) ObserveCharacterExit( connectionId, previous.Id );
 		_access.Grant( new InventoryGrant
 		{
 			ConnectionId = connectionId,
@@ -1001,6 +998,9 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 		_civicSubjects.ClearConnection( connectionId );
 		if ( _characterLifecycle.IsCurrent( connectionId, lifecycleEpoch ) &&
 			_clients[connectionId].CharacterId == characterId ) UnloadBinding( connectionId, characterId );
+		// A deleted character that is not bound here (switched away earlier) still owns
+		// transient combat state; deletion is a lifecycle exit for it either way.
+		else ObserveCharacterExit( connectionId, characterId );
 		SendCharacterList( actor.Connection, actor.AccountId );
 		return OperationResult.Success();
 	}
@@ -1081,16 +1081,23 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 	private void UnloadBinding( ConnectionId connectionId, CharacterId characterId )
 	{
 		CancelTimedActionsForLifecycle( connectionId, characterId );
-		_access.RevokeCharacter( connectionId, characterId );
-		_interactions?.CharacterChanged( connectionId, characterId );
-		_combatIntent?.ClearCharacter( characterId );
+		ObserveCharacterExit( connectionId, characterId );
 		_itemActionPresentations.Remove( connectionId );
 		_civicSubjects.ClearConnection( connectionId );
 		var binding = _clients[connectionId];
 		_ = binding.Player.HostStripAuthoritativeBody();
 		SetBindingCharacter( connectionId, null );
-		_combatHealth.Remove( characterId );
 		RefreshLiveConnection( connectionId );
+	}
+
+	private void ObserveCharacterExit( ConnectionId connectionId, CharacterId characterId )
+	{
+		var removal = HL2RPCharacterExitCleanup.Run(
+			connectionId, characterId, _access, _interactions, _combatIntent, _combatLifecycle, _combatHealth );
+		if ( removal == CombatHealthRemoval.RemovedWithDoomedReservation )
+			Log.Info(
+				$"HL2RP_COMBAT_RESERVATION_DOOMED character={characterId.Value:D} " +
+				"detail=\"a pending health mutation was invalidated by the character's exit\"" );
 	}
 
 	private void CancelTimedActionsForLifecycle( ConnectionId connectionId, CharacterId? characterId )

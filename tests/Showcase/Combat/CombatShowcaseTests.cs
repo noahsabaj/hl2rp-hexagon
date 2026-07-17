@@ -429,6 +429,41 @@ public sealed class CombatShowcaseTests
 	}
 
 	[TestMethod]
+	public async Task CharacterExitCleanupClearsDeathLifecycleAndHealthUniformly()
+	{
+		await using var environment = await ShowcaseTestEnvironment.CreateAsync();
+		var seeded = await environment.SeedCharacterAsync(220);
+		var boundary = new FakeLifecycleBoundary();
+		var lifecycle = new CombatLifecycleService(environment.Repositories, environment.Schema,
+			environment.Layout, new AllowWorldModels(), environment.Clock, boundary);
+		var health = new CanonicalCombatHealthDirectory();
+		health.Publish(seeded.Actor.CharacterId, 100, 100);
+		var transform = new WorldTransformRecord
+		{
+			PositionX = 1, PositionY = 2, PositionZ = 3,
+			RotationX = 0, RotationY = 0, RotationZ = 0, RotationW = 1
+		};
+		var died = await lifecycle.DieAsync(seeded.Actor, seeded.InventoryId, transform, "test");
+		Assert.IsTrue(died.Succeeded, died.Error?.Message);
+		Assert.IsNotNull(lifecycle.GetState(seeded.Actor.CharacterId));
+
+		var removal = HL2RPCharacterExitCleanup.Run(
+			seeded.Actor.ConnectionId, seeded.Actor.CharacterId,
+			environment.Access, null, null, lifecycle, health);
+
+		Assert.AreEqual(CombatHealthRemoval.Removed, removal);
+		Assert.IsNull(lifecycle.GetState(seeded.Actor.CharacterId),
+			"The death lifecycle must not survive a character exit.");
+		Assert.AreEqual(ErrorCode.NotFound, health.Require(seeded.Actor.CharacterId).Error!.Code);
+
+		// The next load of the same character establishes fresh, alive health — the
+		// guarantee the inline switch path previously violated.
+		health.Publish(seeded.Actor.CharacterId, 100, 100);
+		Assert.AreEqual(100L, health.Require(seeded.Actor.CharacterId).Value.CurrentHealth);
+		Assert.IsNull(lifecycle.GetState(seeded.Actor.CharacterId));
+	}
+
+	[TestMethod]
 	public async Task PostCommitDeathBoundaryFailureStillReturnsTheDurableReceipt()
 	{
 		await using var environment = await ShowcaseTestEnvironment.CreateAsync();

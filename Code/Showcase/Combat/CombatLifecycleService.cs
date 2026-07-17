@@ -115,6 +115,13 @@ public sealed class CombatLifecycleService
 	public DeathRespawnState? GetState(CharacterId characterId) =>
 		_deaths.TryGetValue(characterId, out var state) ? state : null;
 
+	/// <summary>
+	/// Drops the transient death lifecycle when a character leaves play (unload,
+	/// disconnect, character switch, deletion). Combat health is republished fresh on
+	/// the next load, so a surviving death state would deny commands to a fresh body.
+	/// </summary>
+	public bool ClearLifecycle(CharacterId characterId) => _deaths.Remove(characterId);
+
 	public async ValueTask<OperationResult<DeathTransitionReceipt>> DieAsync(
 		InventoryActor actor,
 		InventoryId inventoryId,

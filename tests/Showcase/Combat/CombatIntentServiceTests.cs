@@ -22,6 +22,57 @@ namespace HL2RP.V2.Tests.Showcase.Combat;
 public sealed class CombatIntentServiceTests
 {
 	[TestMethod]
+	public void RemoveUnderAPendingReservationDoomsTheInFlightMutation()
+	{
+		var health = new CanonicalCombatHealthDirectory();
+		var diagnostics = new List<string>();
+		health.Diagnostic = diagnostics.Add;
+		var characterId = CharacterId.New();
+		health.Publish(characterId, 100, 100);
+		var reservation = health.Reserve(characterId).Value;
+
+		Assert.AreEqual(CombatHealthRemoval.RemovedWithDoomedReservation, health.Remove(characterId));
+		Assert.AreEqual(ErrorCode.NotFound, health.Require(characterId).Error!.Code);
+
+		// The in-flight damage lands after the exit: it must neither throw nor revive
+		// the entry the next load would adopt.
+		health.CommitDamage(reservation, 10);
+		Assert.AreEqual(ErrorCode.NotFound, health.Require(characterId).Error!.Code);
+		Assert.HasCount(1, diagnostics);
+		StringAssert.Contains(diagnostics[0], "HL2RP_COMBAT_COMMIT_DOOMED");
+
+		health.Publish(characterId, 100, 100);
+		Assert.AreEqual(100L, health.Require(characterId).Value.CurrentHealth);
+	}
+
+	[TestMethod]
+	public void DoomedHealingReturnsTheStaleSnapshotWithoutRevivingTheEntry()
+	{
+		var health = new CanonicalCombatHealthDirectory();
+		var characterId = CharacterId.New();
+		health.Publish(characterId, 100, 40);
+		var reservation = health.Reserve(characterId).Value;
+		Assert.AreEqual(CombatHealthRemoval.RemovedWithDoomedReservation, health.Remove(characterId));
+
+		var snapshot = health.CommitHealing(reservation, 25);
+
+		Assert.AreEqual(reservation.Snapshot, snapshot,
+			"A doomed healing returns the stale snapshot for presentation only.");
+		Assert.AreEqual(ErrorCode.NotFound, health.Require(characterId).Error!.Code);
+	}
+
+	[TestMethod]
+	public void RemoveReportsWhetherAnythingWasTracked()
+	{
+		var health = new CanonicalCombatHealthDirectory();
+		var characterId = CharacterId.New();
+
+		Assert.AreEqual(CombatHealthRemoval.NotTracked, health.Remove(characterId));
+		health.Publish(characterId, 100, 100);
+		Assert.AreEqual(CombatHealthRemoval.Removed, health.Remove(characterId));
+	}
+
+	[TestMethod]
 	public async Task ProductionRouteRaisesThenFiresThroughVestDeathDropAndRespawn()
 	{
 		await using var environment = await ShowcaseTestEnvironment.CreateAsync();
