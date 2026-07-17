@@ -8,12 +8,14 @@ using HL2RP.V2.Runtime;
 namespace HL2RP.V2.Tests.Runtime;
 
 /// <summary>
-/// Executes the production dedicated-server storage core (not a test-only duplicate)
-/// against a temporary physical root: the DI-01/R-05 single-writer and durability
-/// closures now rest on the exact shipped code path.
+/// Executes the production durable storage core (not a test-only duplicate) against a
+/// physical boundary implementation that encodes the engine contract the factory's
+/// <c>Sandbox.BaseFileSystem</c> adapter provides — no-shared-writer opens, relative
+/// recursive listing, parent-directory creation. The DI-01/R-05 single-writer and
+/// durability closures rest on the exact shipped code path.
 /// </summary>
 [TestClass]
-public sealed class PhysicalPersistenceStorageCoreTests
+public sealed class DurableStorageCoreTests
 {
 	[TestMethod]
 	public async Task ExclusiveLeaseBlocksASecondWriterUntilReleased()
@@ -87,7 +89,7 @@ public sealed class PhysicalPersistenceStorageCoreTests
 		Assert.IsTrue( (await recovered.ShutdownAsync()).IsClean );
 	}
 
-	private static FileSystemPersistenceProvider CreateProvider( HL2RPPhysicalPersistenceStorageCore core ) => new(
+	private static FileSystemPersistenceProvider CreateProvider( HL2RPDurableStorageCore core ) => new(
 		core,
 		new FileSystemPersistenceOptions( "hl2rp-core-roundtrip" ) { CheckpointEveryCommits = 0 },
 		new PersistedTypeRegistry().Register<CoreTestDocument>(
@@ -102,12 +104,53 @@ public sealed class PhysicalPersistenceStorageCoreTests
 
 		public TempRoot() => Directory.CreateDirectory( _root );
 
-		public HL2RPPhysicalPersistenceStorageCore CreateCore() => new(
-			logical => Path.GetFullPath( Path.Combine( _root, logical.Replace( '/', Path.DirectorySeparatorChar ) ) ) );
+		public HL2RPDurableStorageCore CreateCore() => new( new PhysicalStorageFileSystem( _root ) );
 
 		public void Dispose()
 		{
 			if ( Directory.Exists( _root ) ) Directory.Delete( _root, recursive: true );
 		}
+	}
+
+	/// <summary>
+	/// Encodes the engine contract of the factory's <c>Sandbox.BaseFileSystem</c> adapter:
+	/// writes create missing parent directories and open the backing file with
+	/// <c>FileShare.None</c> (Zio's <c>PhysicalFileSystem</c> default), reads admit shared
+	/// readers, and <c>FindFile</c> yields paths relative to the queried folder.
+	/// </summary>
+	private sealed class PhysicalStorageFileSystem : IHL2RPStorageFileSystem
+	{
+		private readonly string _root;
+
+		public PhysicalStorageFileSystem( string root ) => _root = root;
+
+		public Stream OpenWrite( string path, FileMode mode )
+		{
+			var physical = Resolve( path );
+			Directory.CreateDirectory( Path.GetDirectoryName( physical )! );
+			return new FileStream( physical, mode, FileAccess.Write, FileShare.None );
+		}
+
+		public Stream OpenRead( string path ) =>
+			new FileStream( Resolve( path ), FileMode.Open, FileAccess.Read, FileShare.Read );
+
+		public bool FileExists( string path ) => File.Exists( Resolve( path ) );
+
+		public bool DirectoryExists( string path ) => Directory.Exists( Resolve( path ) );
+
+		public long FileSize( string path ) => new FileInfo( Resolve( path ) ).Length;
+
+		public IEnumerable<string> FindFile( string folder, string pattern, bool recursive )
+		{
+			var directory = Resolve( folder );
+			return Directory.EnumerateFiles(
+					directory, pattern, recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly )
+				.Select( physical => Path.GetRelativePath( directory, physical ) );
+		}
+
+		public void DeleteFile( string path ) => File.Delete( Resolve( path ) );
+
+		private string Resolve( string path ) =>
+			Path.GetFullPath( Path.Combine( _root, path.Replace( '/', Path.DirectorySeparatorChar ) ) );
 	}
 }

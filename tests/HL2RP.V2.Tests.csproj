@@ -53,7 +53,7 @@
 	<Compile Include="../Code/Runtime/HL2RPCharacterLifecycleGate.cs" Link="Product/Runtime/HL2RPCharacterLifecycleGate.cs" />
 	<Compile Include="../Code/Runtime/HL2RPSceneFeatureAdmission.cs" Link="Product/Runtime/HL2RPSceneFeatureAdmission.cs" />
 	<Compile Include="../Code/Runtime/HL2RPRetryablePersistenceLease.cs" Link="Product/Runtime/HL2RPRetryablePersistenceLease.cs" />
-	<Compile Include="../Code/Runtime/HL2RPPhysicalPersistenceStorageCore.Server.cs" Link="Product/Runtime/HL2RPPhysicalPersistenceStorageCore.Server.cs" />
+	<Compile Include="../Code/Runtime/HL2RPDurableStorageCore.cs" Link="Product/Runtime/HL2RPDurableStorageCore.cs" />
     <Compile Include="../Code/Runtime/HL2RPCreationAvailability.cs" Link="Product/Runtime/HL2RPCreationAvailability.cs" />
     <Compile Include="../Code/UI/HL2RPPresentationFields.cs" Link="Product/UI/HL2RPPresentationFields.cs" />
     <Compile Include="../Code/UI/HL2RPShowcaseProjection.cs" Link="Product/UI/HL2RPShowcaseProjection.cs" />

@@ -5,14 +5,19 @@ curated framework showcase rather than a compatibility port of the former
 runtime. The package owns the startup scene and mounts a matching local Hexagon
 source checkout during development and verification.
 
-The game is intentionally configured as a standalone-only s&box project. The
-whitelisted Hexagon library defines the v3 storage protocol; this game supplies
-its production OS adapter, including exclusive leases, write-through durability,
-and atomic file publication. Verification rejects moving those raw operations
-back into the library or silently downgrading the standalone compiler boundary.
-That adapter lives in `.Server.cs`, which s&box removes from remote client code
-archives. Editor-hosted setup uses a whitelist-safe `BaseFileSystem` adapter;
-it supports bootstrap and smoke work but is not the production durability proof.
+The game compiles under the s&box whitelist on every host, which is what makes
+it publishable: streamed assemblies are access-controlled on dedicated servers
+and remote clients alike. The whitelisted Hexagon library defines the v3
+storage protocol; this game supplies one durable storage path shared by
+dedicated servers, editor-hosted bootstrap sessions, and standalone builds: an
+engine-neutral core (`HL2RPDurableStorageCore`) over the exact whitelist-safe
+`BaseFileSystem` surface, with an exclusive-writer lease and staged, verified
+immutable publication. Whitelist-safe code has no atomic rename and no
+flush-to-disk, so a crash can leave one torn artifact at the final name — a
+case the framework's recovery contract explicitly tolerates per WAL metadata
+class — and durability is bounded by the operating-system cache rather than
+the disk cache. Verification rejects reintroducing raw operating-system
+storage and silently disabling the compile-time whitelist gate.
 
 The schema demonstrates explicit modules, typed character and item state,
 transactional inventory and economy operations, server-issued interaction
