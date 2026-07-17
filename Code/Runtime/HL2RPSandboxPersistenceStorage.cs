@@ -116,34 +116,69 @@ internal sealed class HL2RPSandboxPersistenceStorage : IPersistenceStorage
 		lock ( _sync )
 		{
 			var normalized = Normalize( path );
-			Stream? stream = null;
+			if ( _fileSystem.FileExists( normalized ) ) return ValueTask.FromResult( false );
+			// BaseFileSystem exposes no atomic rename to whitelist-safe code, so the write
+			// is staged and verified first and only then copied to the final name: a crash
+			// mid-stage leaves a .staging file recovery already deletes, shrinking the
+			// torn final-name window to the short copy — which the framework's torn-tail
+			// recovery tolerates.
+			var separator = normalized.LastIndexOf( '/' );
+			var staging = separator < 0
+				? $".{normalized}.{Guid.NewGuid():N}.staging"
+				: $"{normalized[..separator]}/.{normalized[(separator + 1)..]}.{Guid.NewGuid():N}.staging";
 			try
 			{
-				stream = _fileSystem.OpenWrite( normalized, FileMode.CreateNew );
-				stream.Write( content.Span );
-				stream.Flush();
-				if ( stream.Length != content.Length )
+				using ( var stream = _fileSystem.OpenWrite( staging, FileMode.CreateNew ) )
+				{
+					stream.Write( content.Span );
+					stream.Flush();
+				}
+				var staged = ReadAllBytes( staging );
+				if ( staged.Length != content.Length || !staged.AsSpan().SequenceEqual( content.Span ) )
 					throw new IOException(
-						$"Immutable persistence write for '{normalized}' produced " +
-						$"{stream.Length} of {content.Length} bytes." );
-				return ValueTask.FromResult( true );
-			}
-			catch ( IOException ) when ( stream is null && _fileSystem.FileExists( normalized ) )
-			{
-				return ValueTask.FromResult( false );
-			}
-			catch
-			{
-				stream?.Dispose();
-				stream = null;
-				if ( _fileSystem.FileExists( normalized ) ) _fileSystem.DeleteFile( normalized );
-				throw;
+						$"Immutable persistence staging for '{normalized}' failed verification." );
+
+				Stream? destination = null;
+				try
+				{
+					destination = _fileSystem.OpenWrite( normalized, FileMode.CreateNew );
+					destination.Write( staged );
+					destination.Flush();
+					if ( destination.Length != content.Length )
+						throw new IOException(
+							$"Immutable persistence write for '{normalized}' produced " +
+							$"{destination.Length} of {content.Length} bytes." );
+					return ValueTask.FromResult( true );
+				}
+				catch ( IOException ) when ( destination is null && _fileSystem.FileExists( normalized ) )
+				{
+					return ValueTask.FromResult( false );
+				}
+				catch
+				{
+					destination?.Dispose();
+					destination = null;
+					if ( _fileSystem.FileExists( normalized ) ) _fileSystem.DeleteFile( normalized );
+					throw;
+				}
+				finally
+				{
+					destination?.Dispose();
+				}
 			}
 			finally
 			{
-				stream?.Dispose();
+				if ( _fileSystem.FileExists( staging ) ) _fileSystem.DeleteFile( staging );
 			}
 		}
+	}
+
+	private byte[] ReadAllBytes( string normalized )
+	{
+		using var stream = _fileSystem.OpenRead( normalized );
+		var bytes = new byte[stream.Length];
+		stream.ReadExactly( bytes );
+		return bytes;
 	}
 
 	public ValueTask DeleteAsync( string path, CancellationToken cancellationToken = default )
