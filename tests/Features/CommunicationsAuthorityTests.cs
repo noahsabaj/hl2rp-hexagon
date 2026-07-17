@@ -39,8 +39,8 @@ public sealed class CommunicationsAuthorityTests
 		var officialConnection = ConnectionId.New();
 		var officialCharacter = CharacterId.New();
 		var bystanderConnection = ConnectionId.New();
-		var authorities = new CanonicalChatAuthorityDirectory();
-		authorities.Publish( 1, new[]
+		var authorities = new HL2RPIncrementalChatAuthorityDirectory();
+		authorities.Rebuild( 1, new[]
 		{
 			Authority( actor.ConnectionId, actor.AccountId, actor.CharacterId, HL2RPIds.Factions.Citizen ),
 			Authority( officialConnection, new AccountId( 43 ), officialCharacter,
@@ -142,8 +142,8 @@ public sealed class CommunicationsAuthorityTests
 		} );
 		environment.Grant( actor, inventory.Id, InventoryCapability.View | InventoryCapability.Use );
 
-		var authorities = new CanonicalChatAuthorityDirectory();
-		authorities.Publish( 1, new[]
+		var authorities = new HL2RPIncrementalChatAuthorityDirectory();
+		authorities.Rebuild( 1, new[]
 		{
 			Authority( actor.ConnectionId, actor.AccountId, actor.CharacterId, HL2RPIds.Factions.Citizen )
 		} );
@@ -303,8 +303,8 @@ public sealed class CommunicationsAuthorityTests
 			HL2RPIds.Factions.Citizen, HL2RPIds.Permissions.DispatchChat );
 		var senderAuthority = Authority(
 			sender.ConnectionId, sender.AccountId, sender.CharacterId, HL2RPIds.Factions.Citizen );
-		var authorities = new CanonicalChatAuthorityDirectory();
-		authorities.Publish( 1, new[] { senderAuthority, cp, overwatch, administrator, possessingCitizen } );
+		var authorities = new HL2RPIncrementalChatAuthorityDirectory();
+		authorities.Rebuild( 1, new[] { senderAuthority, cp, overwatch, administrator, possessingCitizen } );
 		var resolver = new HL2RPRadioRecipientResolver( authorities );
 		var inventory = new LiveInventorySnapshot( 1, new[]
 		{
@@ -340,7 +340,7 @@ public sealed class CommunicationsAuthorityTests
 
 		var switchedCitizen = Authority(
 			overwatch.ConnectionId, overwatch.AccountId, CharacterId.New(), HL2RPIds.Factions.Citizen );
-		authorities.Publish( 2, new[]
+		authorities.Rebuild( 2, new[]
 		{
 			senderAuthority,
 			Authority( cp.ConnectionId, cp.AccountId, cp.CharacterId, HL2RPIds.Factions.Citizen ),
@@ -363,8 +363,8 @@ public sealed class CommunicationsAuthorityTests
 		var actor = new InventoryActor( ConnectionId.New(), new AccountId( 60 ), CharacterId.New() );
 		var matching = Authority(
 			ConnectionId.New(), new AccountId( 61 ), CharacterId.New(), HL2RPIds.Factions.Citizen );
-		var authorities = new CanonicalChatAuthorityDirectory();
-		authorities.Publish( 1, new[]
+		var authorities = new HL2RPIncrementalChatAuthorityDirectory();
+		authorities.Rebuild( 1, new[]
 		{
 			Authority( actor.ConnectionId, actor.AccountId, actor.CharacterId, HL2RPIds.Factions.Citizen ),
 			matching
@@ -402,8 +402,8 @@ public sealed class CommunicationsAuthorityTests
 	public void GenericChatRequestIsDeniedAndDispatchSenderPermissionTracksLiveRoleSwitch()
 	{
 		var actor = new InventoryActor( ConnectionId.New(), new AccountId( 70 ), CharacterId.New() );
-		var authorities = new CanonicalChatAuthorityDirectory();
-		authorities.Publish( 1, new[]
+		var authorities = new HL2RPIncrementalChatAuthorityDirectory();
+		authorities.Rebuild( 1, new[]
 		{
 			Authority( actor.ConnectionId, actor.AccountId, actor.CharacterId,
 				HL2RPIds.Factions.CivilProtection, HL2RPIds.Permissions.DispatchChat )
@@ -428,7 +428,7 @@ public sealed class CommunicationsAuthorityTests
 
 		var request = service.Send( actor, character, HL2RPIds.Channels.Request, "Bypass" );
 		var dispatch = service.Send( actor, character, HL2RPIds.Channels.Dispatch, "Directive" );
-		authorities.Publish( 2, new[]
+		authorities.Rebuild( 2, new[]
 		{
 			Authority( actor.ConnectionId, actor.AccountId, actor.CharacterId, HL2RPIds.Factions.Citizen )
 		} );

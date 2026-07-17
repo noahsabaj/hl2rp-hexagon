@@ -7,6 +7,7 @@ using Hexagon.V2.Application;
 using Hexagon.V2.Domain;
 using Hexagon.V2.Kernel;
 using HL2RP.V2.Features;
+using HL2RP.V2.Runtime;
 using HL2RP.V2.Schema;
 using HL2RP.V2.Showcase.Restraint;
 
@@ -197,8 +198,8 @@ public sealed class RestraintShowcaseTests
 				});
 		Assert.IsTrue(stored.Succeeded, stored.Error?.Message);
 
-		var authorities = new CanonicalChatAuthorityDirectory();
-		authorities.Publish(1, new[]
+		var authorities = new HL2RPIncrementalChatAuthorityDirectory();
+		authorities.Rebuild(1, new[]
 		{
 			LiveAuthority(citizen, HL2RPIds.Factions.Citizen),
 			LiveAuthority(civilProtection, HL2RPIds.Factions.CivilProtection,
@@ -271,7 +272,7 @@ public sealed class RestraintShowcaseTests
 			target.InventoryId,
 			InventoryCapability.View | InventoryCapability.TransferOut));
 
-		authorities.Publish(2, new[]
+		authorities.Rebuild(2, new[]
 		{
 			LiveAuthority(citizen, HL2RPIds.Factions.Citizen),
 			LiveAuthority(civilProtection, HL2RPIds.Factions.CivilProtection,

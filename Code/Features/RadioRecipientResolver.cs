@@ -79,42 +79,6 @@ public interface IChatAuthorityDirectory
 }
 
 /// <summary>
-/// Frozen live authority projection. It is refreshed from committed active
-/// characters by the host and is the only permission source used by ChatService.
-/// </summary>
-public sealed class CanonicalChatAuthorityDirectory : IChatAuthorityDirectory, IPermissionAuthorizer
-{
-	private readonly object _sync = new();
-	private ChatAuthoritySnapshot _current = ChatAuthoritySnapshot.Empty;
-
-	public ChatAuthoritySnapshot Capture()
-	{
-		lock ( _sync ) return _current;
-	}
-
-	public void Publish( long version, IEnumerable<LiveChatAuthority> authorities )
-	{
-		var next = new ChatAuthoritySnapshot(
-			version, authorities ?? throw new ArgumentNullException( nameof(authorities) ) );
-		lock ( _sync )
-		{
-			if ( version < _current.Version )
-				throw new InvalidOperationException( "Live chat authority cannot move backwards." );
-			_current = next;
-		}
-	}
-
-	public bool HasPermission( AccountId accountId, CharacterId characterId, string permissionId )
-	{
-		if ( string.IsNullOrWhiteSpace( permissionId ) ) return false;
-		var snapshot = Capture();
-		return snapshot.Authorities.Any( value =>
-			value.AccountId == accountId && value.CharacterId == characterId &&
-			value.HasPermission( permissionId ) );
-	}
-}
-
-/// <summary>
 /// Pure recipient calculation over one immutable live inventory capture and one
 /// immutable active-character authority capture. Item possession never grants
 /// official request or dispatch visibility.

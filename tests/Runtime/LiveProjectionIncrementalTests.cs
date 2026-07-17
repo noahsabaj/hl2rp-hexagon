@@ -342,6 +342,59 @@ public sealed class LiveProjectionIncrementalTests
 	}
 
 	[TestMethod]
+	public void ProductionHasPermissionAndApplyEdgesMatchAFreshRebuild()
+	{
+		var directory = new HL2RPIncrementalChatAuthorityDirectory();
+		var connectionA = new ConnectionId( DeterministicGuid( 1, 0x76 ) );
+		var connectionB = new ConnectionId( DeterministicGuid( 2, 0x76 ) );
+		var characterA = new CharacterId( DeterministicGuid( 1, 0x77 ) );
+		var characterB = new CharacterId( DeterministicGuid( 2, 0x77 ) );
+		var accountA = new AccountId( 11 );
+		var accountB = new AccountId( 12 );
+		directory.Rebuild( 1, new[]
+		{
+			new LiveChatAuthority( connectionA, accountA, characterA,
+				new FactionId( "civil_protection" ), new[] { "chat.dispatch", "restraint" } ),
+			new LiveChatAuthority( connectionB, accountB, characterB,
+				new FactionId( "citizen" ), Array.Empty<string>() )
+		} );
+
+		Assert.IsTrue( directory.HasPermission( accountA, characterA, "restraint" ) );
+		Assert.IsFalse( directory.HasPermission( accountB, characterA, "restraint" ),
+			"A mismatched account must never authorize." );
+		Assert.IsFalse( directory.HasPermission( accountA, characterA, "unknown" ) );
+		Assert.IsFalse( directory.HasPermission( accountA, characterA, " " ) );
+
+		Assert.AreEqual( 1, directory.Apply( 2, connectionB, null ),
+			"A removal delta drops the row." );
+		Assert.IsFalse( directory.HasPermission( accountB, characterB, "chat.local" ) );
+
+		var characterC = new CharacterId( DeterministicGuid( 3, 0x77 ) );
+		Assert.AreEqual( 1, directory.Apply( 3, connectionA, new LiveChatAuthority(
+			connectionA, accountA, characterC, new FactionId( "civil_protection" ), new[] { "chat.dispatch" } ) ) );
+		Assert.IsFalse( directory.HasPermission( accountA, characterA, "chat.dispatch" ),
+			"A same-connection character remap must release the old character's binding." );
+		Assert.IsTrue( directory.HasPermission( accountA, characterC, "chat.dispatch" ) );
+
+		var rebuilt = new HL2RPIncrementalChatAuthorityDirectory();
+		rebuilt.Rebuild( 3, new[]
+		{
+			new LiveChatAuthority( connectionA, accountA, characterC,
+				new FactionId( "civil_protection" ), new[] { "chat.dispatch" } )
+		} );
+		CollectionAssert.AreEqual(
+			rebuilt.Capture().Authorities.ToArray(),
+			directory.Capture().Authorities.ToArray(),
+			"Incremental removal and remap must land exactly where a fresh rebuild lands." );
+		Assert.AreEqual( rebuilt.Capture().Version, directory.Capture().Version );
+
+		Assert.AreEqual( 1, directory.Apply( 4, connectionB, new LiveChatAuthority(
+			connectionB, accountB, characterA, new FactionId( "citizen" ), new[] { "chat.local" } ) ) );
+		Assert.IsTrue( directory.HasPermission( accountB, characterA, "chat.local" ),
+			"A character id freed by a remap must be claimable by another connection." );
+	}
+
+	[TestMethod]
 	public void LiveChatAuthorityEqualityIsStructuralOverTheCanonicalizedPermissionList()
 	{
 		var connection = new ConnectionId( DeterministicGuid( 1, 0x74 ) );
