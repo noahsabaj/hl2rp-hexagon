@@ -1112,7 +1112,10 @@ public sealed class ScannerPilotService
 
 	private bool CanRetryCleanup(OperationResult result)
 	{
-		if (result.Error!.Code == ErrorCode.Conflict) return true;
+		// StaleTransaction is routine and transient: a unit of work opened while a
+		// tombstone-reclaiming checkpoint was in flight commits after the generation
+		// bump, and the retry re-begins the unit under the fresh generation.
+		if (result.Error!.Code is ErrorCode.Conflict or ErrorCode.StaleTransaction) return true;
 		return result.Error.Code == ErrorCode.InternalError &&
 			_repositories.Provider.Health.Status != PersistenceHealthStatus.Fatal;
 	}

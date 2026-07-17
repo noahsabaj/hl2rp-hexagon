@@ -621,6 +621,30 @@ public sealed class ScannerShowcaseTests
 	}
 
 	[TestMethod]
+	public async Task StaleTransactionCleanupFailureRetriesOnceAndSucceedsWithoutARecoveryHandle()
+	{
+		await using var environment = await ShowcaseTestEnvironment.CreateAsync();
+		var pilot = await environment.SeedCharacterAsync(320, HL2RPIds.Factions.CivilProtection,
+			HL2RPIds.Classes.Scanner);
+		var scannerId = SceneEntityId.New();
+		await environment.SeedScannerAsync(scannerId);
+		var fixture = new ScannerFixture(environment, pilot.Actor, scannerId);
+		var service = fixture.CreateService(environment);
+		var entered = (await service.EnterAsync(pilot.Actor, scannerId)).Value.Session;
+		environment.Provider.FailNextCommit(PersistenceErrorCode.StaleTransaction);
+
+		var exit = await service.ExitAsync(pilot.Actor, entered.SessionId);
+
+		Assert.IsTrue(exit.Succeeded,
+			$"A stale-transaction cleanup must retry under the fresh generation: {exit.Error?.Message}");
+		Assert.AreEqual(1, fixture.CleanupDelay.CallCount,
+			"Exactly one retry delay separates the failed first attempt from the successful second.");
+		Assert.AreEqual(0, service.PendingRecoveryCount);
+		Assert.AreEqual(0, service.TerminatingSessionCount);
+		Assert.IsNull(environment.ReadScanner(scannerId).PilotCharacterId);
+	}
+
+	[TestMethod]
 	public async Task CancellationDuringRetryDelayProducesARecoveryHandleWithoutLosingAddressability()
 	{
 		await using var environment = await ShowcaseTestEnvironment.CreateAsync();
