@@ -31,7 +31,8 @@ namespace HL2RP.V2.Runtime;
 /// RpcActor, uses committed repositories and publishes immutable state only after
 /// the relevant service has completed successfully.
 /// </summary>
-public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconciliationBoundary
+public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconciliationBoundary,
+	IHL2RPClientCommandRoutes<RpcActor>, IHL2RPSchemaCommandRoutes<RpcActor>
 {
 	private const InventoryCapability CharacterCapabilities =
 		InventoryCapability.View | InventoryCapability.Move | InventoryCapability.TransferIn |
@@ -452,13 +453,16 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 		ClientCommand command,
 		CancellationToken cancellationToken = default )
 	{
-		if ( _disposed ) return OperationResult.Failure( ErrorCode.Conflict, "HL2RP host is disposed." );
-		if ( !_clients.TryGetValue( new ConnectionId( actor.Connection.Id ), out var binding ) ||
-			binding.AccountId != actor.AccountId )
-			return OperationResult.Failure( ErrorCode.Unauthorized, "RPC actor is not bound to this host scope." );
 		var connectionId = new ConnectionId( actor.Connection.Id );
+		// Disposal gate and cross-account binding guard live in the neutral sink so the
+		// test suite executes them; this adapter contributes only the presentation
+		// bookkeeping around the routed command.
+		var bound = _clients.TryGetValue( connectionId, out var binding );
+		var admitted = HL2RPClientCommandSink.Admit(
+			_disposed, bound, bound ? binding!.AccountId : default, actor.AccountId );
+		if ( admitted.Failed ) return admitted;
 		var projectionDelta = new CommandProjectionDelta();
-		var characterBefore = binding.CharacterId;
+		var characterBefore = binding!.CharacterId;
 		var mainBefore = characterBefore is CharacterId activeBefore ? MainInventory( activeBefore )?.Id : null;
 		var restraintTieBefore = command is RunSchemaCommandCommand { CommandId: HL2RPIds.Commands.RestraintSet } &&
 			mainBefore is InventoryId restraintInventory
@@ -467,25 +471,8 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 				.FirstOrDefault( item => item?.Definition.Value == HL2RPIds.Items.ZipTie )?.Id
 			: null;
 
-		OperationResult result = command switch
-		{
-			RequestCharacterListCommand => ListCharacters( actor ),
-			CreateCharacterCommand create => await CreateAsync( actor, create, projectionDelta, cancellationToken ),
-			LoadCharacterCommand load => await LoadAsync( actor, load.CharacterId, projectionDelta, cancellationToken ),
-			DeleteCharacterCommand delete => await DeleteAsync( actor, delete.CharacterId, projectionDelta, cancellationToken ),
-			UnloadCharacterCommand => await UnloadAsync( actor, projectionDelta, cancellationToken ),
-			MoveInventoryItemCommand move => await MoveAsync( actor, move, projectionDelta, cancellationToken ),
-			RunItemActionCommand action => await RunItemActionAsync( actor, action, projectionDelta, cancellationToken ),
-			DropItemCommand drop => await DropAsync( actor, drop, projectionDelta, cancellationToken ),
-			PickUpItemCommand pickup => await PickupAsync( actor, pickup, projectionDelta, cancellationToken ),
-			SendChatCommand chat => SendChat( actor, chat ),
-			CancelActionCommand cancel => CancelAction( actor, cancel.InstanceId ),
-			BeginInteractionCommand begin => await BeginInteractionAsync( actor, begin.Target, projectionDelta, cancellationToken ),
-			ContinueInteractionCommand continuation => ContinueInteraction( actor, continuation ),
-			CloseInteractionCommand close => CloseInteraction( actor, close.SessionId ),
-			RunSchemaCommandCommand schema => await RunSchemaCommandAsync( actor, schema, projectionDelta, cancellationToken ),
-			_ => OperationResult.Failure( ErrorCode.UnknownDefinition, "Client command is not registered by HL2RP." )
-		};
+		OperationResult result = await HL2RPClientCommandSink.RouteAsync<RpcActor>(
+			this, actor, command, projectionDelta, cancellationToken );
 
 		var characterAfter = _clients.TryGetValue( connectionId, out var afterBinding )
 			? afterBinding.CharacterId : null;
@@ -500,6 +487,60 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 		PublishChanges( changes, projectionDelta.Receipts );
 		return outcome.Result;
 	}
+
+	OperationResult IHL2RPClientCommandRoutes<RpcActor>.ListCharacters( RpcActor actor ) => ListCharacters( actor );
+
+	ValueTask<OperationResult> IHL2RPClientCommandRoutes<RpcActor>.CreateAsync(
+		RpcActor actor, CreateCharacterCommand command, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken ) =>
+		CreateAsync( actor, command, projectionDelta, cancellationToken );
+
+	ValueTask<OperationResult> IHL2RPClientCommandRoutes<RpcActor>.LoadAsync(
+		RpcActor actor, CharacterId characterId, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken ) =>
+		LoadAsync( actor, characterId, projectionDelta, cancellationToken );
+
+	ValueTask<OperationResult> IHL2RPClientCommandRoutes<RpcActor>.DeleteAsync(
+		RpcActor actor, CharacterId characterId, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken ) =>
+		DeleteAsync( actor, characterId, projectionDelta, cancellationToken );
+
+	ValueTask<OperationResult> IHL2RPClientCommandRoutes<RpcActor>.UnloadAsync(
+		RpcActor actor, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken ) =>
+		UnloadAsync( actor, projectionDelta, cancellationToken );
+
+	ValueTask<OperationResult> IHL2RPClientCommandRoutes<RpcActor>.MoveAsync(
+		RpcActor actor, MoveInventoryItemCommand command, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken ) =>
+		MoveAsync( actor, command, projectionDelta, cancellationToken );
+
+	ValueTask<OperationResult> IHL2RPClientCommandRoutes<RpcActor>.RunItemActionAsync(
+		RpcActor actor, RunItemActionCommand command, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken ) =>
+		RunItemActionAsync( actor, command, projectionDelta, cancellationToken );
+
+	ValueTask<OperationResult> IHL2RPClientCommandRoutes<RpcActor>.DropAsync(
+		RpcActor actor, DropItemCommand command, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken ) =>
+		DropAsync( actor, command, projectionDelta, cancellationToken );
+
+	ValueTask<OperationResult> IHL2RPClientCommandRoutes<RpcActor>.PickupAsync(
+		RpcActor actor, PickUpItemCommand command, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken ) =>
+		PickupAsync( actor, command, projectionDelta, cancellationToken );
+
+	OperationResult IHL2RPClientCommandRoutes<RpcActor>.SendChat( RpcActor actor, SendChatCommand command ) =>
+		SendChat( actor, command );
+
+	OperationResult IHL2RPClientCommandRoutes<RpcActor>.CancelAction( RpcActor actor, Guid instanceId ) =>
+		CancelAction( actor, instanceId );
+
+	ValueTask<OperationResult> IHL2RPClientCommandRoutes<RpcActor>.BeginInteractionAsync(
+		RpcActor actor, InteractionTargetInput target, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken ) =>
+		BeginInteractionAsync( actor, target, projectionDelta, cancellationToken );
+
+	OperationResult IHL2RPClientCommandRoutes<RpcActor>.ContinueInteraction( RpcActor actor, ContinueInteractionCommand command ) =>
+		ContinueInteraction( actor, command );
+
+	OperationResult IHL2RPClientCommandRoutes<RpcActor>.CloseInteraction( RpcActor actor, InteractionSessionId sessionId ) =>
+		CloseInteraction( actor, sessionId );
+
+	ValueTask<OperationResult> IHL2RPClientCommandRoutes<RpcActor>.RunSchemaCommandAsync(
+		RpcActor actor, RunSchemaCommandCommand command, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken ) =>
+		RunSchemaCommandAsync( actor, command, projectionDelta, cancellationToken );
 
 	public void RequestMaintenanceTick() => _maintenance.RequestTick();
 
@@ -1626,50 +1667,87 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 		return result;
 	}
 
-	private async ValueTask<OperationResult> RunSchemaCommandAsync(
+	private ValueTask<OperationResult> RunSchemaCommandAsync(
 		RpcActor rpc,
 		RunSchemaCommandCommand command,
 		CommandProjectionDelta projectionDelta,
-		CancellationToken cancellationToken )
+		CancellationToken cancellationToken ) =>
+		// The pipeline (definition lookup, entitlement-before-character-requirement,
+		// fail-closed permission gate, routing table) lives in the neutral schema sink
+		// so the test suite executes it; this host only implements the route seams.
+		HL2RPSchemaCommandSink.RouteAsync<RpcActor>(
+			this, rpc, command, projectionDelta, cancellationToken );
+
+	bool IHL2RPSchemaCommandRoutes<RpcActor>.TryGetCommandDefinition( string commandId, out string? permissionId )
 	{
-		if ( !_context.Schema.Commands.TryGet( command.CommandId, out var definition ) )
-			return OperationResult.Failure( ErrorCode.UnknownDefinition, "Schema command is not registered." );
-		if ( command.CommandId is HL2RPIds.Commands.EntitlementQuery or
-			HL2RPIds.Commands.EntitlementGrant or HL2RPIds.Commands.EntitlementRevoke )
-			return await RunEntitlementCommandAsync(
-				rpc, command, projectionDelta, cancellationToken );
-		var actor = RequireInventoryActor(
-			rpc, allowDead: command.CommandId == HL2RPIds.Commands.CombatRespawn );
-		if ( actor.Failed ) return Failure( actor.Error! );
-		if ( definition!.PermissionId is not null &&
-			!_featureAuthorization.HasPermission( actor.Value.AccountId, actor.Value.CharacterId, definition.PermissionId ) )
-			return OperationResult.Failure( ErrorCode.Unauthorized, $"Permission '{definition.PermissionId}' is required." );
-		var arguments = new HL2RPCommandArguments( command.Arguments );
-		return command.CommandId switch
-		{
-			HL2RPIds.Commands.CivicData => CivicData( actor.Value, arguments ),
-			HL2RPIds.Commands.CityObjectives => await SetObjectivesAsync(
-				actor.Value, arguments, projectionDelta, cancellationToken ),
-			HL2RPIds.Commands.Priority => await SetPriorityAsync(
-				actor.Value, arguments, projectionDelta, cancellationToken ),
-			HL2RPIds.Commands.RadioFrequency => await TuneRadioAsync( actor.Value, arguments, projectionDelta, cancellationToken ),
-			HL2RPIds.Commands.Introduce => await IntroduceAsync(
-				actor.Value, arguments, projectionDelta, cancellationToken ),
-			HL2RPIds.Commands.DoorOwnership => await DoorOwnershipAsync(
-				actor.Value, arguments, projectionDelta, cancellationToken ),
-			HL2RPIds.Commands.AdministrationAudit => PublishAdministrationAudit( actor.Value ),
-			HL2RPIds.Commands.CommerceBuy => await BuyAsync( actor.Value, arguments, projectionDelta, cancellationToken ),
-			HL2RPIds.Commands.CommerceSell => await SellAsync( actor.Value, arguments, projectionDelta, cancellationToken ),
-			HL2RPIds.Commands.PermitPurchase => await PurchasePermitAsync( actor.Value, arguments, projectionDelta, cancellationToken ),
-			HL2RPIds.Commands.NoteWrite => await WriteNoteAsync( actor.Value, arguments, projectionDelta, cancellationToken ),
-			HL2RPIds.Commands.RestraintSet => await SetRestraintAsync(
-				actor.Value, arguments, projectionDelta, cancellationToken ),
-			HL2RPIds.Commands.ScannerIntent => await ScannerIntentAsync(
-				actor.Value, arguments, projectionDelta, cancellationToken ),
-			HL2RPIds.Commands.CombatRespawn => RespawnCharacter( actor.Value ),
-			_ => OperationResult.Failure( ErrorCode.UnknownDefinition, "Schema command has no HL2RP runtime handler." )
-		};
+		permissionId = null;
+		if ( !_context.Schema.Commands.TryGet( commandId, out var definition ) ) return false;
+		permissionId = definition!.PermissionId;
+		return true;
 	}
+
+	ValueTask<OperationResult> IHL2RPSchemaCommandRoutes<RpcActor>.RunEntitlementCommandAsync(
+		RpcActor rpc, RunSchemaCommandCommand command, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken ) =>
+		RunEntitlementCommandAsync( rpc, command, projectionDelta, cancellationToken );
+
+	OperationResult<InventoryActor> IHL2RPSchemaCommandRoutes<RpcActor>.RequireInventoryActor( RpcActor rpc, bool allowDead ) =>
+		RequireInventoryActor( rpc, allowDead );
+
+	bool IHL2RPSchemaCommandRoutes<RpcActor>.HasPermission( InventoryActor actor, string permissionId ) =>
+		_featureAuthorization.HasPermission( actor.AccountId, actor.CharacterId, permissionId );
+
+	OperationResult IHL2RPSchemaCommandRoutes<RpcActor>.CivicData( InventoryActor actor, HL2RPCommandArguments arguments ) =>
+		CivicData( actor, arguments );
+
+	ValueTask<OperationResult> IHL2RPSchemaCommandRoutes<RpcActor>.SetObjectivesAsync(
+		InventoryActor actor, HL2RPCommandArguments arguments, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken ) =>
+		SetObjectivesAsync( actor, arguments, projectionDelta, cancellationToken );
+
+	ValueTask<OperationResult> IHL2RPSchemaCommandRoutes<RpcActor>.SetPriorityAsync(
+		InventoryActor actor, HL2RPCommandArguments arguments, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken ) =>
+		SetPriorityAsync( actor, arguments, projectionDelta, cancellationToken );
+
+	ValueTask<OperationResult> IHL2RPSchemaCommandRoutes<RpcActor>.TuneRadioAsync(
+		InventoryActor actor, HL2RPCommandArguments arguments, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken ) =>
+		TuneRadioAsync( actor, arguments, projectionDelta, cancellationToken );
+
+	ValueTask<OperationResult> IHL2RPSchemaCommandRoutes<RpcActor>.IntroduceAsync(
+		InventoryActor actor, HL2RPCommandArguments arguments, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken ) =>
+		IntroduceAsync( actor, arguments, projectionDelta, cancellationToken );
+
+	ValueTask<OperationResult> IHL2RPSchemaCommandRoutes<RpcActor>.DoorOwnershipAsync(
+		InventoryActor actor, HL2RPCommandArguments arguments, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken ) =>
+		DoorOwnershipAsync( actor, arguments, projectionDelta, cancellationToken );
+
+	OperationResult IHL2RPSchemaCommandRoutes<RpcActor>.PublishAdministrationAudit( InventoryActor actor ) =>
+		PublishAdministrationAudit( actor );
+
+	ValueTask<OperationResult> IHL2RPSchemaCommandRoutes<RpcActor>.BuyAsync(
+		InventoryActor actor, HL2RPCommandArguments arguments, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken ) =>
+		BuyAsync( actor, arguments, projectionDelta, cancellationToken );
+
+	ValueTask<OperationResult> IHL2RPSchemaCommandRoutes<RpcActor>.SellAsync(
+		InventoryActor actor, HL2RPCommandArguments arguments, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken ) =>
+		SellAsync( actor, arguments, projectionDelta, cancellationToken );
+
+	ValueTask<OperationResult> IHL2RPSchemaCommandRoutes<RpcActor>.PurchasePermitAsync(
+		InventoryActor actor, HL2RPCommandArguments arguments, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken ) =>
+		PurchasePermitAsync( actor, arguments, projectionDelta, cancellationToken );
+
+	ValueTask<OperationResult> IHL2RPSchemaCommandRoutes<RpcActor>.WriteNoteAsync(
+		InventoryActor actor, HL2RPCommandArguments arguments, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken ) =>
+		WriteNoteAsync( actor, arguments, projectionDelta, cancellationToken );
+
+	ValueTask<OperationResult> IHL2RPSchemaCommandRoutes<RpcActor>.SetRestraintAsync(
+		InventoryActor actor, HL2RPCommandArguments arguments, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken ) =>
+		SetRestraintAsync( actor, arguments, projectionDelta, cancellationToken );
+
+	ValueTask<OperationResult> IHL2RPSchemaCommandRoutes<RpcActor>.ScannerIntentAsync(
+		InventoryActor actor, HL2RPCommandArguments arguments, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken ) =>
+		ScannerIntentAsync( actor, arguments, projectionDelta, cancellationToken );
+
+	OperationResult IHL2RPSchemaCommandRoutes<RpcActor>.RespawnCharacter( InventoryActor actor ) =>
+		RespawnCharacter( actor );
 
 	private async ValueTask<OperationResult> RunEntitlementCommandAsync(
 		RpcActor rpc,
@@ -3794,33 +3872,6 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 		Guid InstanceId,
 		DateTimeOffset ReadyAtUtc,
 		CancellationTokenSource Cancellation );
-
-	private sealed class CommandProjectionDelta
-	{
-		public HashSet<InventoryId> Inventories { get; } = new();
-		public HashSet<ItemId> Items { get; } = new();
-		public HashSet<SceneEntityId> SceneEntities { get; } = new();
-		public HashSet<DocumentAddress> Documents { get; } = new();
-		public HashSet<ConnectionId> Connections { get; } = new();
-		public HashSet<CharacterId> Characters { get; } = new();
-		public List<CommitReceipt> Receipts { get; } = new();
-		public bool Broadcast { get; set; }
-		public bool RebuildLiveInventory { get; set; }
-		public bool RebuildCombatTargets { get; set; }
-		public bool HasPersistentChanges => Receipts.Count > 0 || Inventories.Count > 0 ||
-			Items.Count > 0 || SceneEntities.Count > 0 || Documents.Count > 0 ||
-			Connections.Count > 0 || Characters.Count > 0 || Broadcast ||
-			RebuildLiveInventory || RebuildCombatTargets;
-
-		public void Observe( CommitReceipt receipt )
-		{
-			ArgumentNullException.ThrowIfNull( receipt );
-			if ( !Receipts.Any( existing => existing.Sequence == receipt.Sequence ) ) Receipts.Add( receipt );
-			Documents.UnionWith( receipt.Documents.Select( value => value.Address ) );
-		}
-
-		public void Observe( IHL2RPCommittedOperation operation ) => Observe( operation.Commit );
-	}
 
 	private sealed class HL2RPCombatLifecycleBoundary : ICombatLifecycleBoundary
 	{

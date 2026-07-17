@@ -63,6 +63,7 @@ public sealed class ShowcaseArchitectureTests
 	}
 
 	[TestMethod]
+	[TestCategory( "WiringLint" )]
 	public void PlatformChatAndClientObjectMutationAreFailClosed()
 	{
 		var root = FindRoot();
@@ -90,6 +91,7 @@ public sealed class ShowcaseArchitectureTests
 	}
 
 	[TestMethod]
+	[TestCategory( "WiringLint" )]
 	public void SpatialAuthorityUsesOnlyTheHostSimulatedBody()
 	{
 		var root = FindRoot();
@@ -119,6 +121,7 @@ public sealed class ShowcaseArchitectureTests
 	}
 
 	[TestMethod]
+	[TestCategory( "WiringLint" )]
 	public void HostLifecycleAndWorldEffectsAreOwnedAndDrained()
 	{
 		var source = HL2RPTestSource.WithoutComments(
@@ -161,6 +164,7 @@ public sealed class ShowcaseArchitectureTests
 	}
 
 	[TestMethod]
+	[TestCategory( "WiringLint" )]
 	public void UiReadsSnapshotsAndCommandsOnly()
 	{
 		var uiRoot = Path.Combine( FindRoot(), "Code", "UI" );
@@ -228,6 +232,7 @@ public sealed class ShowcaseArchitectureTests
 	}
 
 	[TestMethod]
+	[TestCategory( "WiringLint" )]
 	public void PressableWorldAdaptersSubmitTargetsWithoutMutatingAuthorityState()
 	{
 		var path = Path.Combine( FindRoot(), "Code", "World", "ShowcaseComponents.cs" );

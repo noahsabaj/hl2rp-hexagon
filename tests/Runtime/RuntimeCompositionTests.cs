@@ -157,6 +157,7 @@ public sealed class RuntimeCompositionTests
 	}
 
 	[TestMethod]
+	[TestCategory( "WiringLint" )]
 	public void ProductRuntimeRoutesShowcaseServicesAndCanonicalRestraintContext()
 	{
 		var root = FindRoot();
@@ -171,10 +172,10 @@ public sealed class RuntimeCompositionTests
 			"HL2RPItemDropAvailability.Project", "HL2RPItemActionAvailability.Project", "VendorSellAvailabilityFor",
 			"_search!.Open", "scannerFeature is HL2RPScannerDockComponent", "UpdateRecordAsync",
 			"ConfigureAsync", "new HL2RPAuditLogHandler",
-			"audit: _audit", "PublishAdministrationAudit( actor.Value )",
+			"audit: _audit", "IHL2RPSchemaCommandRoutes<RpcActor>.PublishAdministrationAudit(",
 			"var restraintAuthorization = new RestraintPermissionAuthorizer( _repositories, _chatAuthorities )",
 			"_restraintState, restraintAuthorization",
-			"HL2RPIds.Commands.DoorOwnership => await DoorOwnershipAsync",
+			"IHL2RPSchemaCommandRoutes<RpcActor>.DoorOwnershipAsync(",
 			"_sceneBehavior!.ToggleDoorAsync", "_context.Configuration.Snapshot()",
 			"HL2RPPersistenceInvariants.Profile"
 		} ) StringAssert.Contains( host, route );
@@ -205,6 +206,7 @@ public sealed class RuntimeCompositionTests
 	}
 
 	[TestMethod]
+	[TestCategory( "WiringLint" )]
 	public void HostConsumesDurableConfigurationAndIncludesItInBothRecoveryProbeDigests()
 	{
 		var root = FindRoot();
@@ -1082,6 +1084,7 @@ public sealed class RuntimeCompositionTests
 	}
 
 	[TestMethod]
+	[TestCategory( "WiringLint" )]
 	public void ProductSessionAdaptersAndUiRoutesAreWired()
 	{
 		var root = FindRoot();
@@ -1112,6 +1115,7 @@ public sealed class RuntimeCompositionTests
 	}
 
 	[TestMethod]
+	[TestCategory( "WiringLint" )]
 	public void ProductSourcesStayInsideSboxAsyncAndRazorCompatibilitySurface()
 	{
 		var root = FindRoot();

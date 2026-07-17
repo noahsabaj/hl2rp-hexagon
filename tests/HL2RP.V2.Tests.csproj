@@ -35,6 +35,9 @@
     <Compile Include="../Code/Features/**/*.cs" Link="Product/Features/%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="../Code/Showcase/**/*.cs" Link="Product/Showcase/%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="../Code/Runtime/HL2RPRuntimeLogic.cs" Link="Product/Runtime/HL2RPRuntimeLogic.cs" />
+	<Compile Include="../Code/Runtime/HL2RPClientCommandSink.cs" Link="Product/Runtime/HL2RPClientCommandSink.cs" />
+	<Compile Include="../Code/Runtime/HL2RPSchemaCommandSink.cs" Link="Product/Runtime/HL2RPSchemaCommandSink.cs" />
+	<Compile Include="../Code/Runtime/HL2RPCommandProjectionDelta.cs" Link="Product/Runtime/HL2RPCommandProjectionDelta.cs" />
 	<Compile Include="../Code/Runtime/HL2RPMaintenanceSupervisor.cs" Link="Product/Runtime/HL2RPMaintenanceSupervisor.cs" />
 	<Compile Include="../Code/Runtime/HL2RPRecoverySnapshot.cs" Link="Product/Runtime/HL2RPRecoverySnapshot.cs" />
 	<Compile Include="../Code/Runtime/HL2RPObjectiveCommandRouter.cs" Link="Product/Runtime/HL2RPObjectiveCommandRouter.cs" />

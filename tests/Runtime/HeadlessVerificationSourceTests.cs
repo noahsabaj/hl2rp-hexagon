@@ -8,6 +8,7 @@ namespace HL2RP.V2.Tests.Runtime;
 public sealed class HeadlessVerificationSourceTests
 {
 	[TestMethod]
+	[TestCategory( "WiringLint" )]
 	public void SmokeWaitsForHexagonTypesBeforeApplyingRuntimeOverridesAndStartingPlay()
 	{
 		var root = FindRoot();
