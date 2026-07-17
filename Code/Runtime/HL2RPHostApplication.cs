@@ -104,6 +104,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 	private RestraintService? _restraints;
 	private RestraintSearchService? _search;
 	private ScannerPilotService? _scanner;
+	private readonly ScannerRecoveryRetryPolicy _scannerRecoveryRetries = new();
 	private PistolCombatService? _pistol;
 	private CombatIntentService? _combatIntent;
 	private HealthVialConsumeService? _healthVials;
@@ -521,6 +522,24 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 		if ( _presentationInvalidation.IsRefreshDue( now ) ) PublishDuePresentation( now );
 		foreach ( var receipt in await _worldReconciler.ReconcileDueAsync( cancellationToken ) )
 			LogWorldItemReconciliation( receipt, "maintenance" );
+		if ( _scanner is not null )
+		{
+			// The recovery handles are fail-closed cleanup failures that previously had no
+			// runtime consumer and wedged the scanner until restart; the policy paces
+			// their retries and permanently skips the deliberate StorageLimit non-retry.
+			foreach ( var recovery in _scannerRecoveryRetries.SelectDue( _scanner.RecoveryHandles, now ) )
+			{
+				var retried = await _scanner.RetryCleanupAsync( recovery, cancellationToken );
+				if ( retried.Succeeded )
+					Log.Info(
+						$"HL2RP_SCANNER_RECOVERY_HEALED session={recovery.SessionId.Value:D} " +
+						$"scanner={recovery.ScannerId.Value:D} attempts={recovery.Attempts}" );
+				else
+					Log.Warning(
+						$"HL2RP_SCANNER_RECOVERY_RETRY_FAILED session={recovery.SessionId.Value:D} " +
+						$"scanner={recovery.ScannerId.Value:D} message={retried.Error!.Message}" );
+			}
+		}
 		if ( IsVerification && !_probeStarted )
 		{
 			cancellationToken.ThrowIfCancellationRequested();

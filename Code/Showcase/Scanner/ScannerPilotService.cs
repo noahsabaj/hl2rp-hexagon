@@ -1015,9 +1015,14 @@ public sealed class ScannerPilotService
 		CancellationToken cancellationToken)
 	{
 		cancellationToken.ThrowIfCancellationRequested();
-		var cleanup = BeginCleanup(active, reason, cancellationToken);
+		// The durable cleanup runs detached from the caller: a disconnecting pilot's
+		// command-lease token could otherwise cancel the cleanup commit mid-flight and
+		// convert a routine exit into a permanent recovery handle. The awaiting caller
+		// observes its own cancellation through the wrapper while the cleanup continues
+		// to completion; shutdown drains any cleanup still pending.
+		var cleanup = BeginCleanup(active, reason);
 		_authority.Close(active.SessionId);
-		return await cleanup;
+		return await AwaitCleanupAsync(cleanup, cancellationToken);
 	}
 
 	private void OnSessionRevoked(InteractionSession revoked)
@@ -1034,8 +1039,7 @@ public sealed class ScannerPilotService
 
 	private Task<OperationResult> BeginCleanup(
 		ScannerPilotSession active,
-		string reason,
-		CancellationToken cancellationToken = default)
+		string reason)
 	{
 		CleanupOperation operation;
 		var restoreBody = false;
@@ -1049,7 +1053,9 @@ public sealed class ScannerPilotService
 					recovery.LastError.Message,
 					recovery.LastError.Details));
 			restoreBody = _terminating.Add(active.SessionId);
-			operation = new CleanupOperation(active, reason, cancellationToken, null);
+			// Durability-critical work never inherits a caller token; the host drains
+			// pending cleanups at shutdown, so nothing needs to cancel them mid-commit.
+			operation = new CleanupOperation(active, reason, CancellationToken.None, null);
 			_cleanupOperations.Add(active.SessionId, operation);
 		}
 		CancelScheduledInputFlush(active.SessionId);

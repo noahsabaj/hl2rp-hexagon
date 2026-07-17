@@ -645,7 +645,7 @@ public sealed class ScannerShowcaseTests
 	}
 
 	[TestMethod]
-	public async Task CancellationDuringRetryDelayProducesARecoveryHandleWithoutLosingAddressability()
+	public async Task ExitCommandCancellationNoLongerPoisonsTheDurableCleanup()
 	{
 		await using var environment = await ShowcaseTestEnvironment.CreateAsync();
 		var pilot = await environment.SeedCharacterAsync(313, HL2RPIds.Factions.CivilProtection,
@@ -656,22 +656,56 @@ public sealed class ScannerShowcaseTests
 		fixture.CleanupDelay.Block = true;
 		var service = fixture.CreateService(environment);
 		var entered = (await service.EnterAsync(pilot.Actor, scannerId)).Value.Session;
-		environment.Provider.ConflictNextCommits(ScannerPilotService.CleanupMaximumAttempts);
+		environment.Provider.ConflictNextCommits(1);
 		using var cancellation = new CancellationTokenSource();
 
 		var exit = service.ExitAsync(pilot.Actor, entered.SessionId, cancellation.Token).AsTask();
 		Assert.AreEqual(1, fixture.CleanupDelay.CallCount);
 		cancellation.Cancel();
-		var failed = await exit;
+		await Assert.ThrowsAsync<TaskCanceledException>(async () => await exit);
 
-		Assert.AreEqual(ErrorCode.InternalError, failed.Error!.Code);
-		var recovery = service.RecoveryHandles.Single();
-		Assert.AreEqual(1, recovery.Attempts);
-		Assert.AreEqual(pilot.Actor.CharacterId, environment.ReadScanner(scannerId).PilotCharacterId);
-		Assert.AreEqual(1, fixture.Body.RestoreCount);
-		fixture.CleanupDelay.Block = false;
-		Assert.IsTrue((await service.RetryCleanupAsync(recovery)).Succeeded);
+		// The pilot's disconnect canceled only its own await: the cleanup itself keeps
+		// running under the host lifetime and completes durably without a recovery handle.
+		Assert.AreEqual(1, service.PendingCleanupCount);
+		fixture.CleanupDelay.Release();
+		var drained = await service.DrainCleanupAsync();
+
+		Assert.IsTrue(drained.Succeeded);
+		Assert.AreEqual(0, service.PendingRecoveryCount);
+		Assert.AreEqual(0, service.TerminatingSessionCount);
 		Assert.IsNull(environment.ReadScanner(scannerId).PilotCharacterId);
+		Assert.AreEqual(1, fixture.Body.RestoreCount);
+	}
+
+	[TestMethod]
+	public async Task MaintenanceRetryPolicyHealsARecoveryHandleWithBackoff()
+	{
+		await using var environment = await ShowcaseTestEnvironment.CreateAsync();
+		var pilot = await environment.SeedCharacterAsync(321, HL2RPIds.Factions.CivilProtection,
+			HL2RPIds.Classes.Scanner);
+		var scannerId = SceneEntityId.New();
+		await environment.SeedScannerAsync(scannerId);
+		var fixture = new ScannerFixture(environment, pilot.Actor, scannerId);
+		var service = fixture.CreateService(environment);
+		var entered = (await service.EnterAsync(pilot.Actor, scannerId)).Value.Session;
+		environment.Provider.ConflictNextCommits(ScannerPilotService.CleanupMaximumAttempts);
+		var failed = await service.ExitAsync(pilot.Actor, entered.SessionId);
+		Assert.IsFalse(failed.Succeeded);
+		Assert.AreEqual(1, service.PendingRecoveryCount);
+
+		var policy = new ScannerRecoveryRetryPolicy();
+		var now = DateTimeOffset.UnixEpoch;
+		Assert.IsEmpty(policy.SelectDue(service.RecoveryHandles, now),
+			"A freshly observed handle arms its backoff instead of retrying immediately.");
+		var due = policy.SelectDue(
+			service.RecoveryHandles, now + ScannerRecoveryRetryPolicy.InitialDelay);
+		Assert.HasCount(1, due);
+
+		Assert.IsTrue((await service.RetryCleanupAsync(due[0])).Succeeded);
+		Assert.AreEqual(0, service.PendingRecoveryCount);
+		Assert.IsNull(environment.ReadScanner(scannerId).PilotCharacterId);
+		Assert.IsEmpty(policy.SelectDue(service.RecoveryHandles, now + TimeSpan.FromDays(1)),
+			"A healed handle leaves nothing due and its schedule is forgotten.");
 	}
 
 	[TestMethod]
@@ -903,6 +937,12 @@ public sealed class ScannerShowcaseTests
 		private TaskCompletionSource? _release;
 		public bool Block { get; set; }
 		public int CallCount { get; private set; }
+
+		public void Release()
+		{
+			Block = false;
+			_release?.TrySetResult();
+		}
 		public Task DelayAsync(TimeSpan duration, CancellationToken cancellationToken)
 		{
 			Assert.AreEqual(ScannerPilotService.CleanupRetryDelay, duration);
