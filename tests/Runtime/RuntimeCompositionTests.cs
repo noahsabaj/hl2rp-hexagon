@@ -562,8 +562,16 @@ public sealed class RuntimeCompositionTests
 		Assert.AreEqual( TimeSpan.FromMilliseconds( 250 ), failures[0].RetryDelay );
 		Assert.AreEqual( 0, supervisor.Status.ConsecutiveFailures );
 		supervisor.RequestTick();
-		for ( var spin = 0; spin < 100 && attempts < 3; spin++ ) await Task.Yield();
+		await WaitUntilAsync( () => attempts >= 3 );
 		Assert.AreEqual( 3, attempts );
+	}
+
+	// Bounded by wall clock rather than scheduler turns: counting Task.Yield iterations
+	// flaked on loaded CI runners where the supervisor's runner task lagged behind the spin.
+	private static async Task WaitUntilAsync( Func<bool> condition )
+	{
+		for ( var attempt = 0; attempt < 500 && !condition(); attempt++ )
+			await Task.Delay( 10 );
 	}
 
 	[TestMethod]
@@ -621,7 +629,7 @@ public sealed class RuntimeCompositionTests
 			minimumInterval: TimeSpan.FromMilliseconds( 100 ) );
 
 		supervisor.RequestTick();
-		for ( var spin = 0; spin < 100 && ticks < 1; spin++ ) await Task.Yield();
+		await WaitUntilAsync( () => ticks >= 1 );
 		Assert.AreEqual( 1, ticks );
 		Assert.IsEmpty( paces, "The first tick after idle runs unpaced." );
 
@@ -645,11 +653,11 @@ public sealed class RuntimeCompositionTests
 			_ => Interlocked.Increment( ref failures ),
 			(_, _) => Task.FromException( new InvalidOperationException( "delay" ) ) );
 		supervisor.RequestTick();
-		for ( var spin = 0; spin < 100 && supervisor.Status.Running; spin++ ) await Task.Yield();
+		await WaitUntilAsync( () => !supervisor.Status.Running );
 		Assert.IsFalse( supervisor.Status.Running );
 		Assert.IsGreaterThanOrEqualTo( 2, failures );
 		supervisor.RequestTick();
-		for ( var spin = 0; spin < 100 && (supervisor.Status.Running || attempts < 2); spin++ ) await Task.Yield();
+		await WaitUntilAsync( () => !supervisor.Status.Running && attempts >= 2 );
 		Assert.AreEqual( 2, attempts );
 		Assert.IsFalse( supervisor.Status.Running );
 	}
@@ -665,11 +673,11 @@ public sealed class RuntimeCompositionTests
 			(_, _) => Task.CompletedTask,
 			() => failClock ? throw new InvalidOperationException( "clock" ) : DateTimeOffset.UnixEpoch );
 		supervisor.RequestTick();
-		for ( var spin = 0; spin < 100 && supervisor.Status.Running; spin++ ) await Task.Yield();
+		await WaitUntilAsync( () => !supervisor.Status.Running );
 		Assert.IsFalse( supervisor.Status.Running );
 		failClock = false;
 		supervisor.RequestTick();
-		for ( var spin = 0; spin < 100 && (supervisor.Status.Running || attempts < 2); spin++ ) await Task.Yield();
+		await WaitUntilAsync( () => !supervisor.Status.Running && attempts >= 2 );
 		Assert.AreEqual( 2, attempts );
 		Assert.IsNotNull( supervisor.Status.LastSuccessAtUtc );
 	}
