@@ -1,13 +1,13 @@
 {
   "Title": "hl2rp",
   "Type": "game",
-  "Org": "local",
+  "Org": "kbj",
   "Ident": "hl2rp",
   "Schema": 1,
   "IncludeSourceFiles": false,
   "Resources": null,
   "PackageReferences": [
-    "local.hexagon"
+    "kbj.hexagon"
   ],
   "EditorReferences": null,
   "Mounts": null,
