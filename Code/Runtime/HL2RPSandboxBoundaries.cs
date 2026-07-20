@@ -57,9 +57,11 @@ internal sealed class HL2RPSandboxBoundaries :
 	public void EnterPilot( InventoryActor actor, SceneEntityId scannerId )
 	{
 		var state = _actors( actor.ConnectionId );
-		if ( state is not null && state.Value.Player.TryGetUsableAuthoritativeBody( out var body ) )
+		if ( state is not null && state.Value.Player.TryGetUsableAuthoritativeBody( out _ ) )
 		{
-			body.Enabled = false;
+			// The player object is client-owned and carries identity/network ownership, so
+			// it must not be disabled; freeze its movement host-authoritatively while piloting.
+			state.Value.Player.HostSetMovementLocked( true );
 			_bodyStateChanged( actor.ConnectionId );
 		}
 	}
@@ -69,9 +71,9 @@ internal sealed class HL2RPSandboxBoundaries :
 		if ( _features.TryGetValue( scannerId, out var feature ) )
 			feature.Components.Get<HL2RPScannerMotionController>()?.Stop();
 		var state = _actors( actor.ConnectionId );
-		if ( state?.Player.AuthoritativeBody is GameObject body )
+		if ( state is not null )
 		{
-			body.Enabled = true;
+			state.Value.Player.HostSetMovementLocked( false );
 			_bodyStateChanged( actor.ConnectionId );
 		}
 	}

@@ -513,7 +513,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 			TrackLifecycle(
 				$"scanner-disconnect:{connectionId.Value:D}",
 				() => _scanner.DisconnectAsync( connectionId ).AsTask() );
-		_ = binding.Player.HostStripAuthoritativeBody();
+		_ = binding.Player.HostDisembody();
 		_projectionIndex.InvalidateRuntimeDependency( "roster-membership", "global" );
 		RemoveLiveConnection( connectionId );
 		PublishAll();
@@ -769,7 +769,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 			{
 				try
 				{
-					var stripped = binding.Player.HostStripAuthoritativeBody();
+					var stripped = binding.Player.HostDisembody();
 					if ( stripped.Failed ) throw new InvalidOperationException( stripped.Error!.Message );
 				}
 				catch ( Exception exception )
@@ -951,15 +951,6 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 				pair.Key, pair.Value.CharacterId ) ) );
 		if ( admission.Failed ) return admission;
 		var previous = FindActiveCharacter( connectionId );
-		var body = actor.Player.HostPrepareAuthoritativeBody( candidate =>
-		{
-			ConfigureAuthoritativePlayerBody( candidate, document.Value );
-			var renderer = candidate.AddComponent<SkinnedModelRenderer>();
-			renderer.Model = Model.Load( modelPath.Value );
-		} );
-		if ( body.Failed ) return Failure( body.Error! );
-		using var preparedBody = body.Value;
-
 		var preparedTouch = _aggregates.PrepareTouchLastPlayed(
 			actor.AccountId, characterId, _clock.UtcNow );
 		if ( preparedTouch.Failed ) return Failure( preparedTouch.Error! );
@@ -1048,7 +1039,15 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 			return finalAdmission;
 		}
 
-		var activatedBody = preparedBody.TryActivate();
+		var activatedBody = actor.Player.HostEmbody( candidate =>
+		{
+			ConfigureAuthoritativePlayerBody( candidate, document.Value );
+			var bodyObject = candidate.Children.FirstOrDefault( child => child.Name == "Body" )
+				?? new GameObject( candidate, true, "Body" );
+			var renderer = bodyObject.GetOrAddComponent<SkinnedModelRenderer>();
+			renderer.Model = Model.Load( modelPath.Value );
+			renderer.Enabled = true;
+		} );
 		if ( activatedBody.Failed )
 		{
 			Log.Error(
@@ -1171,7 +1170,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 		_itemActionPresentations.Remove( connectionId );
 		_civicSubjects.ClearConnection( connectionId );
 		var binding = _clients[connectionId];
-		_ = binding.Player.HostStripAuthoritativeBody();
+		_ = binding.Player.HostDisembody();
 		SetBindingCharacter( connectionId, null );
 		RefreshLiveConnection( connectionId );
 	}
@@ -1445,10 +1444,14 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 		{
 			// Body and grant are prepared while both the death state and the respawn
 			// phase guard deny commands. Clearing death is the final authority flip.
-			var body = binding.Player.HostBuildAuthoritativeBody( candidate =>
+			var body = binding.Player.HostEmbody( candidate =>
 			{
 				ConfigureAuthoritativePlayerBody( candidate, character );
-				candidate.AddComponent<SkinnedModelRenderer>().Model = Model.Load( modelPath.Value );
+				var bodyObject = candidate.Children.FirstOrDefault( child => child.Name == "Body" )
+					?? new GameObject( candidate, true, "Body" );
+				var renderer = bodyObject.GetOrAddComponent<SkinnedModelRenderer>();
+				renderer.Model = Model.Load( modelPath.Value );
+				renderer.Enabled = true;
 			} );
 			if ( body.Failed ) return Failure( body.Error! );
 
@@ -1466,7 +1469,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 			}
 			catch ( Exception exception )
 			{
-				_ = binding.Player.HostStripAuthoritativeBody();
+				_ = binding.Player.HostDisembody();
 				Log.Error( exception, "Failed to restore the active-character inventory grant." );
 				return OperationResult.Failure( ErrorCode.InternalError, "Respawn authority could not be restored." );
 			}
@@ -1475,7 +1478,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 			if ( respawned.Failed )
 			{
 				_access.RevokeCharacter( actor.ConnectionId, actor.CharacterId );
-				_ = binding.Player.HostStripAuthoritativeBody();
+				_ = binding.Player.HostDisembody();
 				PublishConnections( new[] { actor.ConnectionId }, invalidateRuntime: true );
 				return Failure( respawned.Error! );
 			}
@@ -2334,7 +2337,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 	private static void ConfigureAuthoritativePlayerBody( GameObject body, CharacterRecord character )
 	{
 		ConfigureForcefieldCollisionTags( body, character );
-		var controller = body.AddComponent<PlayerController>();
+		var controller = body.GetOrAddComponent<PlayerController>();
 		// PlayerController leaves this editable tag set null for components created
 		// entirely at runtime. Initialize it before the body is enabled so both the
 		// generated colliders and authority traces receive the intended tags.
@@ -2416,7 +2419,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 			if ( _owner._clients.TryGetValue( actor.ConnectionId, out var binding ) &&
 				binding.CharacterId == actor.CharacterId )
 			{
-				var stripped = binding.Player.HostStripAuthoritativeBody();
+				var stripped = binding.Player.HostDisembody();
 				if ( stripped.Failed ) Log.Error( $"Failed to strip dead player body: {stripped.Error!.Message}" );
 			}
 			_owner.RefreshLiveConnection( actor.ConnectionId );
