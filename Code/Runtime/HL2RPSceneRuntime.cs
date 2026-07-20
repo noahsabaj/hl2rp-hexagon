@@ -176,7 +176,7 @@ internal sealed class HL2RPServerInteractionWorld : IServerInteractionWorld
 			context = null!;
 			return false;
 		}
-		var position = actor.Body.WorldPosition;
+		var position = HexPlayerBody.AuthoritativeWorldPositionOf( actor.Body );
 		context = new ServerInteractionContext
 		{
 			ConnectionId = connectionId,
@@ -213,9 +213,9 @@ internal sealed class HL2RPServerInteractionWorld : IServerInteractionWorld
 		}
 		if ( target.Kind == InteractionTargetKind.Character &&
 			_players( new CharacterId( target.Id ) ) is { } player &&
-			player.TryGetUsableAuthoritativeBody( out var body ) )
+			player.TryGetUsableAuthoritativeBody( out _ ) )
 		{
-			var point = body.WorldPosition;
+			var point = player.AuthoritativeWorldPosition;
 			position = new WorldPoint( point.x, point.y, point.z );
 			return true;
 		}

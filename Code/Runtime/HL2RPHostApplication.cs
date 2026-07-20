@@ -1561,8 +1561,8 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 	private WorldPoint? ActorPosition( InventoryActor actor )
 	{
 		var player = FindPlayer( actor.CharacterId );
-		if ( player is null || !player.TryGetUsableAuthoritativeBody( out var body ) ) return null;
-		var position = body.WorldPosition;
+		if ( player is null || !player.TryGetUsableAuthoritativeBody( out _ ) ) return null;
+		var position = player.AuthoritativeWorldPosition;
 		return new WorldPoint( position.x, position.y, position.z );
 	}
 
@@ -1576,8 +1576,8 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 
 	private bool HasBodyLineOfSight( GameObject actor, GameObject target )
 	{
-		var start = actor.WorldPosition;
-		var end = target.WorldPosition;
+		var start = HexPlayerBody.AuthoritativeWorldPositionOf( actor );
+		var end = HexPlayerBody.AuthoritativeWorldPositionOf( target );
 		var trace = _context.Scene.Trace.Ray( start, end )
 			.IgnoreGameObjectHierarchy( actor.Root )
 			.WithoutTags( "prediction" )
@@ -1612,7 +1612,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 	{
 		var forward = gameObject.Components.Get<PlayerController>()?.EyeAngles.ToRotation().Forward ??
 			gameObject.WorldTransform.Forward;
-		var position = gameObject.WorldPosition + forward * 48f + Vector3.Up * 24f;
+		var position = HexPlayerBody.AuthoritativeWorldPositionOf( gameObject ) + forward * 48f + Vector3.Up * 24f;
 		var rotation = gameObject.WorldRotation;
 		return new WorldTransformRecord
 		{
@@ -1696,7 +1696,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 			return;
 		}
 
-		var position = body.WorldPosition;
+		var position = binding.Player.AuthoritativeWorldPosition;
 		_chatPositions.Apply( version, connectionId, new LiveChatConnection(
 			connectionId, character.Id, new ChatPosition( position.x, position.y, position.z ) ) );
 		_chatAuthorities.Apply( version, connectionId, new LiveChatAuthority(
@@ -1988,7 +1988,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 				!binding.Player.TryGetUsableAuthoritativeBody( out var candidateBody ) ) continue;
 			var character = _repositories.Characters.Find( DomainKeys.Character( candidateId ) )?.Value;
 			if ( character is null ) continue;
-			var distance = Vector3.DistanceBetween( viewerBody.WorldPosition, candidateBody.WorldPosition );
+			var distance = Vector3.DistanceBetween( viewer.AuthoritativeWorldPosition, binding.Player.AuthoritativeWorldPosition );
 			if ( distance > 130f || distance >= nearestDistance ||
 				!HasBodyLineOfSight( viewerBody, candidateBody ) )
 				continue;
@@ -2367,9 +2367,9 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 				!sourcePlayer.TryGetUsableAuthoritativeBody( out var source ) ||
 				!targetPlayer.TryGetUsableAuthoritativeBody( out var target ) )
 				return OperationResult.Failure( ErrorCode.NotFound, "Encounter target is not active." );
-			if ( Vector3.DistanceBetween( source.WorldPosition, target.WorldPosition ) > 130f )
+			if ( Vector3.DistanceBetween( sourcePlayer.AuthoritativeWorldPosition, targetPlayer.AuthoritativeWorldPosition ) > 130f )
 				return OperationResult.Failure( ErrorCode.PolicyDenied, "Encounter target is out of range." );
-			var trace = _owner._context.Scene.Trace.Ray( source.WorldPosition, target.WorldPosition )
+			var trace = _owner._context.Scene.Trace.Ray( sourcePlayer.AuthoritativeWorldPosition, targetPlayer.AuthoritativeWorldPosition )
 				.IgnoreGameObjectHierarchy( source.Root )
 				.WithoutTags( "prediction" )
 				.Run();

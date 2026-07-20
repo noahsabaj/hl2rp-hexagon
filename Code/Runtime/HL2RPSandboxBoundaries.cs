@@ -134,7 +134,7 @@ internal sealed class HL2RPSandboxBoundaries :
 		if ( state is null || state.Value.Character.Id != intent.Actor.CharacterId ||
 			!state.Value.Player.TryGetUsableAuthoritativeBody( out var body ) )
 			return OperationResult<AuthoritativeShot>.Failure( ErrorCode.Unauthorized, "Authoritative firing body is unavailable." );
-		var origin = body.WorldPosition + Vector3.Up * 56f;
+		var origin = state.Value.Player.AuthoritativeWorldPosition + Vector3.Up * 56f;
 		var controller = body.Components.Get<PlayerController>();
 		if ( controller is null )
 			return OperationResult<AuthoritativeShot>.Failure( ErrorCode.Unauthorized, "Authoritative firing controller is unavailable." );
