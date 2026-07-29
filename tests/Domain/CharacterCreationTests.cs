@@ -179,7 +179,10 @@ public sealed class CharacterCreationTests
 		Assert.IsTrue( second.Succeeded, second.Error?.Message );
 		Assert.AreEqual( 0, first.Value.Character.Slot );
 		Assert.AreEqual( 1, second.Value.Character.Slot );
-		Assert.HasCount( 2, repositories.UniqueReservations.All() );
+		// Per character: the schema's citizen-ID reservation and the framework's name reservation.
+		Assert.HasCount( 4, repositories.UniqueReservations.All() );
+		Assert.HasCount( 2, repositories.UniqueReservations.All()
+			.Where( document => document.Value.Namespace == "hexagon.character-name" ).ToArray() );
 		Assert.HasCount( 4, repositories.Inventories.All() );
 		Assert.HasCount( 8, repositories.Items.All() );
 		var firstState = HL2RPPersistence.CharacterState.Deserialize(
@@ -258,8 +261,9 @@ public sealed class CharacterCreationTests
 		var created = await service.CreateAsync( account, Request( HL2RPIds.Factions.Citizen ) );
 		Assert.IsTrue( created.Succeeded, created.Error?.Message );
 		var characterId = created.Value.Character.Id;
+		// A distinct name: character names are reserved globally, so two citizens cannot share one.
 		var related = await service.CreateAsync(
-			new AccountId( 43 ), Request( HL2RPIds.Factions.Citizen ) );
+			new AccountId( 43 ), Request( HL2RPIds.Factions.Citizen ) with { Name = "Related Citizen" } );
 		Assert.IsTrue( related.Succeeded, related.Error?.Message );
 		var relatedCharacter = related.Value.Character.Id;
 		var sceneEntity = SceneEntityId.New();
