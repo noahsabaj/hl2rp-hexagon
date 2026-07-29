@@ -183,7 +183,8 @@ public sealed class HL2RPSchemaTests
 				HL2RPIds.Configs.CharacterInventoryHeight,
 				HL2RPIds.Configs.InteractionIdleSeconds,
 				HL2RPIds.Configs.ChatRateCapacity,
-				HL2RPIds.Configs.ChatRateWindowSeconds
+				HL2RPIds.Configs.ChatRateWindowSeconds,
+				HL2RPIds.Configs.CharacterNameUniqueness
 			},
 			compiled.Configs.All.Select( value => value.Id ) );
 		Assert.AreEqual( 8, compiled.Configs.Require<int>( HL2RPIds.Configs.CharacterInventoryWidth ).Value.DefaultValue );
@@ -193,6 +194,14 @@ public sealed class HL2RPSchemaTests
 		Assert.AreEqual( 5, compiled.Configs.Require<int>( HL2RPIds.Configs.ChatRateWindowSeconds ).Value.DefaultValue );
 		Assert.IsTrue( compiled.Configs.Require<int>( HL2RPIds.Configs.ChatRateCapacity ).Value.Validate( 5 ).Failed );
 		Assert.IsTrue( compiled.Configs.Require<int>( HL2RPIds.Configs.InteractionIdleSeconds ).Value.Validate( 61 ).Failed );
+
+		// Name strictness defaults to the strongest rule; loosening is a deliberate operator act,
+		// and an unrecognised value is refused on write rather than silently treated as one.
+		var uniqueness = compiled.Configs.Require<string>( HL2RPIds.Configs.CharacterNameUniqueness ).Value;
+		Assert.AreEqual( "Skeleton", uniqueness.DefaultValue );
+		Assert.IsTrue( uniqueness.Validate( "Exact" ).Succeeded );
+		Assert.IsTrue( uniqueness.Validate( "none" ).Succeeded );
+		Assert.IsTrue( uniqueness.Validate( "Lenient" ).Failed );
 	}
 
 	[TestMethod]

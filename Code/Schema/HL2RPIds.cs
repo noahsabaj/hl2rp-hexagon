@@ -209,6 +209,7 @@ public static class HL2RPIds
 		public const string InteractionIdleSeconds = "interaction_idle_seconds";
 		public const string ChatRateCapacity = "chat_rate_capacity";
 		public const string ChatRateWindowSeconds = "chat_rate_window_seconds";
+		public const string CharacterNameUniqueness = "character_name_uniqueness";
 	}
 
 	public static class ReservationNamespaces

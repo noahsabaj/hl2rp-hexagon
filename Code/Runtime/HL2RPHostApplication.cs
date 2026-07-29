@@ -179,7 +179,8 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 			RequirePolicy<CharacterCreationContext>(),
 			RequirePolicy<CharacterDeletionContext>(),
 			inventoryWidth: characterInventoryWidth,
-			inventoryHeight: characterInventoryHeight );
+			inventoryHeight: characterInventoryHeight,
+			nameUniqueness: RequiredNameUniqueness() );
 		_aggregates = new AggregateMutationService(
 			_repositories,
 			context.Schema,
@@ -2324,6 +2325,23 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 		if ( configured.Failed )
 			throw new InvalidOperationException( configured.Error!.Message );
 		return configured.Value.Value;
+	}
+
+	/// <summary>
+	/// The configured name-similarity strictness. The schema validates the value on write, so a
+	/// value that fails to parse here means the store disagrees with the schema and the host
+	/// refuses to start rather than silently falling back to a different rule than the operator
+	/// asked for.
+	/// </summary>
+	private CharacterRules.NameUniqueness RequiredNameUniqueness()
+	{
+		var configured = _context.Configuration.Get<string>( HL2RPIds.Configs.CharacterNameUniqueness );
+		if ( configured.Failed )
+			throw new InvalidOperationException( configured.Error!.Message );
+		if ( !Enum.TryParse<CharacterRules.NameUniqueness>( configured.Value.Value, true, out var parsed ) )
+			throw new InvalidOperationException(
+				$"Configuration '{HL2RPIds.Configs.CharacterNameUniqueness}' is not a known strictness." );
+		return parsed;
 	}
 
 	private static void ConfigureForcefieldCollisionTags( GameObject body, CharacterRecord character )
