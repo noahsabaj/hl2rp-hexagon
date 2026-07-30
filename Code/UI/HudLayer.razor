@@ -2,7 +2,9 @@
 @using System.Linq
 @using System.Threading.Tasks
 @using Hexagon.V2.Client
+@using Hexagon.V2.Client.Chat
 @using Hexagon.V2.Kernel
+@using HL2RP.V2.Schema
 @using Hexagon.V2.Networking
 @using Sandbox
 @using Sandbox.UI
@@ -48,40 +50,14 @@
 		</div>
 	}
 
-	<div class="chat-panel @(ChatFocused ? "is-focused" : string.Empty)">
-		<div class="chat-log">
-			@if ( Chat is not null )
-			{
-				@foreach ( var message in Chat.Messages.TakeLast( 40 ) )
-				{
-					<div class="chat-message channel-@message.ChannelId">
-						<span class="chat-message__channel">@message.ChannelId.ToUpperInvariant()</span>
-						<span class="chat-message__author">@message.AuthorName</span>
-						<span class="chat-message__text">@message.Text</span>
-					</div>
-				}
-			}
-			@foreach ( var local in _localMessages )
-			{
-				<div class="chat-message channel-console">
-					<span class="chat-message__channel">CONSOLE</span>
-					<span class="chat-message__text">@local</span>
-				</div>
-			}
-		</div>
-		<div class="chat-compose">
-			<div class="chat-channels">
-				@foreach ( var channel in Channels )
-				{
-					<button class="@(SelectedChannel == channel.Id ? "is-active" : string.Empty)"
-						@onclick="@(() => SelectedChannel = channel.Id)">@channel.Label</button>
-				}
-			</div>
-			<TextEntry @ref="ChatEntry" Value:bind="@ChatText" Placeholder="Speak in character… (Enter)" MaxLength="@(512)"
-				onfocus="@(() => ChatFocused = true)" onblur="@(() => ChatFocused = false)" onsubmit="@SendChatAsync" />
-			<button class="hex-button primary" disabled="@(string.IsNullOrWhiteSpace( ChatText ))" @onclick="@SendChatAsync">Send</button>
-		</div>
-	</div>
+	@* Chat is the framework's now: HexChatPanel owns the transient entry, the fading log and the
+	   scrollback, and HexChatComposer owns what a typed line means. HL2RP supplies the channels,
+	   the lines, and what to do with a command. The nine-button channel row is gone -- picking a
+	   channel needed a cursor, and the cursor is hidden while embodied, which is why the old panel
+	   was unreachable in play. *@
+	<HexChatPanel Lines="@ChatLines()" TargetLabel="@Composer.StickyChannel.DisplayName"
+		FadeSeconds="@(8f)" OnSubmit="@HandleChatSubmit"
+		OnCycleChannel="@CycleChatChannel" OpenAction="Chat" CycleAction="@CycleChannelAction" />
 
 	@if ( Action is not null )
 	{
@@ -178,21 +154,21 @@
 	// server never sees them, and nobody else does either.
 	private readonly List<string> _localMessages = new();
 
-	private readonly UiChoice[] Channels =
-	{
-		new( "ic", "IC", "In character" ), new( "ooc", "OOC", "Out of character" ),
-		new( "looc", "LOOC", "Local out of character" ), new( "whisper", "W", "Whisper" ),
-		new( "yell", "Y", "Yell" ), new( "emote", "ME", "Emote" ),
-		new( "radio", "R", "Radio" ), new( "request", "REQ", "Request" ),
-		new( "dispatch", "DISP", "Dispatch" )
-	};
+	/// <summary>
+	/// The action that cycles the sticky channel. Empty until the project defines one — Hexagon
+	/// cannot bind an input action on a consuming game's behalf, so the panel degrades to
+	/// prefixes-only rather than failing.
+	/// </summary>
+	public const string CycleChannelAction = "ChatChannel";
 
-	private string SelectedChannel { get; set; } = "ic";
-	private string ChatText { get; set; } = string.Empty;
-	private bool ChatFocused { get; set; }
+	private HexChatComposer? _composer;
 
-	// A property, not a field: the Razor @ref generator only assigns properties.
-	private TextEntry? ChatEntry { get; set; }
+	/// <summary>
+	/// Built from the channels the SCHEMA declares, so the panel's channel list, the prefixes and
+	/// the dead-rule all come from the same registrations the host validates against.
+	/// </summary>
+	private HexChatComposer Composer => _composer ??= new HexChatComposer(
+		HL2RPChatChannels.Views(), HL2RPIds.Channels.InCharacter );
 
 	protected override void OnParametersSet()
 	{
@@ -200,23 +176,68 @@
 			throw new InvalidOperationException( $"{nameof(HudLayer)} requires {nameof(ViewModel)}." );
 	}
 
+	private bool IsDead => Death is not null;
+
+	private void CycleChatChannel() => Composer.CycleChannel( IsDead );
+
 	/// <summary>
-	/// Opens chat on the project's existing Chat action (Enter). The compose box was previously
-	/// unreachable in play: the cursor is hidden while embodied, so it could not be clicked, and
-	/// nothing bound the action - which is why the chat channels and now the commands had no way in.
-	/// <para>
-	/// Focusing programmatically avoids releasing the cursor at all. A focused TextEntry stops
-	/// propagation on typed buttons, so movement keys do not leak into the player while typing, and
-	/// the action is cleared so the same Enter press cannot also submit the empty box it just opened.
-	/// </para>
+	/// Server messages and this client's own console lines, oldest first. Console lines carry no
+	/// author, which is how the panel tells them apart from speech.
 	/// </summary>
-	public override void Tick()
+	private IReadOnlyList<HexChatLine> ChatLines()
 	{
-		base.Tick();
-		if ( ChatEntry is null || ChatEntry.HasFocus ) return;
-		if ( !Input.Pressed( "Chat" ) ) return;
-		ChatEntry.Focus();
-		Input.Clear( "Chat" );
+		var lines = new List<HexChatLine>();
+		if ( Chat is not null )
+		{
+			foreach ( var message in Chat.Messages.TakeLast( 40 ) )
+				lines.Add( new HexChatLine(
+					message.Text,
+					message.AuthorName,
+					message.ChannelId.ToUpperInvariant(),
+					ChannelColour( message.ChannelId ),
+					_lineClock ) );
+		}
+
+		foreach ( var local in _localMessages )
+			lines.Add( new HexChatLine( local, ChannelLabel: "CONSOLE", Colour: "#d7a84b", ReceivedAt: _lineClock ) );
+		return lines;
+	}
+
+	private static string? ChannelColour( string channelId ) =>
+		HL2RPChatChannels.Colour( channelId );
+
+	// Stamped when the line set last changed, so the fade measures how long THIS client has had a
+	// line on screen rather than how old the message is.
+	private float _lineClock = RealTime.Now;
+	private int _lastLineCount = -1;
+
+	// A named method, not an inline lambda: the razor generator cannot infer a delegate type for
+	// `text => _ = SubmitChatAsync( text )` and fails with CS8917 — and only the ENGINE compile says
+	// so, because dotnet build does not run s&box's razor generator.
+	private void HandleChatSubmit( string text ) => _ = SubmitChatAsync( text );
+
+	private async Task SubmitChatAsync( string text )
+	{
+		if ( Controller is null ) return;
+		var intent = Composer.Compose( text, IsDead );
+		switch ( intent.Kind )
+		{
+			case HexChatIntentKind.Ignored:
+				return;
+			case HexChatIntentKind.Console:
+				Echo( intent.Message );
+				break;
+			case HexChatIntentKind.Command:
+				await RunSlashCommandAsync( intent.Text );
+				break;
+			case HexChatIntentKind.Channel:
+				var result = await Controller.SendChatAsync( intent.ChannelId, intent.Text );
+				if ( result.Failed ) Echo( result.Error!.Message );
+				OnResult?.Invoke( result );
+				break;
+		}
+
+		StateHasChanged();
 	}
 
 	private static int Percent( int value, int maximum ) => maximum <= 0 ? 0 : Math.Clamp( value * 100 / maximum, 0, 100 );
@@ -255,25 +276,6 @@
 			? 0
 			: Notifications.Count( notice => notice.ExpiresAtUtc > now );
 		return HashCode.Combine( actionPercent, respawnSeconds, liveNotifications );
-	}
-
-	private async Task SendChatAsync()
-	{
-		if ( Controller is null || string.IsNullOrWhiteSpace( ChatText ) )
-			return;
-
-		var text = ChatText;
-		ChatText = string.Empty;
-		if ( SlashCommandParser.IsCommand( text ) )
-		{
-			await RunSlashCommandAsync( text );
-			StateHasChanged();
-			return;
-		}
-
-		var result = await Controller.SendChatAsync( SelectedChannel, text );
-		OnResult?.Invoke( result );
-		StateHasChanged();
 	}
 
 	/// <summary>

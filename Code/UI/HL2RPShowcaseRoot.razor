@@ -113,10 +113,6 @@
 			}
 		}
 
-		@* PHASE 1 SPIKE: a panel shipped by the hexagon LIBRARY, embedded by the game. Removed with
-		   the probe once the real framework chat panel lands. *@
-		<HexChatProbePanel />
-
 		@if ( !string.IsNullOrWhiteSpace( LocalError ) )
 		{
 			<button class="local-error" @onclick="@(() => LocalError = string.Empty)"><span>error</span>@LocalError</button>

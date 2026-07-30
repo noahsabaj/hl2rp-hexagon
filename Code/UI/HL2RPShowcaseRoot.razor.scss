@@ -271,7 +271,6 @@ $red: #db6a61;
 	.hud-ammo__reserve { margin-left: 6px; color: $muted; font-family: "Roboto Mono"; font-size: 15px; }
 	.hud-ammo .micro-label { position: absolute; right: 15px; top: -9px; }
 
-	.chat-panel { position: absolute; left: 28px; bottom: 270px; width: 570px; height: 250px; flex-direction: column; justify-content: flex-end; pointer-events: all; }
 	// The mask ramps LUMINANCE, not alpha: s&box's default mask-mode is MatchSource, and
 	// ui_filter.shader treats MatchSource exactly like Luminance (mask = GetLuminance(rgb)), despite
 	// MaskMode's own docs saying an image source should use alpha per CSS. This was
@@ -283,16 +282,6 @@ $red: #db6a61;
 	// collapses to zero and never comes back.
 	// black -> white is how the engine's own PlayerListModal writes its masks - the only
 	// mask-image in the entire engine tree, and therefore the only reference worth copying.
-	.chat-log { max-height: 190px; padding: 8px 2px; overflow: scroll; flex-direction: column; justify-content: flex-end; mask-image: linear-gradient( to bottom, black 0%, white 20% ); }
-	.chat-message { min-height: 23px; align-items: baseline; text-shadow: 0 1px 3px black; }
-	.chat-message__channel { width: 48px; color: $amber; font-family: "Roboto Mono"; font-size: 8px; letter-spacing: 1px; }
-	.chat-message__author { margin-right: 6px; color: #cbd4d7; font-weight: 700; font-size: 12px; &::after { content: ":"; } }
-	.chat-message__text { color: #dce2e3; font-size: 12px; }
-	.chat-compose { height: 44px; opacity: 0.18; background-color: rgba( $ink, 0.94 ); border: 1px solid $line; transition: opacity 0.15s; align-items: center; }
-	.chat-panel:hover .chat-compose, .chat-panel.is-focused .chat-compose { opacity: 1; }
-	.chat-compose textentry { flex-grow: 1; height: 42px; padding: 0 12px; border: 0; background-color: transparent; color: $white; }
-	.chat-compose .hex-button { height: 42px; }
-	.chat-channels { position: absolute; left: 0; bottom: 45px; gap: 3px; button { min-width: 25px; height: 21px; padding: 0 5px; border: 0; background-color: rgba($ink,0.85); color: #64747b; font-family: "Roboto Mono"; font-size: 8px; &.is-active { color: $amber; } } }
 
 	.action-progress { position: absolute; left: 50%; bottom: 135px; transform: translateX( -50% ); width: 390px; padding: 11px 14px; background-color: rgba( $ink, 0.9 ); border: 1px solid $line; flex-direction: column; }
 	.action-progress__copy { justify-content: space-between; span { color: $muted; font-family: "Roboto Mono"; font-size: 8px; } strong { font-size: 12px; } }
