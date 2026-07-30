@@ -255,7 +255,13 @@ $red: #db6a61;
 	.hud-ammo .micro-label { position: absolute; right: 15px; top: -9px; }
 
 	.chat-panel { position: absolute; left: 28px; bottom: 270px; width: 570px; height: 250px; flex-direction: column; justify-content: flex-end; pointer-events: all; }
-	.chat-log { max-height: 190px; padding: 8px 2px; overflow: scroll; flex-direction: column; justify-content: flex-end; mask-image: linear-gradient( transparent, black 20% ); }
+	// The mask ramps LUMINANCE, not alpha: s&box's default mask-mode is MatchSource, and
+	// ui_filter.shader treats MatchSource exactly like Luminance (mask = GetLuminance(rgb)), despite
+	// the CSS spec saying an image source should use alpha. This was `transparent -> black`, whose
+	// colour is black at every stop, so luminance was 0 across the whole gradient and every child of
+	// the chat log was multiplied to fully transparent - the log had correct layout and children and
+	// still drew nothing. black -> white is how the engine's own PlayerListModal writes its masks.
+	.chat-log { max-height: 190px; padding: 8px 2px; overflow: scroll; flex-direction: column; justify-content: flex-end; mask-image: linear-gradient( to bottom, black 0%, white 20% ); }
 	.chat-message { min-height: 23px; align-items: baseline; text-shadow: 0 1px 3px black; }
 	.chat-message__channel { width: 48px; color: $amber; font-family: "Roboto Mono"; font-size: 8px; letter-spacing: 1px; }
 	.chat-message__author { margin-right: 6px; color: #cbd4d7; font-weight: 700; font-size: 12px; &::after { content: ":"; } }
