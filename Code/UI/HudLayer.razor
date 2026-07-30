@@ -227,6 +227,36 @@
 		return Math.Clamp( (int)(elapsed.TotalMilliseconds / action.Duration.TotalMilliseconds * 100), 0, 100 );
 	}
 
+	/// <summary>
+	/// This layer draws three values derived from the wall clock — action progress, the respawn
+	/// countdown, and which notifications have expired — but the engine rebuilds a Razor tree only when it
+	/// is dirty, and the base <c>BuildHash</c> returns a constant. Nothing else marks this panel dirty
+	/// per frame: the presenter rebuilds on store changes, and the host publishes only when a refresh
+	/// is due. So the gap between pushes is unbounded, and the worst case is the COMMON case — a
+	/// player performing a timed action is standing still, and a dead player watching a countdown is
+	/// by definition not moving.
+	/// <para>
+	/// Quantized to display granularity, never raw ticks: whole percent, whole second, count of
+	/// unexpired notices. Hashing the clock itself would rebuild the whole layer — including a
+	/// forty-message chat log — every single frame.
+	/// </para>
+	/// </summary>
+	protected override int BuildHash()
+	{
+		var now = DateTimeOffset.UtcNow;
+		var actionPercent = Action is null ? -1 : ActionPercent( Action );
+		var respawnSeconds = Death?.RespawnAtUtc is DateTimeOffset availableAt
+			? (int)Math.Ceiling( (availableAt - now).TotalSeconds )
+			: -1;
+		// IsDefaultOrEmpty first: Notifications is an ImmutableArray [Parameter] with no
+		// EditorRequired, and enumerating a default one throws into Panel's render catch, which
+		// degrades into per-frame warning spam rather than anything visible.
+		var liveNotifications = Notifications.IsDefaultOrEmpty
+			? 0
+			: Notifications.Count( notice => notice.ExpiresAtUtc > now );
+		return HashCode.Combine( actionPercent, respawnSeconds, liveNotifications );
+	}
+
 	private async Task SendChatAsync()
 	{
 		if ( Controller is null || string.IsNullOrWhiteSpace( ChatText ) )
