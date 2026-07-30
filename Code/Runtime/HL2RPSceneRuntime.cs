@@ -185,13 +185,24 @@ internal sealed class HL2RPServerInteractionWorld : IServerInteractionWorld
 	{
 		var actor = _actors( connectionId );
 		if ( actor is null || actor.Character.Id != characterId ||
-			!actor.Body.IsValid() || !actor.Body.Enabled ||
-			!TryTargetPosition( target, out var targetPosition ) )
+			!actor.Body.IsValid() || !actor.Body.Enabled )
 		{
 			context = null!;
 			return false;
 		}
-		var position = HexPlayerBody.AuthoritativeWorldPositionOf( actor.Body );
+		// Both endpoints must match the client gate that produced this interaction, or the host
+		// disagrees with the prompt the player was shown. PlayerController.TryGetLookedAt traces from
+		// the EYE, and its hold check measures to the nearest point on a target's COLLIDER, both over
+		// ReachLength 130 -- the same 130 this host range was written to mirror. Measuring feet to
+		// origin instead was wrong in both directions: too strict for anything at eye height (130
+		// horizontal needs sqrt(d^2+64^2) <= 130, so d <= 113), and too loose against a large object
+		// whose origin is within 130 while every surface of it is far outside.
+		var position = ActorEyePoint( actor.Body );
+		if ( !TryTargetPosition( target, position, out var targetPosition ) )
+		{
+			context = null!;
+			return false;
+		}
 		context = new ServerInteractionContext
 		{
 			ConnectionId = connectionId,
@@ -214,15 +225,20 @@ internal sealed class HL2RPServerInteractionWorld : IServerInteractionWorld
 		var actor = _actors( context.ConnectionId );
 		if ( actor is not null && actor.Body.IsValid() ) trace = trace.IgnoreGameObjectHierarchy( actor.Body.Root );
 		var result = trace.Run();
+		// The 32-unit slack was tuned when this traced from the FEET to an object's ORIGIN, where a
+		// hit on the target's own near surface landed well short of the endpoint. Both endpoints are
+		// now eye-to-surface, so the trace ends on the thing it is testing and the slack is more
+		// generous than it needs to be. Left as-is deliberately: tightening it only ever DENIES
+		// interactions that work today, and the right value is something to observe rather than derive.
 		return !result.Hit || result.Distance >= Vector3.DistanceBetween( start, end ) - 32f;
 	}
 
-	private bool TryTargetPosition( InteractionTarget target, out WorldPoint position )
+	private bool TryTargetPosition( InteractionTarget target, Vector3 actorEye, out WorldPoint position )
 	{
 		if ( target.Kind == InteractionTargetKind.SceneEntity &&
 			_features.TryGetValue( new SceneEntityId( target.Id ), out var feature ) )
 		{
-			var point = feature.GameObject.WorldPosition;
+			var point = ClosestSurfacePoint( feature.GameObject, actorEye );
 			position = new WorldPoint( point.x, point.y, point.z );
 			return true;
 		}
@@ -230,12 +246,53 @@ internal sealed class HL2RPServerInteractionWorld : IServerInteractionWorld
 			_players( new CharacterId( target.Id ) ) is { } player &&
 			player.TryGetUsableAuthoritativeBody( out _ ) )
 		{
+			// DELIBERATELY the host-validated origin, not a collider probe like the scene-entity branch
+			// above. A player's colliders ride their client-owned proxy transform, so measuring to one
+			// would let a client move the point the host measures against -- reintroducing exactly the
+			// client-as-spatial-authority hole the movement work closed. Scene features are host-owned
+			// and have no such problem.
 			var point = player.AuthoritativeWorldPosition;
 			position = new WorldPoint( point.x, point.y, point.z );
 			return true;
 		}
 		position = default;
 		return false;
+	}
+
+	/// <summary>
+	/// The eye the client aimed from: the host-validated feet plus the engine's own eye offset
+	/// (<c>CurrentHeight - EyeDistanceFromTop</c>), which is 64 standing and 28 ducked. Composed onto
+	/// the authoritative position rather than read from <c>PlayerController.EyePosition</c>, which
+	/// derives from the client-authored transform.
+	/// </summary>
+	private static Vector3 ActorEyePoint( GameObject body )
+	{
+		var feet = HexPlayerBody.AuthoritativeWorldPositionOf( body );
+		return body.Components.Get<PlayerController>() is { } controller
+			? feet + Vector3.Up * (controller.CurrentHeight - controller.EyeDistanceFromTop)
+			: feet;
+	}
+
+	/// <summary>
+	/// Nearest point on any of the target's colliders, matching the engine's own hold check
+	/// (<c>PlayerController.GetDistanceFromGameObject</c>, the minimum of <c>FindClosestPoint</c> over
+	/// each child collider). Falls back to the origin for a feature with no collider.
+	/// </summary>
+	private static Vector3 ClosestSurfacePoint( GameObject target, Vector3 from )
+	{
+		var closest = target.WorldPosition;
+		var nearest = float.MaxValue;
+		foreach ( var collider in target.Components
+			.GetAll<Collider>( FindMode.EnabledInSelfAndDescendants ) )
+		{
+			var point = collider.FindClosestPoint( from );
+			var distance = Vector3.DistanceBetweenSquared( point, from );
+			if ( distance >= nearest ) continue;
+			nearest = distance;
+			closest = point;
+		}
+
+		return closest;
 	}
 }
 
