@@ -2,26 +2,41 @@
 
 using System.IO;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace HL2RP.V2.Tests.Architecture;
 
 [TestClass]
 public sealed class AccountEntitlementIntegrationTests
 {
+	/// <summary>
+	/// Operator authority is deployment configuration (the hl2rp-operator-accounts ConVar), never
+	/// scene content. This guards the CLASS rather than the old component: a scene is committed and
+	/// forked, so any platform account id serialized into one leaks a real person's identity. It is a
+	/// real regression, not a hypothetical - a runtime edit to the previous scene component was
+	/// accidentally saved and put an account id into this very file.
+	/// </summary>
 	[TestMethod]
-	public void SceneOwnsOneExplicitNonPersistedBootstrapOperatorSource()
+	public void SceneNeverCarriesOperatorAccountIdentity()
 	{
 		var root = FindRoot();
 		var scenePath = Path.Combine( root, "Assets", "scenes", "main.scene" );
-		using var scene = JsonDocument.Parse( File.ReadAllText( scenePath ) );
-		var components = scene.RootElement.GetProperty( "GameObjects" )
+		var raw = File.ReadAllText( scenePath );
+
+		var steamId = new Regex( @"7656119\d{10}" );
+		Assert.IsFalse( steamId.IsMatch( raw ),
+			"A platform account ID is serialized into main.scene. Operator accounts belong in the " +
+			"hl2rp-operator-accounts ConVar, not in committed scene content." );
+
+		using var scene = JsonDocument.Parse( raw );
+		var operatorComponents = scene.RootElement.GetProperty( "GameObjects" )
 			.EnumerateArray()
 			.SelectMany( gameObject => gameObject.GetProperty( "Components" ).EnumerateArray() )
-			.Where( component => component.GetProperty( "__type" ).GetString() ==
-				"HL2RP.V2.Runtime.HL2RPBootstrapOperatorsComponent" )
+			.Where( component => component.GetProperty( "__type" ).GetString()?
+				.Contains( "BootstrapOperators", StringComparison.Ordinal ) == true )
 			.ToArray();
-		Assert.HasCount( 1, components );
-		Assert.IsTrue( components[0].TryGetProperty( "AccountIds", out _ ) );
+		Assert.IsEmpty( operatorComponents,
+			"The scene-authored operator component was replaced by deployment configuration." );
 	}
 
 	[TestMethod]
@@ -37,7 +52,7 @@ public sealed class AccountEntitlementIntegrationTests
 		{
 			"_bootstrapOperators.Contains( administrator.AccountId )",
 			"BuildCreationAvailabilityView( pair.Key, pair.Value.AccountId",
-			"Expected exactly one HL2RP bootstrap-operator source",
+			"HL2RPOperatorAccounts.Resolve()",
 			"_entitlements.ValidateAll()"
 		} ) StringAssert.Contains( host, marker );
 		// The entitlement route body moved to the engine-neutral command execution

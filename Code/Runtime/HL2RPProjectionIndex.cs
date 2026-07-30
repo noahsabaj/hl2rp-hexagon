@@ -1029,6 +1029,22 @@ public sealed class HL2RPIncrementalCombatPlayerTargetDirectory : ICombatPlayerT
 				: OperationResult<CombatPlayerTarget>.Failure( ErrorCode.NotFound, "Shot target is not a live player." );
 	}
 
+	/// <summary>
+	/// The same row a shot would resolve, addressed by character instead of by hit token. An
+	/// administrative kill has no trace to hit, but it must end at the identical death transition
+	/// as a bullet - actor, inventory and drop transform all come from this one directory, so the
+	/// two paths cannot drift into disagreeing about who died or where their effects fell.
+	/// </summary>
+	public OperationResult<CombatPlayerTarget> ResolveCharacter( CharacterId characterId )
+	{
+		lock ( _sync )
+			return _characters.TryGetValue( characterId, out var connection ) &&
+				_rows.TryGetValue( connection, out var target )
+				? OperationResult<CombatPlayerTarget>.Success( target )
+				: OperationResult<CombatPlayerTarget>.Failure(
+					ErrorCode.NotFound, "That character is not a live player." );
+	}
+
 	private static void Validate( CombatPlayerTarget row )
 	{
 		ArgumentNullException.ThrowIfNull( row );

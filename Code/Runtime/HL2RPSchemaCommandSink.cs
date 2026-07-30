@@ -45,6 +45,8 @@ public interface IHL2RPSchemaCommandRoutes<TActor>
 	ValueTask<OperationResult> ScannerIntentAsync(
 		InventoryActor actor, HL2RPCommandArguments arguments, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken );
 	OperationResult RespawnCharacter( InventoryActor actor );
+	ValueTask<OperationResult> KillCharacterAsync(
+		InventoryActor actor, HL2RPCommandArguments arguments, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken );
 }
 
 /// <summary>
@@ -106,6 +108,8 @@ public static class HL2RPSchemaCommandSink
 			HL2RPIds.Commands.ScannerIntent => await routes.ScannerIntentAsync(
 				actor.Value, arguments, projectionDelta, cancellationToken ),
 			HL2RPIds.Commands.CombatRespawn => routes.RespawnCharacter( actor.Value ),
+			HL2RPIds.Commands.AdministrationKill => await routes.KillCharacterAsync(
+				actor.Value, arguments, projectionDelta, cancellationToken ),
 			_ => OperationResult.Failure( ErrorCode.UnknownDefinition, "Schema command has no HL2RP runtime handler." )
 		};
 	}

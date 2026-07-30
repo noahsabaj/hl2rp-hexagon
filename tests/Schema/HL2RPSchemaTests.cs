@@ -117,6 +117,7 @@ public sealed class HL2RPSchemaTests
 				HL2RPIds.Commands.Introduce,
 				HL2RPIds.Commands.DoorOwnership,
 				HL2RPIds.Commands.AdministrationAudit,
+				HL2RPIds.Commands.AdministrationKill,
 				HL2RPIds.Commands.EntitlementQuery,
 				HL2RPIds.Commands.EntitlementGrant,
 				HL2RPIds.Commands.EntitlementRevoke,
@@ -137,8 +138,16 @@ public sealed class HL2RPSchemaTests
 			compiled.Commands.Require( HL2RPIds.Commands.CivicData ).Value.Cost );
 		Assert.AreEqual( CommandCostClass.Cheap,
 			compiled.Commands.Require( HL2RPIds.Commands.ScannerIntent ).Value.Cost );
+		Assert.AreEqual( CommandCostClass.Expensive,
+			compiled.Commands.Require( HL2RPIds.Commands.AdministrationKill ).Value.Cost );
+		// The lethal command must not be reachable through the audit permission - that pairing is
+		// the one an operator would most plausibly get wrong when handing out administration.
+		Assert.AreEqual( HL2RPIds.Permissions.AdministrationKill,
+			compiled.Commands.Require( HL2RPIds.Commands.AdministrationKill ).Value.PermissionId );
+		Assert.AreNotEqual( HL2RPIds.Permissions.AuditedAdministration,
+			compiled.Commands.Require( HL2RPIds.Commands.AdministrationKill ).Value.PermissionId );
 		Assert.IsTrue( compiled.Commands.All.All( command => Enum.IsDefined( command.Cost ) ) );
-		Assert.AreEqual( 12, compiled.Permissions.Count );
+		Assert.AreEqual( 13, compiled.Permissions.Count );
 		Assert.AreEqual( 21, compiled.Panels.Count );
 		Assert.AreEqual( 2, compiled.Initializers.Count );
 		Assert.AreEqual(

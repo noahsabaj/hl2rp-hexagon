@@ -22,6 +22,7 @@
 
 # Compiled asset outputs
 /Assets/**/*_c
+/Assets/**/*_d
 /Assets/**/*.los
 /Assets/**/*.vpk
 

@@ -42,6 +42,7 @@ public sealed class CivicIdentityModule : IHexModule
 		builder.RegisterPermission( new PermissionDefinition( HL2RPIds.Permissions.CivicData ) );
 		builder.RegisterPermission( new PermissionDefinition( HL2RPIds.Permissions.AuditedAdministration ) );
 		builder.RegisterPermission( new PermissionDefinition( HL2RPIds.Permissions.ManageEntitlements ) );
+		builder.RegisterPermission( new PermissionDefinition( HL2RPIds.Permissions.AdministrationKill ) );
 		builder.RegisterCommand( new CommandDefinition(
 			HL2RPIds.Commands.CivicData,
 			HL2RPIds.Permissions.CivicData,
@@ -52,6 +53,12 @@ public sealed class CivicIdentityModule : IHexModule
 			HL2RPIds.Commands.AdministrationAudit,
 			HL2RPIds.Permissions.AuditedAdministration,
 			Cost: CommandCostClass.Cheap ) );
+		// Expensive like the entitlement mutations: a lethal administrative act belongs in the
+		// same rate class as granting and revoking capability, not the cheap read class.
+		builder.RegisterCommand( new CommandDefinition(
+			HL2RPIds.Commands.AdministrationKill,
+			HL2RPIds.Permissions.AdministrationKill,
+			Cost: CommandCostClass.Expensive ) );
 		builder.RegisterCommand( new CommandDefinition(
 			HL2RPIds.Commands.EntitlementQuery,
 			HL2RPIds.Permissions.ManageEntitlements,

@@ -267,11 +267,8 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 		foreach ( var path in _characterModels.ModelPaths )
 			if ( !_worldModels.IsValidModel( path ) )
 				return OperationResult.Failure( ErrorCode.ConfigurationInvalid, $"Character model '{path}' does not resolve." );
-		var bootstrapOperatorSources = _context.Scene.GetAll<HL2RPBootstrapOperatorsComponent>().ToArray();
-		if ( bootstrapOperatorSources.Length != 1 )
-			return OperationResult.Failure( ErrorCode.ConfigurationInvalid,
-				$"Expected exactly one HL2RP bootstrap-operator source, found {bootstrapOperatorSources.Length}." );
-		var bootstrapOperators = bootstrapOperatorSources[0].Parse();
+		// Operator authority is deployment configuration, not scene content - see HL2RPOperatorAccounts.
+		var bootstrapOperators = HL2RPOperatorAccounts.Resolve();
 		if ( bootstrapOperators.Failed ) return Failure( bootstrapOperators.Error! );
 		_bootstrapOperators = bootstrapOperators.Value;
 		var entitlementDocuments = _entitlements.ValidateAll();
@@ -1359,7 +1356,22 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 		RequireInventoryActor( rpc, allowDead );
 
 	bool IHL2RPSchemaCommandRoutes<RpcActor>.HasPermission( InventoryActor actor, string permissionId ) =>
+		IsOperatorGranted( actor.AccountId, permissionId ) ||
 		_featureAuthorization.HasPermission( actor.AccountId, actor.CharacterId, permissionId );
+
+	/// <summary>
+	/// Account-level operator authority, kept off the faction axis on purpose. Faction permissions
+	/// describe what a CHARACTER may do in the city; killing a player is something a server operator
+	/// does from outside the fiction, so it follows the authenticated account and survives a
+	/// character switch rather than requiring an operator to hold an in-character rank.
+	/// <para>
+	/// The operator list is the same scene-authored, platform-authenticated one that gates the first
+	/// entitlement grant - never a character name or any client-authored identity.
+	/// </para>
+	/// </summary>
+	private bool IsOperatorGranted( AccountId accountId, string permissionId ) =>
+		permissionId == HL2RPIds.Permissions.AdministrationKill &&
+		_bootstrapOperators.Contains( accountId );
 
 	OperationResult IHL2RPSchemaCommandRoutes<RpcActor>.CivicData( InventoryActor actor, HL2RPCommandArguments arguments ) =>
 		_execution!.CivicData( actor, arguments );
@@ -1413,6 +1425,85 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 
 	OperationResult IHL2RPSchemaCommandRoutes<RpcActor>.RespawnCharacter( InventoryActor actor ) =>
 		RespawnCharacter( actor );
+
+	ValueTask<OperationResult> IHL2RPSchemaCommandRoutes<RpcActor>.KillCharacterAsync(
+		InventoryActor actor, HL2RPCommandArguments arguments, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken ) =>
+		KillCharacterAsync( actor, arguments, projectionDelta, cancellationToken );
+
+	/// <summary>
+	/// Ends a character administratively. This deliberately reuses the pistol path's own ending -
+	/// resolve the target from the combat directory, commit lethal health, then the same
+	/// <c>DieAsync</c> transition - rather than flipping a dead flag. A shortcut would leave the
+	/// character dead without the death lifecycle that <see cref="RespawnCharacter"/> requires,
+	/// producing a corpse that can never respawn.
+	/// </summary>
+	private async ValueTask<OperationResult> KillCharacterAsync(
+		InventoryActor actor,
+		HL2RPCommandArguments arguments,
+		CommandProjectionDelta projectionDelta,
+		CancellationToken cancellationToken )
+	{
+		ArgumentNullException.ThrowIfNull( arguments );
+		ArgumentNullException.ThrowIfNull( projectionDelta );
+		var requested = arguments.Guid( "character" );
+		if ( requested.Failed ) return Failure( requested.Error! );
+		if ( _combatLifecycle is null )
+			return OperationResult.Failure(
+				ErrorCode.ConfigurationInvalid, "The combat lifecycle is unavailable." );
+
+		var characterId = new CharacterId( requested.Value );
+		var target = _combatTargets.ResolveCharacter( characterId );
+		if ( target.Failed ) return Failure( target.Error! );
+
+		var reservation = _combatHealth.Reserve( characterId );
+		if ( reservation.Failed ) return Failure( reservation.Error! );
+		if ( reservation.Value.Snapshot.IsDead )
+		{
+			_combatHealth.Release( reservation.Value );
+			return OperationResult.Failure( ErrorCode.PolicyDenied, "That character is already dead." );
+		}
+
+		// No vest mitigation: an administrative termination is not a wound for armour to absorb.
+		_combatHealth.CommitDamage( reservation.Value, 0 );
+		OperationResult<DeathTransitionReceipt> died;
+		try
+		{
+			died = await _combatLifecycle.DieAsync(
+				target.Value.Actor,
+				target.Value.InventoryId,
+				target.Value.DropTransform,
+				"Administrative termination",
+				cancellationToken );
+		}
+		catch
+		{
+			// Health was already committed to zero, so a failed transition must put it back or the
+			// character is left dead-but-not-dying: denied commands, and no respawn state to clear it.
+			_combatHealth.RestoreAlive( characterId );
+			throw;
+		}
+
+		if ( died.Failed )
+		{
+			_combatHealth.RestoreAlive( characterId );
+			return Failure( died.Error! );
+		}
+
+		projectionDelta.Connections.Add( target.Value.Actor.ConnectionId );
+		projectionDelta.Characters.Add( characterId );
+		projectionDelta.Inventories.Add( target.Value.InventoryId );
+		if ( died.Value.Commit is not null ) projectionDelta.Observe( died.Value.Commit );
+		projectionDelta.Broadcast = true;
+		projectionDelta.RebuildLiveInventory = died.Value.DroppedPistol is not null;
+		projectionDelta.RebuildCombatTargets = true;
+		if ( died.Value.BoundaryError is OperationError boundaryError )
+			Log.Warning(
+				$"HL2RP_DEATH_BOUNDARY_DEGRADED character={characterId.Value:D} " +
+				$"code={boundaryError.Code} message={boundaryError.Message}" );
+		Log.Info(
+			$"HL2RP_ADMIN_KILL actor={actor.CharacterId.Value:D} target={characterId.Value:D}" );
+		return OperationResult.Success();
+	}
 
 	private IReadOnlyList<ConnectionId> EntitlementRecipients( AccountId accountId ) =>
 		_clients

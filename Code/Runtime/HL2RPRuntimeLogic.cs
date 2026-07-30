@@ -724,6 +724,11 @@ public static class HL2RPRuntimeProjection
 		HL2RPIds.Permissions.CivicData,
 		HL2RPIds.Permissions.CityObjectives,
 		HL2RPIds.Permissions.AuditedAdministration,
+		// AdministrationKill is deliberately absent. Every permission in these sets is derived from
+		// the faction a character belongs to, which is an IN-CHARACTER fact; ending a player's life
+		// is an operator act that has nothing to do with whether someone is role-playing a city
+		// administrator. It is granted on the account axis instead - see the operator grant in
+		// HL2RPHostApplication's HasPermission.
 		HL2RPIds.Permissions.ManageEntitlements,
 		HL2RPIds.Permissions.CommerceManagement,
 		HL2RPIds.Permissions.DispatchChat

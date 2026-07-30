@@ -119,6 +119,13 @@ public static class HL2RPIds
 		public const string CityObjectives = "command.city_objectives";
 		public const string Priority = "command.priority";
 		public const string AuditedAdministration = "command.admin_audit";
+		/// <summary>
+		/// Deliberately NOT <see cref="AuditedAdministration"/>. Reading an audit and ending a
+		/// character's life are different powers, and granting the second through the permission
+		/// that carries the first would make the capability set unable to express "may audit,
+		/// may not kill".
+		/// </summary>
+		public const string AdministrationKill = "command.admin_kill";
 		public const string ManageEntitlements = "accounts.entitlements.manage";
 		public const string CivilProtection = "faction.cca";
 		public const string Overwatch = "faction.ota";
@@ -137,6 +144,7 @@ public static class HL2RPIds
 		public const string Introduce = "introduce";
 		public const string DoorOwnership = "door.ownership";
 		public const string AdministrationAudit = "admin_audit";
+		public const string AdministrationKill = "admin_kill";
 		public const string EntitlementQuery = "accounts.entitlements.query";
 		public const string EntitlementGrant = "accounts.entitlements.grant";
 		public const string EntitlementRevoke = "accounts.entitlements.revoke";

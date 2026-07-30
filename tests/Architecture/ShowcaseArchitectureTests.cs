@@ -206,13 +206,24 @@ public sealed class ShowcaseArchitectureTests
 		var assetsRoot = Path.Combine( FindRoot(), "Assets" );
 		var violations = Directory.GetFiles( assetsRoot, "*", SearchOption.AllDirectories )
 			.Select( path => Path.GetRelativePath( assetsRoot, path ).Replace( '\\', '/' ) )
-			.Where( path => path is not "scenes/main.scene" and not "scenes/main.scene_c" )
+			// Build products, not authored assets. Excluded by KIND rather than by name: this used to
+			// list scenes/main.scene_c explicitly, so the day the compiler also emitted a _d sibling
+			// the guard failed on a file nobody wrote. Mirrors the compiled-output rules in .gitignore.
+			.Where( path => !IsCompiledOutput( path ) )
+			.Where( path => path is not "scenes/main.scene" )
 			.Where( path => !path.StartsWith( "hl2rp/", StringComparison.OrdinalIgnoreCase ) )
 			.ToArray();
 
 		Assert.IsEmpty( violations,
 			$"Game assets outside the hl2rp namespace: {string.Join( ", ", violations )}" );
 	}
+
+	/// <summary>A compiled sibling the asset system emits: name_c, name_d, .los, .vpk.</summary>
+	private static bool IsCompiledOutput( string relativePath ) =>
+		relativePath.EndsWith( "_c", StringComparison.Ordinal ) ||
+		relativePath.EndsWith( "_d", StringComparison.Ordinal ) ||
+		relativePath.EndsWith( ".los", StringComparison.OrdinalIgnoreCase ) ||
+		relativePath.EndsWith( ".vpk", StringComparison.OrdinalIgnoreCase );
 
 	[TestMethod]
 	public void LegacyRuntimeAndDesignPlansAreRetired()

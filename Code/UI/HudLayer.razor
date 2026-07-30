@@ -4,6 +4,7 @@
 @using Hexagon.V2.Client
 @using Hexagon.V2.Kernel
 @using Hexagon.V2.Networking
+@using Sandbox
 @using Sandbox.UI
 @namespace HL2RP.UI
 @inherits Panel
@@ -60,6 +61,13 @@
 					</div>
 				}
 			}
+			@foreach ( var local in _localMessages )
+			{
+				<div class="chat-message channel-console">
+					<span class="chat-message__channel">CONSOLE</span>
+					<span class="chat-message__text">@local</span>
+				</div>
+			}
 		</div>
 		<div class="chat-compose">
 			<div class="chat-channels">
@@ -69,7 +77,7 @@
 						@onclick="@(() => SelectedChannel = channel.Id)">@channel.Label</button>
 				}
 			</div>
-			<TextEntry Value:bind="@ChatText" Placeholder="Speak in character…" MaxLength="@(512)"
+			<TextEntry @ref="ChatEntry" Value:bind="@ChatText" Placeholder="Speak in character… (Enter)" MaxLength="@(512)"
 				onfocus="@(() => ChatFocused = true)" onblur="@(() => ChatFocused = false)" onsubmit="@SendChatAsync" />
 			<button class="hex-button primary" disabled="@(string.IsNullOrWhiteSpace( ChatText ))" @onclick="@SendChatAsync">Send</button>
 		</div>
@@ -164,6 +172,11 @@
 	[Parameter] public Action<Guid>? OnDismissNotification { get; set; }
 	[Parameter] public Action<SearchOpenRequest>? OnOpenSearch { get; set; }
 	[Parameter] public Action? OnRespawn { get; set; }
+	[Parameter] public ScoreboardViewModel? Scoreboard { get; set; }
+
+	// Client-authored lines (command usage, /help, resolution failures). They are not chat: the
+	// server never sees them, and nobody else does either.
+	private readonly List<string> _localMessages = new();
 
 	private readonly UiChoice[] Channels =
 	{
@@ -178,10 +191,32 @@
 	private string ChatText { get; set; } = string.Empty;
 	private bool ChatFocused { get; set; }
 
+	// A property, not a field: the Razor @ref generator only assigns properties.
+	private TextEntry? ChatEntry { get; set; }
+
 	protected override void OnParametersSet()
 	{
 		if ( ViewModel is null )
 			throw new InvalidOperationException( $"{nameof(HudLayer)} requires {nameof(ViewModel)}." );
+	}
+
+	/// <summary>
+	/// Opens chat on the project's existing Chat action (Enter). The compose box was previously
+	/// unreachable in play: the cursor is hidden while embodied, so it could not be clicked, and
+	/// nothing bound the action - which is why the chat channels and now the commands had no way in.
+	/// <para>
+	/// Focusing programmatically avoids releasing the cursor at all. A focused TextEntry stops
+	/// propagation on typed buttons, so movement keys do not leak into the player while typing, and
+	/// the action is cleared so the same Enter press cannot also submit the empty box it just opened.
+	/// </para>
+	/// </summary>
+	public override void Tick()
+	{
+		base.Tick();
+		if ( ChatEntry is null || ChatEntry.HasFocus ) return;
+		if ( !Input.Pressed( "Chat" ) ) return;
+		ChatEntry.Focus();
+		Input.Clear( "Chat" );
 	}
 
 	private static int Percent( int value, int maximum ) => maximum <= 0 ? 0 : Math.Clamp( value * 100 / maximum, 0, 100 );
@@ -199,9 +234,81 @@
 
 		var text = ChatText;
 		ChatText = string.Empty;
+		if ( SlashCommandParser.IsCommand( text ) )
+		{
+			await RunSlashCommandAsync( text );
+			StateHasChanged();
+			return;
+		}
+
 		var result = await Controller.SendChatAsync( SelectedChannel, text );
 		OnResult?.Invoke( result );
 		StateHasChanged();
+	}
+
+	/// <summary>
+	/// A leading '/' means the player is addressing the game, not the room. Anything that fails
+	/// here is answered locally rather than being spoken aloud - a mistyped /kill must never reach
+	/// other players as in-character speech.
+	/// </summary>
+	private async Task RunSlashCommandAsync( string text )
+	{
+		if ( IsHelpRequest( text ) )
+		{
+			ShowHelp();
+			return;
+		}
+
+		var parsed = SlashCommandParser.Parse( text );
+		if ( parsed.Failed )
+		{
+			Echo( parsed.Error!.Message );
+			return;
+		}
+
+		var bound = SlashCommandParser.Bind( parsed.Value, ResolveCharacterName );
+		if ( bound.Failed )
+		{
+			Echo( bound.Error!.Message );
+			return;
+		}
+
+		var result = await Controller!.RunSchemaCommandAsync(
+			parsed.Value.Descriptor.CommandId, bound.Value );
+		if ( result.Failed ) Echo( result.Error!.Message );
+		OnResult?.Invoke( result );
+	}
+
+	private static bool IsHelpRequest( string text )
+	{
+		var tokens = SlashCommandParser.Tokenize( text.TrimStart().TrimStart( SlashCommandParser.Prefix ) );
+		return tokens.Count > 0 && string.Equals( tokens[0], "help", StringComparison.OrdinalIgnoreCase );
+	}
+
+	private void ShowHelp()
+	{
+		Echo( "Commands (the server still checks your capabilities):" );
+		foreach ( var descriptor in SlashCommandCatalog.All.OrderBy( entry => entry.Name, StringComparer.Ordinal ) )
+			Echo( $"{descriptor.Usage} - {descriptor.Summary}" );
+	}
+
+	// Resolved against the scoreboard, which is the same set of characters the panels already let
+	// the player act on, so typing a name grants no reach the UI did not already give.
+	private OperationResult<Guid> ResolveCharacterName( string name )
+	{
+		var candidates = Scoreboard is null
+			? Array.Empty<SlashCommandTarget>()
+			: Scoreboard.Players
+				.Where( player => player.CharacterId is not null )
+				.Select( player => new SlashCommandTarget( player.CharacterId!.Value.Value, player.DisplayName ) )
+				.ToArray();
+		return SlashCommandTargets.Resolve( name, candidates );
+	}
+
+	private void Echo( string message )
+	{
+		_localMessages.Add( message );
+		if ( _localMessages.Count > 40 ) _localMessages.RemoveRange( 0, _localMessages.Count - 40 );
 	}
 
 	private async Task CancelActionAsync()

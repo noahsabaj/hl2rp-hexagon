@@ -155,6 +155,50 @@ public sealed class HL2RPCommandSinkTests
 		Assert.AreEqual( "require:allowDead=False", civicRoutes.Calls[0] );
 	}
 
+	/// <summary>
+	/// The lethal command must be gated like every other, and must reach its own route rather than
+	/// falling through to the unknown-handler arm of the exhaustive switch.
+	/// </summary>
+	[TestMethod]
+	public async Task KillRoutesOnlyAfterItsPermissionGateAllowsIt()
+	{
+		var denied = new RecordingSchemaRoutes
+		{
+			PermissionId = HL2RPIds.Permissions.AdministrationKill,
+			PermissionGranted = false
+		};
+		var deniedResult = await HL2RPSchemaCommandSink.RouteAsync(
+			denied, "rpc", Schema( HL2RPIds.Commands.AdministrationKill ), new CommandProjectionDelta(), CancellationToken.None );
+
+		Assert.AreEqual( ErrorCode.Unauthorized, deniedResult.Error!.Code );
+		CollectionAssert.DoesNotContain( denied.Calls, "route:admin_kill" );
+
+		var allowed = new RecordingSchemaRoutes
+		{
+			PermissionId = HL2RPIds.Permissions.AdministrationKill,
+			PermissionGranted = true
+		};
+		var allowedResult = await HL2RPSchemaCommandSink.RouteAsync(
+			allowed, "rpc", Schema( HL2RPIds.Commands.AdministrationKill ), new CommandProjectionDelta(), CancellationToken.None );
+
+		Assert.IsTrue( allowedResult.Succeeded, allowedResult.Error?.Message );
+		CollectionAssert.Contains( allowed.Calls, "route:admin_kill" );
+	}
+
+	/// <summary>
+	/// Respawn is the one command a dead actor may still run. Kill must not inherit that, or a
+	/// corpse could keep issuing lethal commands.
+	/// </summary>
+	[TestMethod]
+	public async Task KillRequiresALivingActorUnlikeRespawn()
+	{
+		var routes = new RecordingSchemaRoutes { PermissionId = null };
+		await HL2RPSchemaCommandSink.RouteAsync(
+			routes, "rpc", Schema( HL2RPIds.Commands.AdministrationKill ), new CommandProjectionDelta(), CancellationToken.None );
+
+		CollectionAssert.Contains( routes.Calls, "require:allowDead=False" );
+	}
+
 	[TestMethod]
 	public async Task MissingPermissionFailsClosedBeforeRouting()
 	{
@@ -357,6 +401,9 @@ public sealed class HL2RPCommandSinkTests
 			RouteAsync( "scanner_intent" );
 		public OperationResult RespawnCharacter( InventoryActor actor ) =>
 			Route( "combat_respawn" );
+		public ValueTask<OperationResult> KillCharacterAsync(
+			InventoryActor actor, HL2RPCommandArguments arguments, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken ) =>
+			RouteAsync( "admin_kill" );
 
 		private OperationResult Route( string name )
 		{
