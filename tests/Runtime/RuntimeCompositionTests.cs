@@ -224,6 +224,32 @@ public sealed class RuntimeCompositionTests
 			root, "Code", "UI", "HL2RPClientPresenter.razor.scss" ) ) );
 	}
 
+	/// <summary>
+	/// The authoritative shot origin must derive its eye height from the controller, never a literal.
+	/// It was hardcoded to 56: eight units low standing, and twenty units ABOVE a ducked player's head
+	/// (CurrentHeight falls to DuckedHeight 36, so the real eye is 28), which let a crouched player
+	/// shoot over cover that visually concealed them.
+	/// <para>
+	/// This is a source pin and therefore weak — it proves the shape, not the behaviour. The absence
+	/// half is the part that earns its place, because the failure mode is someone reintroducing a
+	/// constant. `Resolve` needs a Scene and a PlayerController, so the behavioural proof is a live
+	/// ducked shot; nothing offline can assert the origin.
+	/// </para>
+	/// </summary>
+	[TestMethod]
+	[TestCategory( "WiringLint" )]
+	public void AuthoritativeShotOriginDerivesEyeHeightFromTheController()
+	{
+		var sandbox = HL2RPTestSource.WithoutComments(
+			Path.Combine( FindRoot(), "Code", "Runtime", "HL2RPSandboxBoundaries.cs" ) );
+
+		StringAssert.Contains( sandbox, "controller.CurrentHeight - controller.EyeDistanceFromTop",
+			"The shot origin must use the engine's own eye arithmetic." );
+		Assert.IsFalse( Regex.IsMatch( sandbox, @"Vector3\.Up \* \d" ),
+			"The shot origin must not multiply Vector3.Up by a literal — that is the hardcoded eye " +
+			"height regression, which is silently wrong only while ducking." );
+	}
+
 	[TestMethod]
 	[TestCategory( "WiringLint" )]
 	public void HostConsumesDurableConfigurationAndIncludesItInBothRecoveryProbeDigests()

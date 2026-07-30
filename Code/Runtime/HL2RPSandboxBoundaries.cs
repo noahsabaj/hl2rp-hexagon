@@ -134,10 +134,20 @@ internal sealed class HL2RPSandboxBoundaries :
 		if ( state is null || state.Value.Character.Id != intent.Actor.CharacterId ||
 			!state.Value.Player.TryGetUsableAuthoritativeBody( out var body ) )
 			return OperationResult<AuthoritativeShot>.Failure( ErrorCode.Unauthorized, "Authoritative firing body is unavailable." );
-		var origin = state.Value.Player.AuthoritativeWorldPosition + Vector3.Up * 56f;
 		var controller = body.Components.Get<PlayerController>();
 		if ( controller is null )
 			return OperationResult<AuthoritativeShot>.Failure( ErrorCode.Unauthorized, "Authoritative firing controller is unavailable." );
+		// The eye offset is the engine's own (MoveMode.CalculateEyeTransform: CurrentHeight minus
+		// EyeDistanceFromTop), not a literal. It was hardcoded to 56, which is 8 units low standing and
+		// catastrophically wrong ducked: CurrentHeight drops to DuckedHeight 36, so a crouched player's
+		// eye is at 28 while the shot still left from 56 - twenty units above their own head, and over
+		// any cover shorter than that. IsDucking is [Sync], so the host has it for a proxy.
+		//
+		// Composed onto AuthoritativeWorldPosition, never PlayerController.EyePosition: that derives
+		// from the raw client-authored WorldPosition, which HexPlayerBody forbids for spatial gameplay
+		// decisions. Taking only the engine's OFFSET keeps position authority host-side.
+		var origin = state.Value.Player.AuthoritativeWorldPosition
+			+ Vector3.Up * (controller.CurrentHeight - controller.EyeDistanceFromTop);
 		var end = origin + controller.EyeAngles.ToRotation().Forward * 8_192f;
 		var trace = _scene.Trace.Ray( origin, end )
 			.IgnoreGameObjectHierarchy( body.Root )

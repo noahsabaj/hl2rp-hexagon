@@ -27,10 +27,25 @@ internal sealed record HL2RPInteractionActorState(
 
 internal sealed class HL2RPWorldModelCatalog : IWorldModelCatalog
 {
+	/// <summary>
+	/// Mirrors the engine's own private helper of the same name and purpose
+	/// (<c>ClothingContainer.Dressing.cs</c>), which checks validity AND <c>IsError</c>.
+	/// <para>
+	/// A null check alone does not work: <c>Model.Load</c> returns the ERROR MODEL rather than null
+	/// for a path that does not resolve, so a typo'd or unpublished model passed this gate and then
+	/// rendered as the checkerboard mesh with no diagnostic. <c>Model.IsError</c> is
+	/// <c>native.IsNull || !native.IsStrongHandleValid() || native.IsError()</c> — a strict superset
+	/// of the null check, and what every engine call site pairs with the load.
+	/// </para>
+	/// <para>
+	/// This is the sole validator behind six call sites, including the startup gate that refuses to
+	/// boot with "Character model does not resolve" — a claim the code did not previously own.
+	/// </para>
+	/// </summary>
 	public bool IsValidModel( string modelPath )
 	{
 		if ( string.IsNullOrWhiteSpace( modelPath ) ) return false;
-		try { return Model.Load( modelPath ) is not null; }
+		try { return Model.Load( modelPath ) is { IsError: false }; }
 		catch ( Exception ) { return false; }
 	}
 }
