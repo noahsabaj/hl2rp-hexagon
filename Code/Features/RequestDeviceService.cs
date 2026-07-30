@@ -67,11 +67,12 @@ public sealed class RequestChatDeliveryHandler : IEventHandler<RequestFact>
 			.Distinct()
 			.OrderBy( value => value.Value )
 			.ToArray();
+		// The author character travels alongside the delivery so the sink can resolve the displayed
+		// name per recipient; the delivery itself deliberately carries no name.
 		_sink.Deliver( new ChatDelivery(
 			messageId,
 			fact.ChannelId,
 			fact.Character.Id,
-			fact.Character.Name,
 			fact.Text,
 			fact.RequestedAtUtc,
 			recipients ), fact.Character );

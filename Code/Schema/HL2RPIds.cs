@@ -22,6 +22,17 @@ public static class HL2RPIds
 		public const string Combat = "combat";
 	}
 
+	/// <summary>
+	/// Audible radii in world units. Referenced by the channel registrations that own them, so a
+	/// range is stated once and read from the compiled schema everywhere else.
+	/// </summary>
+	public static class ChatRanges
+	{
+		public const float Local = 280f;
+		public const float Whisper = 80f;
+		public const float Yell = 550f;
+	}
+
 	public static class Factions
 	{
 		public const string Citizen = "citizen";

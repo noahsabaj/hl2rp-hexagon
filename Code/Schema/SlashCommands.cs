@@ -129,7 +129,10 @@ public static class SlashCommandCatalog
 		new SlashCommandDescriptor( "permit", HL2RPIds.Commands.PermitPurchase,
 			"Purchase a permit of the given kind.",
 			new[] { Choice( "permit" ) } ),
-		new SlashCommandDescriptor( "radio", HL2RPIds.Commands.RadioFrequency,
+		// "tune", not "radio": the radio CHANNEL owns the /radio prefix, and channels resolve before
+		// commands, so naming this one radio would have made it permanently unreachable. Caught by
+		// NoChannelPrefixShadowsACommandName on its first run, which is the whole point of that guard.
+		new SlashCommandDescriptor( "tune", HL2RPIds.Commands.RadioFrequency,
 			"Tune a radio item to a frequency.",
 			new[] { Id( "item" ), Text( "frequency" ), Flag( "enabled" ) } ),
 		new SlashCommandDescriptor( "note", HL2RPIds.Commands.NoteWrite,

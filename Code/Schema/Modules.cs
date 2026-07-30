@@ -192,17 +192,36 @@ public sealed class CommunicationsModule : IHexModule
 	{
 		builder.DependsOn( HL2RPIds.Modules.CivicIdentity );
 		builder.RegisterPermission( new PermissionDefinition( HL2RPIds.Permissions.DispatchChat ) );
-		builder.RegisterChatChannel( new ChatChannelDefinition( HL2RPIds.Channels.InCharacter ) );
-		builder.RegisterChatChannel( new ChatChannelDefinition( HL2RPIds.Channels.OutOfCharacter ) );
-		builder.RegisterChatChannel( new ChatChannelDefinition( HL2RPIds.Channels.LocalOutOfCharacter ) );
-		builder.RegisterChatChannel( new ChatChannelDefinition( HL2RPIds.Channels.Whisper ) );
-		builder.RegisterChatChannel( new ChatChannelDefinition( HL2RPIds.Channels.Yell ) );
-		builder.RegisterChatChannel( new ChatChannelDefinition( HL2RPIds.Channels.Emote ) );
-		builder.RegisterChatChannel( new ChatChannelDefinition( HL2RPIds.Channels.Radio ) );
-		builder.RegisterChatChannel( new ChatChannelDefinition( HL2RPIds.Channels.Request ) );
+		// The single source of truth for every channel. Ranges used to live in a parallel table in
+		// Features/LocalChatRecipientResolver.cs keyed by these same ids; that table is gone, and the
+		// recipient rules are now derived from these registrations.
 		builder.RegisterChatChannel( new ChatChannelDefinition(
-			HL2RPIds.Channels.Dispatch,
-			HL2RPIds.Permissions.DispatchChat ) );
+			HL2RPIds.Channels.InCharacter, DisplayName: "IC", Prefixes: new[] { "ic", "say" },
+			Range: HL2RPIds.ChatRanges.Local, Colour: "#dce2e3" ) );
+		builder.RegisterChatChannel( new ChatChannelDefinition(
+			HL2RPIds.Channels.OutOfCharacter, DisplayName: "OOC", Prefixes: new[] { "ooc" },
+			Colour: "#8fb6c4", AllowedWhileDead: false ) );
+		builder.RegisterChatChannel( new ChatChannelDefinition(
+			HL2RPIds.Channels.LocalOutOfCharacter, DisplayName: "LOOC", Prefixes: new[] { "looc" },
+			Range: HL2RPIds.ChatRanges.Local, Colour: "#7f949c" ) );
+		builder.RegisterChatChannel( new ChatChannelDefinition(
+			HL2RPIds.Channels.Whisper, DisplayName: "W", Prefixes: new[] { "w", "whisper" },
+			Range: HL2RPIds.ChatRanges.Whisper, Colour: "#9aa7ad" ) );
+		builder.RegisterChatChannel( new ChatChannelDefinition(
+			HL2RPIds.Channels.Yell, DisplayName: "Y", Prefixes: new[] { "y", "yell" },
+			Range: HL2RPIds.ChatRanges.Yell, Colour: "#e4d3b0" ) );
+		builder.RegisterChatChannel( new ChatChannelDefinition(
+			HL2RPIds.Channels.Emote, DisplayName: "ME", Prefixes: new[] { "me", "emote" },
+			Range: HL2RPIds.ChatRanges.Local, Colour: "#c2a4d4" ) );
+		builder.RegisterChatChannel( new ChatChannelDefinition(
+			HL2RPIds.Channels.Radio, DisplayName: "R", Prefixes: new[] { "r", "radio" },
+			Colour: "#75c99a" ) );
+		builder.RegisterChatChannel( new ChatChannelDefinition(
+			HL2RPIds.Channels.Request, DisplayName: "REQ", Prefixes: new[] { "req", "request" },
+			Colour: "#d7a84b" ) );
+		builder.RegisterChatChannel( new ChatChannelDefinition(
+			HL2RPIds.Channels.Dispatch, HL2RPIds.Permissions.DispatchChat,
+			DisplayName: "DISP", Prefixes: new[] { "disp", "dispatch" }, Colour: "#db6a61" ) );
 		builder.RegisterAction( new ActionDefinition( HL2RPIds.Actions.Tune ) );
 		builder.RegisterAction( new ActionDefinition( HL2RPIds.Actions.Request ) );
 		builder.RegisterItem( CivicIdentityModule.Item(

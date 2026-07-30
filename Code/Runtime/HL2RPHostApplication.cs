@@ -1727,7 +1727,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 		_globalChatRateLimit = new ChatRateLimit( capacity, TimeSpan.FromSeconds( window ) );
 		return new ChatService(
 			_context.Schema,
-			HL2RPChatChannelRules.Create(),
+			HL2RPChatChannelRules.Create( _context.Schema ),
 			_chatAuthorities,
 			_chatRecipients,
 			_liveInventory,

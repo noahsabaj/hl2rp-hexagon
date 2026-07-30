@@ -153,7 +153,7 @@ public sealed class CommunicationsAuthorityTests
 		var globalLimit = ChatRateLimit.Default;
 		var generic = new ChatService(
 			environment.Schema,
-			HL2RPChatChannelRules.Create(),
+			HL2RPChatChannelRules.Create( HL2RP.V2.Tests.Schema.HL2RPSchemaTests.Compile() ),
 			authorities,
 			new HL2RPRadioRecipientResolver( authorities ),
 			liveInventory,
@@ -413,7 +413,7 @@ public sealed class CommunicationsAuthorityTests
 		var schema = SchemaCompiler.Compile( new HL2RPSchema() ).Value;
 		var service = new ChatService(
 			schema,
-			HL2RPChatChannelRules.Create(),
+			HL2RPChatChannelRules.Create( HL2RP.V2.Tests.Schema.HL2RPSchemaTests.Compile() ),
 			authorities,
 			new HL2RPRadioRecipientResolver( authorities ),
 			inventory,

@@ -86,6 +86,59 @@ public sealed class SlashCommandTests
 		Assert.AreEqual( ErrorCode.NotFound, resolved.Error!.Code );
 	}
 
+	/// <summary>
+	/// Every channel must be fully described by its own registration. The range half is the reason
+	/// this exists: ranges used to live in a parallel table keyed by the same ids, and a channel
+	/// present in one and missing from the other failed SILENTLY — it resolved to no recipients,
+	/// which is indistinguishable from "nobody was in range".
+	/// </summary>
+	[TestMethod]
+	public void EveryChannelCarriesItsOwnDisplayPrefixesAndRange()
+	{
+		var channels = HL2RPSchemaTests.Compile().ChatChannels.All.ToArray();
+		var ranged = new[]
+		{
+			HL2RPIds.Channels.InCharacter, HL2RPIds.Channels.LocalOutOfCharacter,
+			HL2RPIds.Channels.Whisper, HL2RPIds.Channels.Yell, HL2RPIds.Channels.Emote
+		};
+
+		foreach ( var channel in channels )
+		{
+			Assert.IsFalse( string.IsNullOrWhiteSpace( channel.DisplayName ),
+				$"Channel '{channel.Id}' has no display name." );
+			Assert.IsTrue( channel.Prefixes is { Count: > 0 },
+				$"Channel '{channel.Id}' has no prefix, so nothing a player types can reach it." );
+			var shouldBeRanged = ranged.Contains( channel.Id, StringComparer.Ordinal );
+			Assert.AreEqual( shouldBeRanged, channel.Range is not null,
+				$"Channel '{channel.Id}' disagrees with its positional nature: Range={channel.Range}." );
+			if ( channel.Range is float range )
+				Assert.IsGreaterThan( 0f, range, $"Channel '{channel.Id}' has a non-positive range." );
+		}
+
+		var allPrefixes = channels.SelectMany( channel => channel.Prefixes! ).ToArray();
+		CollectionAssert.AllItemsAreUnique( allPrefixes,
+			"Two channels share a prefix, so one of them is unreachable." );
+	}
+
+	/// <summary>
+	/// Channels resolve BEFORE the command catalogue, so a channel prefix equal to a command name
+	/// silently shadows that command. This is the failure mode where adding a channel kills /kill.
+	/// </summary>
+	[TestMethod]
+	public void NoChannelPrefixShadowsACommandName()
+	{
+		var prefixes = HL2RPSchemaTests.Compile().ChatChannels.All
+			.SelectMany( channel => channel.Prefixes ?? Array.Empty<string>() )
+			.ToHashSet( StringComparer.OrdinalIgnoreCase );
+		var collisions = SlashCommandCatalog.All
+			.Where( descriptor => prefixes.Contains( descriptor.Name ) )
+			.Select( descriptor => descriptor.Name )
+			.ToArray();
+
+		Assert.IsEmpty( collisions,
+			$"These command names are shadowed by a channel prefix: {string.Join( ", ", collisions )}" );
+	}
+
 	[TestMethod]
 	public void CommandNamesAreUniqueAndDoNotCollideWithCommandIds()
 	{

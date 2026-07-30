@@ -3,6 +3,7 @@
 @using Hexagon.V2.Kernel
 @using Sandbox
 @using Sandbox.UI
+@using Hexagon.V2.Client.Chat
 @namespace HL2RP.UI
 @inherits Panel
 
@@ -111,6 +112,10 @@
 					OnOpenSearch="@OnOpenSearch" />
 			}
 		}
+
+		@* PHASE 1 SPIKE: a panel shipped by the hexagon LIBRARY, embedded by the game. Removed with
+		   the probe once the real framework chat panel lands. *@
+		<HexChatProbePanel />
 
 		@if ( !string.IsNullOrWhiteSpace( LocalError ) )
 		{

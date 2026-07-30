@@ -38,8 +38,8 @@ public sealed class LocalChatRecipientResolverTests
 	{
 		var actor = Actor();
 		var author = new LiveChatConnection(actor.ConnectionId, actor.CharacterId, new ChatPosition(0, 0, 0));
-		var boundary = Connection(CharacterId.New(), HL2RPChatChannelRules.LocalRange, 0, 0);
-		var outside = Connection(CharacterId.New(), HL2RPChatChannelRules.LocalRange + 0.25f, 0, 0);
+		var boundary = Connection(CharacterId.New(), HL2RPIds.ChatRanges.Local, 0, 0);
+		var outside = Connection(CharacterId.New(), HL2RPIds.ChatRanges.Local + 0.25f, 0, 0);
 		var resolver = new HL2RPLocalChatRecipientResolver(Directory(outside, boundary, author));
 
 		foreach (var channel in new[]
@@ -50,7 +50,7 @@ public sealed class LocalChatRecipientResolverTests
 		})
 		{
 			var recipients = resolver.Resolve(Context(actor, channel),
-				Rule(channel, HL2RPChatChannelRules.LocalRange), EmptyInventory);
+				Rule(channel, HL2RPIds.ChatRanges.Local), EmptyInventory);
 			CollectionAssert.AreEquivalent(
 				new[] { author.ConnectionId, boundary.ConnectionId }, recipients.ToArray(), channel);
 		}
@@ -67,11 +67,11 @@ public sealed class LocalChatRecipientResolverTests
 		var resolver = new HL2RPLocalChatRecipientResolver(Directory(far, normal, near, author));
 
 		var whisper = resolver.Resolve(Context(actor, HL2RPIds.Channels.Whisper),
-			Rule(HL2RPIds.Channels.Whisper, HL2RPChatChannelRules.WhisperRange), EmptyInventory);
+			Rule(HL2RPIds.Channels.Whisper, HL2RPIds.ChatRanges.Whisper), EmptyInventory);
 		var local = resolver.Resolve(Context(actor, HL2RPIds.Channels.InCharacter),
-			Rule(HL2RPIds.Channels.InCharacter, HL2RPChatChannelRules.LocalRange), EmptyInventory);
+			Rule(HL2RPIds.Channels.InCharacter, HL2RPIds.ChatRanges.Local), EmptyInventory);
 		var yell = resolver.Resolve(Context(actor, HL2RPIds.Channels.Yell),
-			Rule(HL2RPIds.Channels.Yell, HL2RPChatChannelRules.YellRange), EmptyInventory);
+			Rule(HL2RPIds.Channels.Yell, HL2RPIds.ChatRanges.Yell), EmptyInventory);
 
 		CollectionAssert.AreEquivalent(new[] { author.ConnectionId, near.ConnectionId }, whisper.ToArray());
 		CollectionAssert.AreEquivalent(
@@ -121,15 +121,15 @@ public sealed class LocalChatRecipientResolverTests
 	[TestMethod]
 	public void DefaultRulesCoverEveryShowcaseChannelWithExactRanges()
 	{
-		var rules = HL2RPChatChannelRules.Create().ToDictionary(rule => rule.Id, StringComparer.Ordinal);
+		var rules = HL2RPChatChannelRules.Create( HL2RP.V2.Tests.Schema.HL2RPSchemaTests.Compile() ).ToDictionary(rule => rule.Id, StringComparer.Ordinal);
 
 		Assert.HasCount(9, rules);
 		Assert.IsNull(rules[HL2RPIds.Channels.OutOfCharacter].Range);
-		Assert.AreEqual(HL2RPChatChannelRules.LocalRange, rules[HL2RPIds.Channels.InCharacter].Range);
-		Assert.AreEqual(HL2RPChatChannelRules.LocalRange, rules[HL2RPIds.Channels.LocalOutOfCharacter].Range);
-		Assert.AreEqual(HL2RPChatChannelRules.LocalRange, rules[HL2RPIds.Channels.Emote].Range);
-		Assert.AreEqual(HL2RPChatChannelRules.WhisperRange, rules[HL2RPIds.Channels.Whisper].Range);
-		Assert.AreEqual(HL2RPChatChannelRules.YellRange, rules[HL2RPIds.Channels.Yell].Range);
+		Assert.AreEqual(HL2RPIds.ChatRanges.Local, rules[HL2RPIds.Channels.InCharacter].Range);
+		Assert.AreEqual(HL2RPIds.ChatRanges.Local, rules[HL2RPIds.Channels.LocalOutOfCharacter].Range);
+		Assert.AreEqual(HL2RPIds.ChatRanges.Local, rules[HL2RPIds.Channels.Emote].Range);
+		Assert.AreEqual(HL2RPIds.ChatRanges.Whisper, rules[HL2RPIds.Channels.Whisper].Range);
+		Assert.AreEqual(HL2RPIds.ChatRanges.Yell, rules[HL2RPIds.Channels.Yell].Range);
 		Assert.IsNull(rules[HL2RPIds.Channels.Radio].Range);
 		Assert.IsNull(rules[HL2RPIds.Channels.Request].Range);
 		Assert.IsNull(rules[HL2RPIds.Channels.Dispatch].Range);

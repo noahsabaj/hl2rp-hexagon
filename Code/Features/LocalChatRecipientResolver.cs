@@ -142,26 +142,21 @@ public sealed class HL2RPLocalChatRecipientResolver : IChatRecipientResolver
 
 public static class HL2RPChatChannelRules
 {
-	public const float LocalRange = 280f;
-	public const float WhisperRange = 80f;
-	public const float YellRange = 550f;
-
-	public static IReadOnlyList<ChatChannelRule> Create() => Array.AsReadOnly(new[]
+	/// <summary>
+	/// Derives the recipient rules from the compiled schema, so a channel's range is stated exactly
+	/// once — on its <see cref="ChatChannelDefinition"/>.
+	/// <para>
+	/// This used to be a hand-written table listing all nine channels with their ranges inline,
+	/// parallel to the registrations and keyed by the same ids. Nothing kept the two agreeing, and a
+	/// channel added to one and not the other failed silently: an unlisted channel simply resolved to
+	/// no recipients, which looks exactly like "nobody was in range".
+	/// </para>
+	/// </summary>
+	public static IReadOnlyList<ChatChannelRule> Create(CompiledSchema schema)
 	{
-		Rule(HL2RPIds.Channels.InCharacter, LocalRange),
-		Rule(HL2RPIds.Channels.OutOfCharacter),
-		Rule(HL2RPIds.Channels.LocalOutOfCharacter, LocalRange),
-		Rule(HL2RPIds.Channels.Whisper, WhisperRange),
-		Rule(HL2RPIds.Channels.Yell, YellRange),
-		Rule(HL2RPIds.Channels.Emote, LocalRange),
-		Rule(HL2RPIds.Channels.Radio),
-		Rule(HL2RPIds.Channels.Request),
-		Rule(HL2RPIds.Channels.Dispatch)
-	});
-
-	private static ChatChannelRule Rule(string id, float? range = null) => new()
-	{
-		Id = id,
-		Range = range
-	};
+		ArgumentNullException.ThrowIfNull(schema);
+		return Array.AsReadOnly(schema.ChatChannels.All
+			.Select(channel => new ChatChannelRule { Id = channel.Id, Range = channel.Range })
+			.ToArray());
+	}
 }
