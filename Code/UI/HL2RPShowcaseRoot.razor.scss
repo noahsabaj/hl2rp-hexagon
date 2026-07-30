@@ -10,6 +10,23 @@ $cyan: #67c4d4;
 $green: #75c99a;
 $red: #db6a61;
 
+// s&box's `disabled` attribute is ONLY a CSS class - Sandbox.UI.Button.Disabled is literally
+// `get => HasClass("disabled"); set => SetClass("disabled", value);` and nothing in the engine reads
+// it again. Hit testing gates solely on computed style (PanelInput.cs: `PointerEvents != None`), and
+// while pointer-events DEFAULTS to none it also CASCADES - our containers set `pointer-events: all`
+// in ten places, so every descendant button inherits `all` and a dimmed button stays fully clickable.
+//
+// Every disabled style therefore goes through this mixin, so the class cannot be styled without also
+// being disarmed. That is the difference between fixing six rules and closing the hole: the next
+// disabled thing someone adds is disarmed by construction. The engine's own _button.scss:74 pairs
+// them exactly this way.
+@mixin disarmed( $dim: 0.3 ) {
+	opacity: $dim;
+	pointer-events: none;
+	cursor: default;
+	transform: none;
+}
+
 .hl2rp-client-presenter {
 	position: absolute;
 	left: 0;
@@ -58,7 +75,7 @@ $red: #db6a61;
 
 		&:hover { background-color: rgba( 255, 255, 255, 0.09 ); border-color: rgba( 255, 255, 255, 0.3 ); }
 		&:active { transform: scale( 0.98 ); }
-		&.disabled { opacity: 0.32; cursor: default; transform: none; }
+		&.disabled { @include disarmed( 0.32 ); }
 		&.primary { color: #15110a; background-color: $amber; border-color: lighten( $amber, 8% ); }
 		&.primary:hover { background-color: lighten( $amber, 8% ); }
 		&.secondary { background-color: rgba( $cyan, 0.1 ); border-color: rgba( $cyan, 0.42 ); color: lighten( $cyan, 18% ); }
@@ -147,7 +164,7 @@ $red: #db6a61;
 		font-weight: 700;
 		&:hover { color: $white; border-color: rgba( $cyan, 0.4 ); }
 		&.is-selected { color: lighten( $cyan, 18% ); border-color: $cyan; background-color: rgba( $cyan, 0.12 ); }
-		&.disabled { opacity: 0.3; }
+		&.disabled { @include disarmed( 0.3 ); }
 	}
 
 	.hex-toggle {
@@ -227,7 +244,7 @@ $red: #db6a61;
 	.creation-options { flex-grow: 1; flex-direction: column; gap: 23px; }
 	.option-section { flex-direction: column; gap: 8px; }
 	.section-heading { margin-bottom: 5px; color: #aeb9bd; font-size: 11px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase; span { margin-right: 8px; color: $amber; font-family: "Roboto Mono"; } }
-	.option-card { width: 100%; padding: 12px 14px; border: 1px solid $line; background-color: rgba( 255, 255, 255, 0.02 ); color: $white; align-items: flex-start; flex-direction: column; text-align: left; strong { font-size: 13px; } span { margin-top: 3px; color: $muted; font-size: 11px; } &.is-selected { border-color: $amber; background-color: rgba( $amber, 0.09 ); } &.compact { padding: 9px 12px; } }
+	.option-card { width: 100%; padding: 12px 14px; border: 1px solid $line; background-color: rgba( 255, 255, 255, 0.02 ); color: $white; align-items: flex-start; flex-direction: column; text-align: left; strong { font-size: 13px; } span { margin-top: 3px; color: $muted; font-size: 11px; } &.is-selected { border-color: $amber; background-color: rgba( $amber, 0.09 ); } &.compact { padding: 9px 12px; } &.disabled, &.is-disabled { @include disarmed( 0.4 ); } }
 	.character-grid { padding: 22px; flex-wrap: wrap; gap: 14px; }
 	.character-card { width: calc( 50% - 7px ); min-height: 220px; padding: 18px; border: 1px solid $line; background: linear-gradient( 145deg, rgba( 255,255,255,0.035 ), rgba(255,255,255,0.01) ); flex-direction: column; }
 	.character-card__slot { color: $amber; font-family: "Roboto Mono"; font-size: 9px; letter-spacing: 1.4px; }
@@ -236,7 +253,7 @@ $red: #db6a61;
 	.character-card__tags { margin-top: 12px; gap: 6px; span { padding: 4px 7px; border: 1px solid $line; color: #9fb0b7; font-family: "Roboto Mono"; font-size: 9px; } }
 	.character-card__last { margin-top: auto; color: #69777e; font-size: 10px; }
 	.character-card__actions { margin-top: 12px; gap: 7px; }
-	.character-card.is-disabled { opacity: 0.5; }
+	.character-card.is-disabled { @include disarmed( 0.5 ); }
 
 	.hud-vitals { position: absolute; left: 28px; bottom: 30px; width: 350px; padding: 15px; gap: 12px; flex-direction: column; background: linear-gradient( 90deg, rgba( $ink, 0.87 ), rgba( $ink, 0.48 ) ); border-left: 2px solid $amber; }
 	.hud-vitals__identity { flex-direction: column; }
@@ -303,7 +320,7 @@ $red: #db6a61;
 
 	.showcase-dock { position: absolute; left: 50%; bottom: 24px; z-index: 18; transform: translateX(-50%); padding: 5px; gap: 3px; background-color: rgba( $ink, 0.9 ); border: 1px solid $line; pointer-events: all; }
 	.showcase-dock button { min-width: 70px; height: 44px; padding: 4px 9px; border: 0; border-bottom: 2px solid transparent; background-color: transparent; color: $muted; font-size: 9px; flex-direction: column; align-items: center; justify-content: center; span { font-family: "Material Icons"; font-size: 18px; } &:hover { color: $white; background-color: rgba(255,255,255,0.04); } &.is-active { color: $amber; border-bottom-color: $amber; background-color: rgba($amber,0.08); } }
-	.showcase-dock button.character-session-return { min-width: 145px; margin-left: 4px; border-left: 1px solid $line; color: #9fb0b7; &:hover { color: $amber; } &.is-disabled { color: #536168; background-color: transparent; pointer-events: none; } }
+	.showcase-dock button.character-session-return { min-width: 145px; margin-left: 4px; border-left: 1px solid $line; color: #9fb0b7; &:hover { color: $amber; } &.is-disabled { @include disarmed( 1 ); color: #536168; background-color: transparent; } }
 
 	.operations-panel, .combine-suite-panel, .scoreboard-panel { position: absolute; inset: 0; z-index: 25; align-items: center; justify-content: center; background-color: rgba( 0, 0, 0, 0.42 ); pointer-events: all; }
 	.operations-window, .combine-suite-window { width: 1280px; height: 790px; }
@@ -334,7 +351,7 @@ $red: #db6a61;
 	.transfer-pane { width: calc( 50% - 48px ); min-width: 0; border: 1px solid rgba(255,255,255,0.05); }
 	.transfer-controls { width: 80px; align-items: center; justify-content: center; flex-direction: column; gap: 9px; }
 	.transfer-controls__line { width: 1px; height: 70px; background-color: $line; }
-	.hex-transfer-button { width: 42px; height: 42px; border-radius: 50%; border: 1px solid rgba($cyan,0.4); background-color: rgba($cyan,0.08); color: $cyan; font-family: "Material Icons"; align-items: center; justify-content: center; &.disabled { opacity: 0.25; } }
+	.hex-transfer-button { width: 42px; height: 42px; border-radius: 50%; border: 1px solid rgba($cyan,0.4); background-color: rgba($cyan,0.08); color: $cyan; font-family: "Material Icons"; align-items: center; justify-content: center; &.disabled { @include disarmed( 0.25 ); } }
 	.transfer-controls__caption { margin-top: 8px; color: #66767d; font-family: "Roboto Mono"; font-size: 7px; text-align: center; }
 
 	.vendor-layout { flex-grow: 1; min-height: 0; }
@@ -342,7 +359,7 @@ $red: #db6a61;
 	.vendor-heading { padding-bottom: 16px; border-bottom: 1px solid $line; justify-content: space-between; > div:first-child { flex-direction: column; } strong { margin-top: 3px; font-size: 21px; } p { color: $muted; } }
 	.vendor-balance { padding: 10px 14px; border: 1px solid rgba($amber,0.35); color: $amber; font-family: "Roboto Mono"; font-size: 17px; flex-direction: column; align-items: flex-end; span { color: $muted; font-size: 7px; } }
 	.vendor-offers { margin-top: 12px; flex-direction: column; gap: 5px; }
-	.vendor-offer { min-height: 86px; padding: 10px; border: 1px solid $line; background-color: rgba(255,255,255,0.02); align-items: center; gap: 11px; &.is-disabled { opacity: 0.45; } }
+	.vendor-offer { min-height: 86px; padding: 10px; border: 1px solid $line; background-color: rgba(255,255,255,0.02); align-items: center; gap: 11px; &.is-disabled { @include disarmed( 0.45 ); } }
 	.vendor-offer__icon { width: 52px; height: 52px; background-color: rgba($cyan,0.07); color: $cyan; font-family: "Material Icons"; font-size: 24px; align-items: center; justify-content: center; }
 	.vendor-offer__copy { flex-grow: 1; flex-direction: column; span { color: $muted; font-family: "Roboto Mono"; font-size: 7px; } strong { font-size: 14px; } p { color: $muted; font-size: 10px; } }
 	.vendor-offer__stock { width: 55px; color: #b2bfc3; font-family: "Roboto Mono"; font-size: 12px; flex-direction: column; span { color: $muted; font-size: 7px; } }
@@ -415,7 +432,7 @@ $red: #db6a61;
 	.scanner-contacts { position: absolute; left: 18px; bottom: 18px; z-index: 2; flex-direction: column; gap: 5px; }
 	.scanner-contact { padding: 5px 8px; gap: 7px; background-color: rgba(0,20,23,0.75); color: $cyan; font-family: "Roboto Mono"; font-size: 8px; span { width: 5px; height: 5px; background-color: $cyan; } &.is-priority { color: $red; span { background-color: $red; } } }
 	.scanner-controls { height: 85px; padding: 11px 0 0; gap: 8px; justify-content: center; }
-	.scanner-control { min-width: 140px; padding: 0 18px; border: 1px solid rgba($cyan,0.3); background-color: rgba($cyan,0.06); color: $cyan; flex-direction: column; align-items: center; justify-content: center; font-size: 9px; letter-spacing: 1px; span { font-family: "Material Icons"; font-size: 22px; } &.is-active,&.primary { background-color: rgba($cyan,0.18); border-color: $cyan; } &.danger { color: $red; border-color: rgba($red,0.45); background-color: rgba($red,0.08); } &.disabled { opacity: 0.3; } }
+	.scanner-control { min-width: 140px; padding: 0 18px; border: 1px solid rgba($cyan,0.3); background-color: rgba($cyan,0.06); color: $cyan; flex-direction: column; align-items: center; justify-content: center; font-size: 9px; letter-spacing: 1px; span { font-family: "Material Icons"; font-size: 22px; } &.is-active,&.primary { background-color: rgba($cyan,0.18); border-color: $cyan; } &.danger { color: $red; border-color: rgba($red,0.45); background-color: rgba($red,0.08); } &.disabled { @include disarmed( 0.3 ); } }
 
 	.local-error { position: absolute; left: 50%; top: 28px; z-index: 100; transform: translateX(-50%); min-height: 44px; padding: 0 16px; gap: 9px; border: 1px solid rgba($red,0.55); background-color: rgba($ink,0.95); color: lighten($red,12%); pointer-events: all; span { font-family: "Material Icons"; font-size: 18px; } }
 	.item-presentation-backdrop { position: absolute; inset: 0; z-index: 120; background-color: rgba(0,0,0,0.72); align-items: center; justify-content: center; pointer-events: all; }

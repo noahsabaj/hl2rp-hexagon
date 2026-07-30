@@ -218,6 +218,35 @@ public sealed class ShowcaseArchitectureTests
 			$"Game assets outside the hl2rp namespace: {string.Join( ", ", violations )}" );
 	}
 
+	/// <summary>
+	/// s&box's `disabled` attribute is only a CSS class — `Sandbox.UI.Button.Disabled` is
+	/// `HasClass("disabled")` and nothing in the engine reads it again. Hit testing gates on computed
+	/// `pointer-events`, which our containers set to `all` in ten places, and it cascades — so a rule
+	/// that dims a control without disarming it leaves the control fully clickable while looking
+	/// unavailable. Character creation shipped exactly that: a locked faction was neither dimmed nor
+	/// blocked, and the choice reached CreateAsync.
+	/// <para>
+	/// This guards the CLASS. Fixing the six rules would have left the next disabled style free to
+	/// repeat it; requiring the mixin makes dimmed-but-live unrepresentable in this stylesheet.
+	/// </para>
+	/// </summary>
+	[TestMethod]
+	public void EveryDisabledStyleIsAlsoDisarmed()
+	{
+		var path = Path.Combine( FindRoot(), "Code", "UI", "HL2RPShowcaseRoot.razor.scss" );
+		var scss = File.ReadAllText( path );
+
+		var violations = Regex.Matches( scss, @"\.(?:is-)?disabled[^{}]*\{([^{}]*)\}" )
+			.Where( match => !match.Groups[1].Value.Contains( "@include disarmed", StringComparison.Ordinal )
+				&& !match.Groups[1].Value.Contains( "pointer-events: none", StringComparison.Ordinal ) )
+			.Select( match => match.Value.Trim() )
+			.ToArray();
+
+		Assert.IsEmpty( violations,
+			"These disabled styles dim without disarming, so the control stays clickable. Use " +
+			$"@include disarmed(): {string.Join( " | ", violations )}" );
+	}
+
 	/// <summary>A compiled sibling the asset system emits: name_c, name_d, .los, .vpk.</summary>
 	private static bool IsCompiledOutput( string relativePath ) =>
 		relativePath.EndsWith( "_c", StringComparison.Ordinal ) ||
