@@ -107,12 +107,30 @@
 		Rebuild();
 	}
 
+	/// <summary>
+	/// Expiry is a wall-clock event with no store change behind it, so nothing would otherwise call
+	/// Rebuild when a notification lapses. HudLayer's BuildHash makes the expired one stop DRAWING,
+	/// but the entry itself lingers in presentation state until the next unrelated rebuild — this is
+	/// what actually prunes it, on time.
+	/// </summary>
+	protected override void OnFixedUpdate()
+	{
+		base.OnFixedUpdate();
+		if ( _nextNotificationExpiry is not DateTimeOffset due || DateTimeOffset.UtcNow < due ) return;
+		Rebuild();
+	}
+
+	private DateTimeOffset? _nextNotificationExpiry;
+
 	private void Rebuild()
 	{
 		if ( _store is null ) return;
 		_characterPresentation.Notifications = _characterPresentation.Notifications
 			.Where( notification => notification.ExpiresAtUtc > DateTimeOffset.UtcNow )
 			.ToImmutableArray();
+		_nextNotificationExpiry = _characterPresentation.Notifications.IsDefaultOrEmpty
+			? null
+			: _characterPresentation.Notifications.Min( notification => notification.ExpiresAtUtc );
 		var requestedWorkspace = _interactionWorkspaces?.PendingSearch is null
 			? _characterPresentation.Workspace : ShowcaseWorkspace.Search;
 		var viewModel = _projection.Build(
