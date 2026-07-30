@@ -34,9 +34,9 @@
 					{
 						<div class="door-session-controls">
 							<div><strong>Ownable door</strong><span>@door.OwnerStatus · @(door.IsOpen ? "Open" : "Closed") · @(door.CombineLocked ? "Combine locked" : "Unlocked")</span></div>
-							<button class="hex-button secondary" disabled="@(!door.CanClaim)" title="@door.ClaimDisabledReason"
+							<button class="hex-button secondary" disabled="@(!door.CanClaim)" Tooltip="@door.ClaimDisabledReason"
 								@onclick="@ClaimDoorAsync">Claim current door</button>
-							<button class="hex-button secondary" disabled="@(!door.CanRelease)" title="@door.ReleaseDisabledReason"
+							<button class="hex-button secondary" disabled="@(!door.CanRelease)" Tooltip="@door.ReleaseDisabledReason"
 								@onclick="@ReleaseDoorAsync">Release current door</button>
 						</div>
 					}
@@ -77,7 +77,7 @@
 							</div>
 							<button class="hex-button primary"
 								disabled="@(string.IsNullOrWhiteSpace( _requestText ) || requestAvailability?.Enabled != true)"
-								title="@requestAvailability?.DisabledReason"
+								Tooltip="@requestAvailability?.DisabledReason"
 								@onclick="@(() => SendRequestAsync( requestDevice ))">Send audited request</button>
 						</div>
 					}
@@ -106,7 +106,7 @@
 									<div class="vendor-offer__copy"><span>@offer.DefinitionId.Value</span><strong>@offer.Name</strong><p>@offer.Description</p></div>
 									<div class="vendor-offer__stock"><span>STOCK</span>@(offer.Stock < 0 ? "∞" : offer.Stock.ToString( "N0" ))</div>
 									<div class="vendor-offer__price">@offer.Price.ToString( "N0" ) T</div>
-									<button class="hex-button primary" disabled="@(!offer.CanBuy)" title="@offer.DisabledReason"
+									<button class="hex-button primary" disabled="@(!offer.CanBuy)" Tooltip="@offer.DisabledReason"
 										@onclick="@(() => OnVendorPurchase?.Invoke( new VendorPurchaseRequest( vendor.SessionId, offer.DefinitionId, 1 ) ))">Purchase</button>
 								</div>
 							}
@@ -120,7 +120,7 @@
 							{
 								var canSell = InventoryGridRules.TryVendorSell( item, out var payout, out var sellReason );
 								<div class="sell-row"><div><strong>@item.DisplayName</strong><span>@item.Category · ×@item.Quantity</span></div>
-									<button class="hex-button secondary" disabled="@(!canSell)" title="@sellReason"
+									<button class="hex-button secondary" disabled="@(!canSell)" Tooltip="@sellReason"
 										@onclick="@(() => OnVendorSale?.Invoke(
 										new VendorSaleRequest( vendor.SessionId, sellingInventory.InventoryId, item.ItemId, 1 ) ))">
 										@(canSell ? $"Sell · {payout:N0} T" : "Unavailable")</button></div>

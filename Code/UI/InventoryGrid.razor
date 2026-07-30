@@ -63,13 +63,13 @@
 				@foreach ( var action in selectedItem.Actions.Where( InventoryGridRules.ShowAction ) )
 				{
 					<button class="hex-button secondary" disabled="@(!action.Enabled)"
-						title="@action.DisabledReason"
+						Tooltip="@action.DisabledReason"
 						@onclick="@(() => OnAction is null ? Task.CompletedTask : OnAction( selectedItem, action ))">@action.Label</button>
 				}
 				@if ( InventoryGridRules.ShowDrop( CanDrop, selectedItem ) )
 				{
 					<button class="hex-button danger" disabled="@(!InventoryGridRules.EnableDrop( CanDrop, selectedItem ))"
-						title="@selectedItem.DropDisabledReason"
+						Tooltip="@selectedItem.DropDisabledReason"
 						@onclick="@(() => OnDropItem is null ? Task.CompletedTask : OnDropItem( selectedItem ))">Drop</button>
 				}
 			</div>

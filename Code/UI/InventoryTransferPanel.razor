@@ -20,7 +20,9 @@
 			@onclick="@(() => TransferAsync( ViewModel.Source, ViewModel.Destination, _selectedSource ))">arrow_forward</button>
 		<button class="hex-transfer-button" disabled="@(!ViewModel.CanTake || _selectedDestination is null)"
 			@onclick="@(() => TransferAsync( ViewModel.Destination, ViewModel.Source, _selectedDestination ))">arrow_back</button>
-		<div class="transfer-controls__caption">ATOMIC<br />TRANSFER</div>
+		@* Two labels, not a break tag: s&box registers no "br" element, so it becomes an empty Panel
+	   in a flex row and the caption renders as "ATOMICTRANSFER" on one line. *@
+	<div class="transfer-controls__caption"><label>ATOMIC</label><label>TRANSFER</label></div>
 	</div>
 	<div class="transfer-pane">
 		<InventoryGrid Snapshot="@ViewModel.Destination" SelectedItemId="@_selectedDestination" EmptyMessage="Nothing is stored here."

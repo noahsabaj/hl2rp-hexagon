@@ -121,7 +121,7 @@
 						<div class="preset-grid">
 							@foreach ( var preset in Radio.Presets )
 							{
-								<button disabled="@(!preset.Enabled)" title="@preset.Description" @onclick="@(() => Frequency = preset.Id)">
+								<button disabled="@(!preset.Enabled)" Tooltip="@preset.Description" @onclick="@(() => Frequency = preset.Id)">
 									<span>@preset.Label</span><strong>@preset.Id</strong></button>
 							}
 						</div>
@@ -134,8 +134,11 @@
 				<div class="scanner-layout">
 					<div class="scanner-feed">
 						<div class="scanner-feed__reticle"><span></span><span></span><strong>OPTICAL FEED // @Scanner.UnitName</strong></div>
-						<div class="scanner-feed__telemetry top-left">HOST LINK VERIFIED<br />AUTHORITATIVE CONTROL</div>
-						<div class="scanner-feed__telemetry top-right">SEQ HOST-ORDERED<br />INPUT ≤ 20 HZ</div>
+						@* A break tag is not a line break in s&box - nothing registers "br", so it
+						   becomes a bare Panel in a flex ROW and both halves render on one line. Two
+						   labels plus flex-direction: column is the shipped way to get two lines. *@
+						<div class="scanner-feed__telemetry top-left"><label>HOST LINK VERIFIED</label><label>AUTHORITATIVE CONTROL</label></div>
+						<div class="scanner-feed__telemetry top-right"><label>SEQ HOST-ORDERED</label><label>INPUT ≤ 20 HZ</label></div>
 						<div class="scanner-contacts">
 							@foreach ( var contact in Scanner.Contacts )
 							{

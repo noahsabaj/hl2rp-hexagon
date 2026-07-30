@@ -219,6 +219,37 @@ public sealed class ShowcaseArchitectureTests
 	}
 
 	/// <summary>
+	/// Markup that looks like HTML and does nothing. s&box's Razor borrows HTML's vocabulary but not
+	/// its semantics, and the failure is always SILENT — it compiles, logs nothing, and renders wrong.
+	/// <list type="bullet">
+	/// <item><c>title=</c> reaches a private attribute dictionary with no engine readers and no CSS
+	/// attribute selectors to match it. Nine disabled-reason explanations were invisible. The shipped
+	/// facility is <c>Tooltip=</c>, which styles itself from rootpanel.scss.</item>
+	/// <item><c>&lt;br/&gt;</c> registers no type, so it becomes a bare Panel in a flex ROW and both
+	/// halves render on one line — "ATOMICTRANSFER".</item>
+	/// </list>
+	/// Guards the class rather than the eleven sites, because the next person writing HTML from
+	/// muscle memory gets a failing test instead of invisible output.
+	/// </summary>
+	[TestMethod]
+	public void RazorDoesNotUseMarkupSandboxSilentlyIgnores()
+	{
+		var violations = Directory
+			.GetFiles( Path.Combine( FindRoot(), "Code" ), "*.razor", SearchOption.AllDirectories )
+			.SelectMany( path => File.ReadLines( path )
+				.Select( ( line, index ) => (Path: path, Line: line, Number: index + 1) ) )
+			.Where( entry =>
+				Regex.IsMatch( entry.Line, @"(?<![A-Za-z])title\s*=" ) ||
+				entry.Line.Contains( "<br", StringComparison.OrdinalIgnoreCase ) )
+			.Select( entry => $"{Path.GetFileName( entry.Path )}:{entry.Number}" )
+			.ToArray();
+
+		Assert.IsEmpty( violations,
+			"s&box ignores these silently. Use Tooltip= instead of title=, and two labels with " +
+			$"flex-direction: column instead of <br/>: {string.Join( ", ", violations )}" );
+	}
+
+	/// <summary>
 	/// s&box's `disabled` attribute is only a CSS class — `Sandbox.UI.Button.Disabled` is
 	/// `HasClass("disabled")` and nothing in the engine reads it again. Hit testing gates on computed
 	/// `pointer-events`, which our containers set to `all` in ten places, and it cascades — so a rule

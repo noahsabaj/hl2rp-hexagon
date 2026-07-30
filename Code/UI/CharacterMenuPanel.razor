@@ -70,7 +70,7 @@
 										@foreach ( var option in field.Options )
 										{
 											<button class="choice-chip @(GetChoice( field.Id ) == option.Value ? "is-selected" : string.Empty)"
-												title="@option.Description"
+												Tooltip="@option.Description"
 												@onclick="@(() => SetChoice( field.Id, option.Value ))">@option.Label</button>
 										}
 									</div>
@@ -98,7 +98,7 @@
 								@foreach ( var characterClass in ClassesForSelectedFaction )
 								{
 									<button class="choice-chip @(SelectedClass == characterClass.Id ? "is-selected" : string.Empty)"
-										disabled="@(!characterClass.Enabled)" title="@characterClass.Description"
+										disabled="@(!characterClass.Enabled)" Tooltip="@characterClass.Description"
 										@onclick="@(() => SelectedClass = characterClass.Id)">@characterClass.Label</button>
 								}
 							</div>

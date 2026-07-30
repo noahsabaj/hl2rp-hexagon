@@ -352,7 +352,8 @@ $red: #db6a61;
 	.transfer-controls { width: 80px; align-items: center; justify-content: center; flex-direction: column; gap: 9px; }
 	.transfer-controls__line { width: 1px; height: 70px; background-color: $line; }
 	.hex-transfer-button { width: 42px; height: 42px; border-radius: 50%; border: 1px solid rgba($cyan,0.4); background-color: rgba($cyan,0.08); color: $cyan; font-family: "Material Icons"; align-items: center; justify-content: center; &.disabled { @include disarmed( 0.25 ); } }
-	.transfer-controls__caption { margin-top: 8px; color: #66767d; font-family: "Roboto Mono"; font-size: 7px; text-align: center; }
+	// Column: the caption is two labels, and s&box's default flex-direction is Row.
+	.transfer-controls__caption { flex-direction: column; margin-top: 8px; color: #66767d; font-family: "Roboto Mono"; font-size: 7px; text-align: center; }
 
 	.vendor-layout { flex-grow: 1; min-height: 0; }
 	.vendor-catalog { flex-grow: 1; padding: 20px; flex-direction: column; overflow: scroll; }
@@ -428,7 +429,8 @@ $red: #db6a61;
 	.scanner-feed { position: relative; flex-grow: 1; border: 1px solid rgba($cyan,0.24); background: radial-gradient( rgba($cyan,0.08), rgba(2,10,12,0.92) ); overflow: hidden; }
 	.scanner-feed::after { content: ""; position: absolute; inset: 0; background: linear-gradient( to bottom, transparent, rgba($cyan,0.025) ); }
 	.scanner-feed__reticle { position: absolute; left: 50%; top: 50%; width: 170px; height: 170px; transform: translate(-50%,-50%); border: 1px solid rgba($cyan,0.55); border-radius: 50%; align-items: center; justify-content: center; span { position: absolute; width: 210px; height: 1px; background-color: rgba($cyan,0.3); &:nth-child(2) { width: 1px; height: 210px; } } strong { position: absolute; top: -28px; color: $cyan; font-family: "Roboto Mono"; font-size: 8px; letter-spacing: 1px; } }
-	.scanner-feed__telemetry { position: absolute; z-index: 2; color: rgba($cyan,0.75); font-family: "Roboto Mono"; font-size: 9px; line-height: 1.6; &.top-left { left: 16px; top: 15px; } &.top-right { right: 16px; top: 15px; text-align: right; } }
+	// Column: each telemetry block is two labels, and s&box's default flex-direction is Row.
+	.scanner-feed__telemetry { position: absolute; z-index: 2; flex-direction: column; color: rgba($cyan,0.75); font-family: "Roboto Mono"; font-size: 9px; line-height: 1.6; &.top-left { left: 16px; top: 15px; } &.top-right { right: 16px; top: 15px; text-align: right; } }
 	.scanner-contacts { position: absolute; left: 18px; bottom: 18px; z-index: 2; flex-direction: column; gap: 5px; }
 	.scanner-contact { padding: 5px 8px; gap: 7px; background-color: rgba(0,20,23,0.75); color: $cyan; font-family: "Roboto Mono"; font-size: 8px; span { width: 5px; height: 5px; background-color: $cyan; } &.is-priority { color: $red; span { background-color: $red; } } }
 	.scanner-controls { height: 85px; padding: 11px 0 0; gap: 8px; justify-content: center; }

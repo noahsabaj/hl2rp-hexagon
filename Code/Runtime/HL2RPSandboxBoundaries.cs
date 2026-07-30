@@ -222,9 +222,8 @@ internal sealed class HL2RPScannerMotionController : Component
 		_maximumSpeed = Math.Clamp( authoredMaximumSpeed, 1f, 1_000f );
 		_maximumAcceleration = Math.Clamp(
 			Math.Min( authoredMaximumAcceleration, command.MaximumAcceleration ), 1f, 4_000f );
-		_targetVelocity = ClampMagnitude(
-			new Vector3( command.VelocityX, command.VelocityY, command.VelocityZ ),
-			_maximumSpeed );
+		_targetVelocity = new Vector3( command.VelocityX, command.VelocityY, command.VelocityZ )
+			.ClampLength( _maximumSpeed );
 		_yawRate = Math.Clamp( command.YawRate, -MaximumAngularSpeed, MaximumAngularSpeed );
 		_pitchRate = Math.Clamp( command.PitchRate, -MaximumAngularSpeed, MaximumAngularSpeed );
 		_lastCommandAt = Time.Now;
@@ -265,11 +264,6 @@ internal sealed class HL2RPScannerMotionController : Component
 			: current + delta / length * maximumDelta;
 	}
 
-	private static Vector3 ClampMagnitude( Vector3 value, float maximum )
-	{
-		var length = value.Length;
-		return length <= maximum || length <= 0.0001f ? value : value / length * maximum;
-	}
 }
 
 /// <summary>
