@@ -89,7 +89,7 @@
       "__guid": "6313c977-11c2-4c1d-be2e-d9a5f642cb3f",
       "__version": 2,
       "Flags": 0,
-      "Name": "HexagonConfig",
+      "Name": "Hexagon v2 Bootstrap",
       "Position": "0,0,100",
       "Rotation": "0,0,0,1",
       "Scale": "1,1,1",
@@ -102,8 +102,8 @@
       "OwnerTransfer": 1,
       "Components": [
         {
-          "__type": "Hexagon.Core.HexagonConfigComponent",
-          "__guid": "e0da22c4-444d-44b9-a987-59451c869314",
+          "__type": "Sandbox.NetworkHelper",
+          "__guid": "e0da22c4-444d-44b9-a987-59451c869316",
           "__enabled": true,
           "Flags": 0,
           "OnComponentDestroy": null,
@@ -113,10 +113,556 @@
           "OnComponentStart": null,
           "OnComponentUpdate": null,
           "PlayerPrefab": null,
-          "SpawnPosition": "0,0,100"
+          "SpawnPoints": [],
+          "StartServer": true
+        },
+        {
+          "__type": "Hexagon.V2.Runtime.HexagonBootstrapComponent",
+          "__guid": "e0da22c4-444d-44b9-a987-59451c869314",
+          "__enabled": true,
+          "Flags": 0,
+          "OnComponentDestroy": null,
+          "OnComponentDisabled": null,
+          "OnComponentEnabled": null,
+          "OnComponentFixedUpdate": null,
+          "OnComponentStart": null,
+          "OnComponentUpdate": null,
+          "SchemaId": "hl2rp",
+          "PersistenceRootOverride": "",
+		  "VerificationProbe": ""
+		}
+      ],
+      "Children": []
+    },
+    {
+      "__guid": "a1000000-0000-4000-8000-000000000001",
+      "__version": 2,
+      "Flags": 0,
+      "Name": "Player Spawn",
+      "Position": "1200,0,8",
+      "Rotation": "0,0,0,1",
+      "Scale": "1,1,1",
+      "Tags": "spawn,hexagon_spawn",
+      "Enabled": true,
+      "NetworkMode": 2,
+      "NetworkFlags": 0,
+      "NetworkOrphaned": 0,
+      "NetworkTransmit": true,
+      "OwnerTransfer": 1,
+      "Components": [
+        {
+          "__type": "Sandbox.SpawnPoint",
+          "__guid": "a1000000-0000-4000-8000-000000000002",
+          "__enabled": true,
+          "Flags": 0,
+          "Color": "0.15,0.65,0.95,1"
         }
       ],
       "Children": []
+    },
+    {
+      "__guid": "a2000000-0000-4000-8000-000000000001",
+      "__version": 2,
+      "Flags": 0,
+      "Name": "HL2RP Framework Showcase",
+      "Position": "1200,0,0",
+      "Rotation": "0,0,0,1",
+      "Scale": "1,1,1",
+      "Tags": "hl2rp_showcase",
+      "Enabled": true,
+      "NetworkMode": 2,
+      "NetworkFlags": 0,
+      "NetworkOrphaned": 0,
+      "NetworkTransmit": true,
+      "OwnerTransfer": 1,
+      "Components": [],
+      "Children": [
+        {
+          "__guid": "d1000000-0000-4000-8000-000000000001",
+          "__version": 2,
+          "Flags": 0,
+          "Name": "Ownable Door + Combine Lock",
+          "Position": "240,-180,54",
+          "Rotation": "0,0,0,1",
+          "Scale": "0.4,0.08,2.16",
+          "Tags": "door,interactable",
+          "Enabled": true,
+          "NetworkMode": 2,
+          "NetworkFlags": 0,
+          "NetworkOrphaned": 0,
+          "NetworkTransmit": true,
+          "OwnerTransfer": 1,
+          "Components": [
+            {
+              "__type": "Hexagon.V2.Runtime.PersistentSceneEntity",
+              "__guid": "d1000000-0000-4000-8000-000000000002",
+              "__enabled": true,
+              "PersistentId": "01000000-0000-4000-8000-000000000001"
+            },
+            {
+              "__type": "HL2RP.V2.World.HL2RPDoorComponent",
+              "__guid": "d1000000-0000-4000-8000-000000000003",
+              "__enabled": true,
+              "Ownable": true,
+              "InitiallyCombineLocked": false,
+              "InitiallyOpen": false,
+              "OpenYawDegrees": 90
+            },
+            {
+              "__type": "Sandbox.ModelRenderer",
+              "__guid": "d1000000-0000-4000-8000-000000000004",
+              "__enabled": true,
+              "Model": "models/dev/box.vmdl",
+              "Tint": "0.12,0.28,0.38,1"
+            },
+            {
+              "__type": "Sandbox.BoxCollider",
+              "__guid": "d1000000-0000-4000-8000-000000000005",
+              "__enabled": true,
+              "Center": "0,0,0",
+              "Scale": "50,50,50",
+              "Static": true,
+              "IsTrigger": false
+            }
+          ],
+          "Children": []
+        },
+        {
+          "__guid": "e1000000-0000-4000-8000-000000000001",
+          "__version": 2,
+          "Flags": 0,
+          "Name": "Storage Container",
+          "Position": "240,-60,30",
+          "Rotation": "0,0,0,1",
+          "Scale": "1.12,0.8,1.2",
+          "Tags": "storage,interactable",
+          "Enabled": true,
+          "NetworkMode": 2,
+          "NetworkFlags": 0,
+          "NetworkOrphaned": 0,
+          "NetworkTransmit": true,
+          "OwnerTransfer": 1,
+          "Components": [
+            {
+              "__type": "Hexagon.V2.Runtime.PersistentSceneEntity",
+              "__guid": "e1000000-0000-4000-8000-000000000002",
+              "__enabled": true,
+              "PersistentId": "02000000-0000-4000-8000-000000000001"
+            },
+            {
+              "__type": "HL2RP.V2.World.HL2RPStorageComponent",
+              "__guid": "e1000000-0000-4000-8000-000000000003",
+              "__enabled": true,
+              "Width": 6,
+              "Height": 4,
+              "InitiallyLocked": false
+            },
+            {
+              "__type": "Sandbox.ModelRenderer",
+              "__guid": "e1000000-0000-4000-8000-000000000004",
+              "__enabled": true,
+              "Model": "models/dev/box.vmdl",
+              "Tint": "0.28,0.32,0.34,1"
+            },
+            {
+              "__type": "Sandbox.BoxCollider",
+              "__guid": "e1000000-0000-4000-8000-000000000005",
+              "__enabled": true,
+              "Center": "0,0,0",
+              "Scale": "50,50,50",
+              "Static": true,
+              "IsTrigger": false
+            }
+          ],
+          "Children": []
+        },
+        {
+          "__guid": "f1000000-0000-4000-8000-000000000001",
+          "__version": 2,
+          "Flags": 0,
+          "Name": "Permit-Gated Vendor",
+          "Position": "240,60,42",
+          "Rotation": "0,0,0,1",
+          "Scale": "1.28,0.88,1.68",
+          "Tags": "vendor,interactable",
+          "Enabled": true,
+          "NetworkMode": 2,
+          "NetworkFlags": 0,
+          "NetworkOrphaned": 0,
+          "NetworkTransmit": true,
+          "OwnerTransfer": 1,
+          "Components": [
+            {
+              "__type": "Hexagon.V2.Runtime.PersistentSceneEntity",
+              "__guid": "f1000000-0000-4000-8000-000000000002",
+              "__enabled": true,
+              "PersistentId": "03000000-0000-4000-8000-000000000001"
+            },
+            {
+              "__type": "HL2RP.V2.World.HL2RPVendorComponent",
+              "__guid": "f1000000-0000-4000-8000-000000000003",
+              "__enabled": true,
+              "RequiredPermit": "Food",
+              "InitialRationStock": 12,
+              "RationPrice": 10,
+              "InitialWaterStock": 12,
+              "WaterPrice": 6
+            },
+            {
+              "__type": "Sandbox.ModelRenderer",
+              "__guid": "f1000000-0000-4000-8000-000000000004",
+              "__enabled": true,
+              "Model": "models/dev/box.vmdl",
+              "Tint": "0.72,0.44,0.16,1"
+            },
+            {
+              "__type": "Sandbox.BoxCollider",
+              "__guid": "f1000000-0000-4000-8000-000000000005",
+              "__enabled": true,
+              "Center": "0,0,0",
+              "Scale": "50,50,50",
+              "Static": true,
+              "IsTrigger": false
+            }
+          ],
+          "Children": []
+        },
+        {
+          "__guid": "a3000000-0000-4000-8000-000000000001",
+          "__version": 2,
+          "Flags": 0,
+          "Name": "Ration Dispenser",
+          "Position": "240,180,46",
+          "Rotation": "0,0,0,1",
+          "Scale": "0.96,0.72,1.84",
+          "Tags": "machine,interactable",
+          "Enabled": true,
+          "NetworkMode": 2,
+          "NetworkFlags": 0,
+          "NetworkOrphaned": 0,
+          "NetworkTransmit": true,
+          "OwnerTransfer": 1,
+          "Components": [
+            {
+              "__type": "Hexagon.V2.Runtime.PersistentSceneEntity",
+              "__guid": "a3000000-0000-4000-8000-000000000002",
+              "__enabled": true,
+              "PersistentId": "04000000-0000-4000-8000-000000000001"
+            },
+            {
+              "__type": "HL2RP.V2.World.HL2RPRationDispenserComponent",
+              "__guid": "a3000000-0000-4000-8000-000000000003",
+              "__enabled": true,
+              "InitialStock": 20,
+              "UnitPrice": 0,
+              "CooldownSeconds": 30
+            },
+            {
+              "__type": "Sandbox.ModelRenderer",
+              "__guid": "a3000000-0000-4000-8000-000000000004",
+              "__enabled": true,
+              "Model": "models/dev/box.vmdl",
+              "Tint": "0.18,0.42,0.46,1"
+            },
+            {
+              "__type": "Sandbox.BoxCollider",
+              "__guid": "a3000000-0000-4000-8000-000000000005",
+              "__enabled": true,
+              "Center": "0,0,0",
+              "Scale": "50,50,50",
+              "Static": true,
+              "IsTrigger": false
+            }
+          ],
+          "Children": []
+        },
+        {
+          "__guid": "a4000000-0000-4000-8000-000000000001",
+          "__version": 2,
+          "Flags": 0,
+          "Name": "Vending Machine",
+          "Position": "80,240,44",
+          "Rotation": "0,0,0,1",
+          "Scale": "0.96,0.72,1.76",
+          "Tags": "machine,interactable",
+          "Enabled": true,
+          "NetworkMode": 2,
+          "NetworkFlags": 0,
+          "NetworkOrphaned": 0,
+          "NetworkTransmit": true,
+          "OwnerTransfer": 1,
+          "Components": [
+            {
+              "__type": "Hexagon.V2.Runtime.PersistentSceneEntity",
+              "__guid": "a4000000-0000-4000-8000-000000000002",
+              "__enabled": true,
+              "PersistentId": "05000000-0000-4000-8000-000000000001"
+            },
+            {
+              "__type": "HL2RP.V2.World.HL2RPVendingMachineComponent",
+              "__guid": "a4000000-0000-4000-8000-000000000003",
+              "__enabled": true,
+              "InitialStock": 20,
+              "UnitPrice": 5,
+              "CooldownSeconds": 2
+            },
+            {
+              "__type": "Sandbox.ModelRenderer",
+              "__guid": "a4000000-0000-4000-8000-000000000004",
+              "__enabled": true,
+              "Model": "models/dev/box.vmdl",
+              "Tint": "0.12,0.54,0.72,1"
+            },
+            {
+              "__type": "Sandbox.BoxCollider",
+              "__guid": "a4000000-0000-4000-8000-000000000005",
+              "__enabled": true,
+              "Center": "0,0,0",
+              "Scale": "50,50,50",
+              "Static": true,
+              "IsTrigger": false
+            }
+          ],
+          "Children": []
+        },
+        {
+          "__guid": "a5000000-0000-4000-8000-000000000001",
+          "__version": 2,
+          "Flags": 0,
+          "Name": "Combine Forcefield",
+          "Position": "-60,240,55",
+          "Rotation": "0,0,0,1",
+          "Scale": "0.08,2.32,2.2",
+          "Tags": "forcefield,interactable",
+          "Enabled": true,
+          "NetworkMode": 2,
+          "NetworkFlags": 0,
+          "NetworkOrphaned": 0,
+          "NetworkTransmit": true,
+          "OwnerTransfer": 1,
+          "Components": [
+            {
+              "__type": "Hexagon.V2.Runtime.PersistentSceneEntity",
+              "__guid": "a5000000-0000-4000-8000-000000000002",
+              "__enabled": true,
+              "PersistentId": "06000000-0000-4000-8000-000000000001"
+            },
+            {
+              "__type": "HL2RP.V2.World.HL2RPForcefieldComponent",
+              "__guid": "a5000000-0000-4000-8000-000000000003",
+              "__enabled": true,
+              "InitiallyEnabled": true,
+              "CombineOnly": true
+            },
+            {
+              "__type": "Sandbox.ModelRenderer",
+              "__guid": "a5000000-0000-4000-8000-000000000004",
+              "__enabled": true,
+              "Model": "models/dev/box.vmdl",
+              "Tint": "0.18,0.62,0.88,0.42"
+            },
+            {
+              "__type": "Sandbox.BoxCollider",
+              "__guid": "a5000000-0000-4000-8000-000000000005",
+              "__enabled": true,
+              "Center": "0,0,0",
+              "Scale": "50,50,50",
+              "Static": true,
+              "IsTrigger": false
+            }
+          ],
+          "Children": []
+        },
+        {
+          "__guid": "a6000000-0000-4000-8000-000000000001",
+          "__version": 2,
+          "Flags": 0,
+          "Name": "Scanner Dock",
+          "Position": "-200,180,18",
+          "Rotation": "0,0,0,1",
+          "Scale": "1.36,1.36,0.72",
+          "Tags": "scanner,interactable",
+          "Enabled": true,
+          "NetworkMode": 2,
+          "NetworkFlags": 0,
+          "NetworkOrphaned": 0,
+          "NetworkTransmit": true,
+          "OwnerTransfer": 1,
+          "Components": [
+            {
+              "__type": "Hexagon.V2.Runtime.PersistentSceneEntity",
+              "__guid": "a6000000-0000-4000-8000-000000000002",
+              "__enabled": true,
+              "PersistentId": "07000000-0000-4000-8000-000000000001"
+            },
+            {
+              "__type": "HL2RP.V2.World.HL2RPScannerDockComponent",
+              "__guid": "a6000000-0000-4000-8000-000000000003",
+              "__enabled": true,
+              "DronePersistentId": "08000000-0000-4000-8000-000000000001"
+            },
+            {
+              "__type": "Sandbox.ModelRenderer",
+              "__guid": "a6000000-0000-4000-8000-000000000004",
+              "__enabled": true,
+              "Model": "models/dev/box.vmdl",
+              "Tint": "0.16,0.22,0.3,1"
+            },
+            {
+              "__type": "Sandbox.BoxCollider",
+              "__guid": "a6000000-0000-4000-8000-000000000005",
+              "__enabled": true,
+              "Center": "0,0,0",
+              "Scale": "50,50,50",
+              "Static": true,
+              "IsTrigger": false
+            }
+          ],
+          "Children": []
+        },
+        {
+          "__guid": "a7000000-0000-4000-8000-000000000001",
+          "__version": 2,
+          "Flags": 0,
+          "Name": "Scanner Drone",
+          "Position": "-200,180,92",
+          "Rotation": "0,0,0,1",
+          "Scale": "0.72,0.72,0.4",
+          "Tags": "scanner,interactable",
+          "Enabled": true,
+          "NetworkMode": 2,
+          "NetworkFlags": 0,
+          "NetworkOrphaned": 0,
+          "NetworkTransmit": true,
+          "OwnerTransfer": 1,
+          "Components": [
+            {
+              "__type": "Hexagon.V2.Runtime.PersistentSceneEntity",
+              "__guid": "a7000000-0000-4000-8000-000000000002",
+              "__enabled": true,
+              "PersistentId": "08000000-0000-4000-8000-000000000001"
+            },
+            {
+              "__type": "HL2RP.V2.World.HL2RPScannerDroneComponent",
+              "__guid": "a7000000-0000-4000-8000-000000000003",
+              "__enabled": true,
+              "MaximumSpeed": 300,
+              "MaximumAcceleration": 900
+            },
+            {
+              "__type": "Sandbox.ModelRenderer",
+              "__guid": "a7000000-0000-4000-8000-000000000004",
+              "__enabled": true,
+              "Model": "models/dev/box.vmdl",
+              "Tint": "0.34,0.54,0.7,1"
+            },
+            {
+              "__type": "Sandbox.BoxCollider",
+              "__guid": "a7000000-0000-4000-8000-000000000005",
+              "__enabled": true,
+              "Center": "0,0,0",
+              "Scale": "50,50,50",
+              "Static": false,
+              "IsTrigger": false
+            }
+          ],
+          "Children": []
+        },
+        {
+          "__guid": "a8000000-0000-4000-8000-000000000001",
+          "__version": 2,
+          "Flags": 0,
+          "Name": "Combat Target",
+          "Position": "-240,20,54",
+          "Rotation": "0,0,0,1",
+          "Scale": "0.8,0.32,2.16",
+          "Tags": "combat_target,interactable",
+          "Enabled": true,
+          "NetworkMode": 2,
+          "NetworkFlags": 0,
+          "NetworkOrphaned": 0,
+          "NetworkTransmit": true,
+          "OwnerTransfer": 1,
+          "Components": [
+            {
+              "__type": "Hexagon.V2.Runtime.PersistentSceneEntity",
+              "__guid": "a8000000-0000-4000-8000-000000000002",
+              "__enabled": true,
+              "PersistentId": "09000000-0000-4000-8000-000000000001"
+            },
+            {
+              "__type": "HL2RP.V2.World.HL2RPCombatTargetComponent",
+              "__guid": "a8000000-0000-4000-8000-000000000003",
+              "__enabled": true,
+              "MaximumHealth": 100
+            },
+            {
+              "__type": "Sandbox.ModelRenderer",
+              "__guid": "a8000000-0000-4000-8000-000000000004",
+              "__enabled": true,
+              "Model": "models/dev/box.vmdl",
+              "Tint": "0.78,0.18,0.14,1"
+            },
+            {
+              "__type": "Sandbox.BoxCollider",
+              "__guid": "a8000000-0000-4000-8000-000000000005",
+              "__enabled": true,
+              "Center": "0,0,0",
+              "Scale": "50,50,50",
+              "Static": true,
+              "IsTrigger": false
+            }
+          ],
+          "Children": []
+        },
+        {
+          "__guid": "a9000000-0000-4000-8000-000000000001",
+          "__version": 2,
+          "Flags": 0,
+          "Name": "World Item Drop + Pickup Area",
+          "Position": "-180,-160,4",
+          "Rotation": "0,0,0,1",
+          "Scale": "3.2,3.2,0.16",
+          "Tags": "world_item_area,interactable",
+          "Enabled": true,
+          "NetworkMode": 2,
+          "NetworkFlags": 0,
+          "NetworkOrphaned": 0,
+          "NetworkTransmit": true,
+          "OwnerTransfer": 1,
+          "Components": [
+            {
+              "__type": "Hexagon.V2.Runtime.PersistentSceneEntity",
+              "__guid": "a9000000-0000-4000-8000-000000000002",
+              "__enabled": true,
+              "PersistentId": "0a000000-0000-4000-8000-000000000001"
+            },
+            {
+              "__type": "HL2RP.V2.World.HL2RPWorldItemAreaComponent",
+              "__guid": "a9000000-0000-4000-8000-000000000003",
+              "__enabled": true,
+              "Radius": 160
+            },
+            {
+              "__type": "Sandbox.ModelRenderer",
+              "__guid": "a9000000-0000-4000-8000-000000000004",
+              "__enabled": true,
+              "Model": "models/dev/box.vmdl",
+              "Tint": "0.42,0.64,0.26,0.38"
+            },
+            {
+              "__type": "Sandbox.BoxCollider",
+              "__guid": "a9000000-0000-4000-8000-000000000005",
+              "__enabled": true,
+              "Center": "0,0,0",
+              "Scale": "50,50,50",
+              "Static": true,
+              "IsTrigger": true
+            }
+          ],
+          "Children": []
+        }
+      ]
     },
     {
       "__guid": "b5e541f8-ac70-408a-8211-fe8341fb080d",
@@ -176,8 +722,8 @@
     }
   },
   "ResourceVersion": 3,
-  "Title": null,
-  "Description": null,
+  "Title": "Hexagon v2 HL2RP Showcase",
+  "Description": "A curated host-authoritative framework reference scene.",
   "__references": [],
   "__version": 3
 }

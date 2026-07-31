@@ -1,0 +1,54 @@
+@using System
+@using Sandbox.UI
+@namespace HL2RP.UI
+@inherits Panel
+
+<root class="hex-window @Variant">
+	<div class="hex-window__header">
+		<div class="hex-window__identity">
+			@if ( !string.IsNullOrWhiteSpace( Eyebrow ) )
+			{
+				<div class="hex-window__eyebrow">@Eyebrow</div>
+			}
+			<div class="hex-window__title">@Title</div>
+			@if ( !string.IsNullOrWhiteSpace( Subtitle ) )
+			{
+				<div class="hex-window__subtitle">@Subtitle</div>
+			}
+		</div>
+		<div class="hex-window__actions">
+			@HeaderActions
+			@if ( OnClose is not null )
+			{
+				<button class="hex-icon-button" @onclick="@OnClose" aria-label="Close panel">close</button>
+			}
+		</div>
+	</div>
+	<div class="hex-window__body">@Body</div>
+	@if ( Footer is not null )
+	{
+		<div class="hex-window__footer">@Footer</div>
+	}
+</root>
+
+@code
+{
+	[Parameter] public string? Eyebrow { get; set; }
+	[Parameter, EditorRequired] public string Title { get; set; } = string.Empty;
+	[Parameter] public string? Subtitle { get; set; }
+	[Parameter] public string Variant { get; set; } = string.Empty;
+	[Parameter, EditorRequired] public RenderFragment Body { get; set; } = null!;
+	[Parameter] public RenderFragment? HeaderActions { get; set; }
+	[Parameter] public RenderFragment? Footer { get; set; }
+	[Parameter] public Action? OnClose { get; set; }
+
+	protected override void OnParametersSet()
+	{
+		if ( string.IsNullOrWhiteSpace( Title ) )
+			throw new InvalidOperationException( $"{nameof(HL2RPWindow)} requires a non-empty {nameof(Title)}." );
+		if ( Body is null )
+			throw new InvalidOperationException( $"{nameof(HL2RPWindow)} requires {nameof(Body)}." );
+	}
+
+	protected override int BuildHash() => HashCode.Combine( Eyebrow, Title, Subtitle, Variant );
+}

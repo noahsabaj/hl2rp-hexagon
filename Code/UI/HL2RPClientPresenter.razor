@@ -1,0 +1,435 @@
+@using System
+@using System.Collections.Generic
+@using System.Collections.Immutable
+@using System.Linq
+@using System.Threading.Tasks
+@using Hexagon.V2.Client
+@using Hexagon.V2.Kernel
+@using Hexagon.V2.Networking
+@using HL2RP.V2.Schema
+@using Sandbox
+@using Sandbox.UI
+@namespace HL2RP.UI
+@inherits PanelComponent
+
+<root class="hl2rp-client-presenter">
+	<HL2RPShowcaseRoot Model="@ViewModel" Controller="@Controller"
+		OnWorkspaceChanged="@TransitionWorkspace" OnOpenSearch="@OpenSearch"
+		OnDismissNotification="@DismissNotification"
+		OnToggleScoreboard="@ToggleScoreboard" OnCloseScoreboard="@CloseScoreboard" OnRespawn="@RequestRespawn"
+		OnReturnToCharacterSelection="@ReturnToCharacterSelection"
+		IsReturningToCharacterSelection="@(_characterSessionReturn?.IsBusy == true)"
+		OnVendorPurchase="@PurchaseFromVendor" OnVendorSale="@SellToVendor" OnPermitPurchase="@PurchasePermit"
+		OnCivicRecordUpdate="@UpdateCivicRecord" OnObjectiveUpdate="@UpdateObjective" OnNoteSave="@SaveNote"
+		OnRadioTune="@TuneRadio" OnRestraintAction="@SetRestraint" OnScannerIntent="@SendScannerIntent"
+		OnIntroduce="@Introduce" OnInspectCivic="@InspectCivic"
+		OnItemWorkspace="@SelectItemWorkspace"
+		OnDismissItemPresentation="@DismissItemPresentation"
+		OnOperationResult="@ObserveResult" />
+</root>
+
+@code
+{
+	private readonly HL2RPShowcaseProjection _projection = new();
+	private HexClientStore? _store;
+	private bool _subscribed;
+	private bool _enabled;
+	private readonly CharacterSessionPresentationState _characterPresentation = new();
+	private InteractionWorkspaceCoordinator? _interactionWorkspaces;
+	private CharacterSessionReturnCoordinator? _characterSessionReturn;
+	private ClientStateEpoch? _lastStateEpoch;
+
+	public IHexClientController? Controller { get; private set; }
+	public HL2RPShowcaseViewModel? ViewModel { get; private set; }
+
+	/// <summary>
+	/// Binds the only two runtime services the presenter accepts. Schema runtime
+	/// composition may call this after adding the component to the local UI root.
+	/// </summary>
+	public void Bind( HexClientStore store, IHexClientController controller )
+	{
+		ArgumentNullException.ThrowIfNull( store );
+		ArgumentNullException.ThrowIfNull( controller );
+		Unsubscribe();
+		ResetCharacterPresentation();
+		_store = store;
+		Controller = controller;
+		_interactionWorkspaces = new InteractionWorkspaceCoordinator( controller );
+		_characterSessionReturn = new CharacterSessionReturnCoordinator( controller );
+		_lastStateEpoch = store.StateEpoch;
+		Subscribe();
+		Rebuild();
+	}
+
+	protected override void OnEnabled()
+	{
+		base.OnEnabled();
+		_enabled = true;
+		Subscribe();
+		Rebuild();
+	}
+
+	protected override void OnDisabled()
+	{
+		_enabled = false;
+		Unsubscribe();
+		base.OnDisabled();
+	}
+
+	private void Subscribe()
+	{
+		if ( !_enabled || _subscribed || _store is null ) return;
+		_store.Changed += StoreChanged;
+		_subscribed = true;
+	}
+
+	private void Unsubscribe()
+	{
+		if ( !_subscribed || _store is null ) return;
+		_store.Changed -= StoreChanged;
+		_subscribed = false;
+	}
+
+	private void StoreChanged( ClientStoreChange change )
+	{
+		var epoch = _store?.StateEpoch;
+		if ( epoch is ClientStateEpoch current && _lastStateEpoch is ClientStateEpoch previous &&
+			(current.Connection != previous.Connection || current.Character != previous.Character) )
+		{
+			ResetCharacterPresentation();
+		}
+		_lastStateEpoch = epoch;
+		if ( change.Kind == ClientStoreChangeKind.SessionCleared )
+		{
+			ResetCharacterPresentation();
+			_lastStateEpoch = null;
+		}
+		Rebuild();
+	}
+
+	/// <summary>
+	/// Expiry is a wall-clock event with no store change behind it, so nothing would otherwise call
+	/// Rebuild when a notification lapses. HudLayer's BuildHash makes the expired one stop DRAWING,
+	/// but the entry itself lingers in presentation state until the next unrelated rebuild — this is
+	/// what actually prunes it, on time.
+	/// </summary>
+	protected override void OnFixedUpdate()
+	{
+		base.OnFixedUpdate();
+		if ( _nextNotificationExpiry is not DateTimeOffset due || DateTimeOffset.UtcNow < due ) return;
+		Rebuild();
+	}
+
+	private DateTimeOffset? _nextNotificationExpiry;
+
+	private void Rebuild()
+	{
+		if ( _store is null ) return;
+		_characterPresentation.Notifications = _characterPresentation.Notifications
+			.Where( notification => notification.ExpiresAtUtc > DateTimeOffset.UtcNow )
+			.ToImmutableArray();
+		_nextNotificationExpiry = _characterPresentation.Notifications.IsDefaultOrEmpty
+			? null
+			: _characterPresentation.Notifications.Min( notification => notification.ExpiresAtUtc );
+		var requestedWorkspace = _interactionWorkspaces?.PendingSearch is null
+			? _characterPresentation.Workspace : ShowcaseWorkspace.Search;
+		var viewModel = _projection.Build(
+			_store, requestedWorkspace, _characterPresentation.ScoreboardOpen,
+			_characterPresentation.Notifications, _characterPresentation.DismissedItemPresentationSequence,
+			_characterPresentation.SelectedNoteItemId, _characterPresentation.SelectedRadioItemId );
+		ViewModel = viewModel;
+		var observation = _interactionWorkspaces?.Observe(
+			InteractionWorkspaceSnapshot.From( viewModel ) );
+		if ( observation?.SearchActivated == true ) _characterPresentation.Workspace = ShowcaseWorkspace.Search;
+		else if ( _interactionWorkspaces?.PendingSearch is null )
+			_characterPresentation.Workspace = viewModel.ActiveWorkspace;
+		if ( observation?.AbandonedSearchSession is ClientInteractionWorkspaceSession abandoned )
+			_ = CloseAbandonedSearchAsync( abandoned );
+		StateHasChanged();
+	}
+
+	private void TransitionWorkspace( WorkspaceTransitionRequest request ) =>
+		_ = TransitionWorkspaceAsync( request.Destination );
+
+	private async Task TransitionWorkspaceAsync( ShowcaseWorkspace destination )
+	{
+		var interactionWorkspaces = _interactionWorkspaces;
+		var viewModel = ViewModel;
+		if ( interactionWorkspaces is null || viewModel is null ) return;
+		var transition = await interactionWorkspaces.PrepareTransitionAsync(
+			InteractionWorkspaceSnapshot.From( viewModel ), destination );
+		if ( !interactionWorkspaces.IsCurrent( transition.Sequence ) ) return;
+		if ( transition.CloseResult.Failed )
+		{
+			ObserveResult( transition.CloseResult );
+			return;
+		}
+		_characterPresentation.Workspace = transition.Destination;
+		Rebuild();
+	}
+
+	private void SelectItemWorkspace( ItemWorkspaceRequest request ) => _ = SelectItemWorkspaceAsync( request );
+
+	private async Task SelectItemWorkspaceAsync( ItemWorkspaceRequest request )
+	{
+		var interactionWorkspaces = _interactionWorkspaces;
+		var viewModel = ViewModel;
+		if ( interactionWorkspaces is null || viewModel is null ) return;
+		var transition = await interactionWorkspaces.PrepareTransitionAsync(
+			InteractionWorkspaceSnapshot.From( viewModel ), request.Workspace );
+		if ( !interactionWorkspaces.IsCurrent( transition.Sequence ) ) return;
+		if ( transition.CloseResult.Failed )
+		{
+			ObserveResult( transition.CloseResult );
+			return;
+		}
+		if ( request.Workspace == ShowcaseWorkspace.NoteEditor ) _characterPresentation.SelectedNoteItemId = request.ItemId;
+		else if ( request.Workspace == ShowcaseWorkspace.Radio ) _characterPresentation.SelectedRadioItemId = request.ItemId;
+		else return;
+		_characterPresentation.Workspace = request.Workspace;
+		Rebuild();
+	}
+
+	private void OpenSearch( SearchOpenRequest request ) => _ = OpenSearchAsync( request );
+
+	private async Task OpenSearchAsync( SearchOpenRequest request )
+	{
+		var controller = Controller;
+		var interactionWorkspaces = _interactionWorkspaces;
+		var viewModel = ViewModel;
+		if ( controller is null || interactionWorkspaces is null || viewModel is null ) return;
+		var terminal = await interactionWorkspaces.PrepareTransitionAsync(
+			InteractionWorkspaceSnapshot.From( viewModel ), ShowcaseWorkspace.None );
+		if ( !interactionWorkspaces.IsCurrent( terminal.Sequence ) ) return;
+		if ( terminal.CloseResult.Failed )
+		{
+			ObserveResult( terminal.CloseResult );
+			return;
+		}
+
+		var pending = interactionWorkspaces.BeginSearch( request.TargetCharacterId );
+		if ( pending.Failed )
+		{
+			AddResultNotification( OperationResult.Failure( pending.Error!.Code, pending.Error.Message ) );
+			return;
+		}
+		var sequence = pending.Value;
+		_characterPresentation.Workspace = ShowcaseWorkspace.Search;
+		Rebuild();
+		var result = await controller.RunSchemaCommandAsync(
+			HL2RPIds.Commands.RestraintSet,
+			new Dictionary<string, SnapshotValue>
+			{
+				["character"] = SnapshotValue.String( request.TargetCharacterId.ToString() ),
+				["restrain"] = SnapshotValue.Boolean( false ),
+				["search"] = SnapshotValue.Boolean( true )
+			} );
+		var currentRequest = interactionWorkspaces.CompleteSearchCommand( sequence, result );
+		if ( !currentRequest ) return;
+		if ( result.Failed )
+		{
+			_characterPresentation.Workspace = ShowcaseWorkspace.None;
+			AddResultNotification( result );
+			return;
+		}
+
+		AddResultNotification( result );
+	}
+
+	private async Task CloseAbandonedSearchAsync( ClientInteractionWorkspaceSession session )
+	{
+		var interactionWorkspaces = _interactionWorkspaces;
+		if ( interactionWorkspaces is null ) return;
+		var result = await interactionWorkspaces.CloseAbandonedSearchAsync( session );
+		if ( result.Failed ) ObserveResult( result );
+	}
+
+	private void ToggleScoreboard()
+	{
+		_characterPresentation.ScoreboardOpen = !_characterPresentation.ScoreboardOpen;
+		Rebuild();
+	}
+
+	private void CloseScoreboard()
+	{
+		_characterPresentation.ScoreboardOpen = false;
+		Rebuild();
+	}
+
+	private void ReturnToCharacterSelection() => _ = ReturnToCharacterSelectionAsync();
+
+	private async Task ReturnToCharacterSelectionAsync()
+	{
+		var coordinator = _characterSessionReturn;
+		if ( coordinator is null ) return;
+
+		var pending = coordinator.ReturnToCharacterSelectionAsync();
+		StateHasChanged();
+		var result = await pending;
+		if ( result.Failed ) ObserveResult( result );
+		else StateHasChanged();
+	}
+
+	private void DismissNotification( Guid id )
+	{
+		_characterPresentation.Notifications = _characterPresentation.Notifications
+			.Where( notification => notification.Id != id ).ToImmutableArray();
+		Rebuild();
+	}
+
+	private void DismissItemPresentation( long sequence )
+	{
+		_characterPresentation.DismissedItemPresentationSequence = Math.Max(
+			_characterPresentation.DismissedItemPresentationSequence, sequence );
+		Rebuild();
+	}
+
+	private void ObserveResult( OperationResult result )
+	{
+		if ( result.Failed ) AddResultNotification( result );
+	}
+
+	private void PurchaseFromVendor( VendorPurchaseRequest request ) => _ = SendSchemaAsync( HL2RPIds.Commands.CommerceBuy, new Dictionary<string, SnapshotValue>()
+	{
+		["session"] = SnapshotValue.String( request.SessionId.ToString() ),
+		["definition"] = SnapshotValue.Choice( request.DefinitionId.Value ),
+		["quantity"] = SnapshotValue.Integer( request.Quantity )
+	} );
+
+	private void SellToVendor( VendorSaleRequest request ) => _ = SendSchemaAsync( HL2RPIds.Commands.CommerceSell, new Dictionary<string, SnapshotValue>()
+	{
+		["session"] = SnapshotValue.String( request.SessionId.ToString() ),
+		["inventory"] = SnapshotValue.String( request.InventoryId.ToString() ),
+		["item"] = SnapshotValue.String( request.ItemId.ToString() ),
+		["quantity"] = SnapshotValue.Integer( request.Quantity )
+	} );
+
+	private void PurchasePermit( PermitPurchaseRequest request ) => _ = SendSchemaAsync( HL2RPIds.Commands.PermitPurchase, new Dictionary<string, SnapshotValue>()
+	{
+		["permit"] = SnapshotValue.Choice( request.PermitKindId )
+	} );
+
+	private void UpdateCivicRecord( CivicRecordUpdateRequest request ) => _ = SendSchemaAsync( HL2RPIds.Commands.Priority, new Dictionary<string, SnapshotValue>()
+	{
+		["character"] = SnapshotValue.String( request.CharacterId.ToString() ),
+		["priority"] = SnapshotValue.Choice( request.Priority.ToString().ToLowerInvariant() ),
+		["record"] = SnapshotValue.String( request.RecordText )
+	} );
+
+	private void UpdateObjective( ObjectiveUpdateRequest request ) => _ = SendSchemaAsync( HL2RPIds.Commands.CityObjectives, new Dictionary<string, SnapshotValue>()
+	{
+		["objective"] = SnapshotValue.String( request.ObjectiveId ?? string.Empty ),
+		["title"] = SnapshotValue.String( request.Title ),
+		["detail"] = SnapshotValue.String( request.Detail ),
+		["completed"] = SnapshotValue.Boolean( request.Completed )
+	} );
+
+	private void Introduce( CharacterId characterId ) => _ = SendSchemaAsync( HL2RPIds.Commands.Introduce, new Dictionary<string, SnapshotValue>()
+	{
+		["character"] = SnapshotValue.String( characterId.Value.ToString( "D" ) )
+	} );
+
+	private void InspectCivic( CharacterId characterId ) => _ = InspectCivicAsync( characterId );
+
+	private async Task InspectCivicAsync( CharacterId characterId )
+	{
+		var controller = Controller;
+		var interactionWorkspaces = _interactionWorkspaces;
+		var viewModel = ViewModel;
+		if ( controller is null || interactionWorkspaces is null || viewModel is null ) return;
+		var transition = await interactionWorkspaces.PrepareTransitionAsync(
+			InteractionWorkspaceSnapshot.From( viewModel ), ShowcaseWorkspace.CivicData );
+		if ( !interactionWorkspaces.IsCurrent( transition.Sequence ) ) return;
+		if ( transition.CloseResult.Failed )
+		{
+			ObserveResult( transition.CloseResult );
+			return;
+		}
+		_characterPresentation.Workspace = ShowcaseWorkspace.None;
+		Rebuild();
+		var result = await controller.RunSchemaCommandAsync( HL2RPIds.Commands.CivicData,
+			new Dictionary<string, SnapshotValue>
+			{
+				["character"] = SnapshotValue.String( characterId.Value.ToString( "D" ) )
+			} );
+		if ( !interactionWorkspaces.IsCurrent( transition.Sequence ) ) return;
+		if ( result.Succeeded )
+		{
+			_characterPresentation.Workspace = ShowcaseWorkspace.CivicData;
+			_characterPresentation.ScoreboardOpen = false;
+		}
+		AddResultNotification( result );
+	}
+
+	private void SaveNote( NoteSaveRequest request ) => _ = SendSchemaAsync( HL2RPIds.Commands.NoteWrite, new Dictionary<string, SnapshotValue>()
+	{
+		["item"] = SnapshotValue.String( request.ItemId.ToString() ),
+		["body"] = SnapshotValue.String( request.Body )
+	} );
+
+	private void TuneRadio( RadioTuneRequest request ) => _ = SendSchemaAsync( HL2RPIds.Commands.RadioFrequency, new Dictionary<string, SnapshotValue>()
+	{
+		["item"] = SnapshotValue.String( request.RadioItemId?.ToString() ?? string.Empty ),
+		["frequency"] = SnapshotValue.String( request.Frequency ),
+		["enabled"] = SnapshotValue.Boolean( request.Enabled )
+	} );
+
+	private void SetRestraint( RestraintActionRequest request ) => _ = SendSchemaAsync( HL2RPIds.Commands.RestraintSet, new Dictionary<string, SnapshotValue>()
+	{
+		["character"] = SnapshotValue.String( request.TargetCharacterId.ToString() ),
+		["restrain"] = SnapshotValue.Boolean( request.Restrain ),
+		["search"] = SnapshotValue.Boolean( request.Search )
+	} );
+
+	private void SendScannerIntent( ScannerIntentRequest request ) => _ = SendSchemaAsync( HL2RPIds.Commands.ScannerIntent, new Dictionary<string, SnapshotValue>()
+	{
+		["session"] = SnapshotValue.String( request.SessionId?.ToString() ?? string.Empty ),
+		["intent"] = SnapshotValue.Choice( ScannerIntentName( request.Intent ) ),
+		["sequence"] = SnapshotValue.Integer( request.Sequence ),
+		["forward"] = SnapshotValue.Integer( request.Forward ),
+		["right"] = SnapshotValue.Integer( request.Right ),
+		["up"] = SnapshotValue.Integer( request.Up ),
+		["yaw"] = SnapshotValue.Integer( request.Yaw ),
+		["pitch"] = SnapshotValue.Integer( request.Pitch )
+	} );
+
+	private static string ScannerIntentName( ScannerIntent intent ) => intent switch
+	{
+		ScannerIntent.Exit => "exit",
+		ScannerIntent.ToggleSpotlight => "spotlight",
+		ScannerIntent.Flash => "flash",
+		ScannerIntent.TakePhoto => "photo",
+		ScannerIntent.Move => "move",
+		_ => "invalid"
+	};
+
+	private void RequestRespawn() => _ = SendSchemaAsync( HL2RPIds.Commands.CombatRespawn, null );
+
+	private async Task SendSchemaAsync( string commandId, IReadOnlyDictionary<string, SnapshotValue>? arguments )
+	{
+		var controller = Controller;
+		if ( controller is null ) return;
+		var result = await controller.RunSchemaCommandAsync( commandId, arguments );
+		AddResultNotification( result );
+	}
+
+	private void AddResultNotification( OperationResult result )
+	{
+		var notification = result.Succeeded
+			? new NotificationViewModel( Guid.NewGuid(), "Request accepted", "The host committed the operation.",
+				NotificationTone.Positive, DateTimeOffset.UtcNow.AddSeconds( 4 ) )
+			: new NotificationViewModel( Guid.NewGuid(), result.Error?.Code.ToString() ?? "Denied",
+				result.Error?.Message ?? "The host denied the request.", NotificationTone.Critical,
+				DateTimeOffset.UtcNow.AddSeconds( 7 ) );
+		_characterPresentation.Notifications = _characterPresentation.Notifications.Add( notification );
+		Rebuild();
+	}
+
+	private void ResetCharacterPresentation()
+	{
+		_characterPresentation.Reset();
+		_interactionWorkspaces?.Reset();
+		if ( Controller is not null )
+			_characterSessionReturn = new CharacterSessionReturnCoordinator( Controller );
+	}
+}

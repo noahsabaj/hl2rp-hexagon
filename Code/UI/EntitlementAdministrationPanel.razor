@@ -1,0 +1,114 @@
+@using System
+@using System.Collections.Generic
+@using System.Globalization
+@using System.Threading.Tasks
+@using Hexagon.V2.Client
+@using Hexagon.V2.Kernel
+@using Hexagon.V2.Networking
+@using HL2RP.V2.Domain
+@using HL2RP.V2.Schema
+@using Sandbox.UI
+@namespace HL2RP.UI
+@inherits Panel
+
+<root class="entitlement-admin @Variant">
+	<div class="section-heading"><span>AUTH</span> Account entitlements</div>
+	<div class="field-hint">
+		Authenticated account @ViewModel.AuthenticatedAccountId.Value · current grants: @FlagSummary( ViewModel.SelfFlags )
+	</div>
+	@if ( ViewModel.CanManage )
+	{
+		<div class="field-group">
+			<label>Target authenticated account ID</label>
+			<TextEntry Value:bind="@TargetAccount" Placeholder="Unsigned platform account ID" />
+		</div>
+		<div class="choice-row wrap">
+			@foreach ( var choice in FlagChoices )
+			{
+				<button class="choice-chip @(SelectedFlag == choice.Value ? "is-selected" : string.Empty)"
+					@onclick="@(() => SelectedFlag = choice.Value)">@choice.Label</button>
+			}
+		</div>
+		<div class="choice-row wrap">
+			<button class="hex-button secondary" disabled="@(!HasTarget)" @onclick="@QueryAsync">Inspect</button>
+			<button class="hex-button primary" disabled="@(!HasCurrentTarget)" @onclick="@GrantAsync">Grant</button>
+			<button class="hex-button danger" disabled="@(!HasCurrentTarget)" @onclick="@RevokeAsync">Revoke</button>
+		</div>
+		@if ( ViewModel.QueriedAccountId is AccountId queried )
+		{
+			<div class="window-status">
+				Target @queried.Value · @FlagSummary( ViewModel.QueriedFlags ) · revision @ViewModel.QueriedRevision
+			</div>
+		}
+	}
+	else
+	{
+		<div class="window-status">Restricted affiliations require a host-granted account entitlement.</div>
+	}
+</root>
+
+@code
+{
+	[Parameter, EditorRequired] public EntitlementAdministrationViewModel ViewModel { get; set; } = null!;
+	[Parameter] public IHexClientController? Controller { get; set; }
+	[Parameter] public Action<OperationResult>? OnResult { get; set; }
+	[Parameter] public string Variant { get; set; } = string.Empty;
+
+	private string TargetAccount { get; set; } = string.Empty;
+	private string SelectedFlag { get; set; } = "civil_protection";
+	private ulong _boundQueriedAccount;
+
+	private static IReadOnlyList<(string Value, string Label)> FlagChoices { get; } = new[]
+	{
+		("civil_protection", "Civil Protection"),
+		("overwatch", "Overwatch"),
+		("city_administration", "City Administration")
+	};
+
+	private bool HasTarget => ulong.TryParse(
+		TargetAccount, NumberStyles.None, CultureInfo.InvariantCulture, out var value ) && value > 0;
+
+	private bool HasCurrentTarget => HasTarget &&
+		ViewModel.QueriedAccountId is AccountId queried &&
+		ulong.TryParse( TargetAccount, NumberStyles.None, CultureInfo.InvariantCulture, out var value ) &&
+		queried.Value == value;
+
+	protected override void OnParametersSet()
+	{
+		if ( ViewModel is null )
+			throw new InvalidOperationException( $"{nameof(EntitlementAdministrationPanel)} requires {nameof(ViewModel)}." );
+
+		if ( ViewModel.QueriedAccountId is not AccountId queried || queried.Value == _boundQueriedAccount ) return;
+		_boundQueriedAccount = queried.Value;
+		TargetAccount = queried.Value.ToString( CultureInfo.InvariantCulture );
+	}
+
+	private Task QueryAsync() => ExecuteAsync( HL2RPIds.Commands.EntitlementQuery, includeMutation: false );
+	private Task GrantAsync() => ExecuteAsync( HL2RPIds.Commands.EntitlementGrant, includeMutation: true );
+	private Task RevokeAsync() => ExecuteAsync( HL2RPIds.Commands.EntitlementRevoke, includeMutation: true );
+
+	private async Task ExecuteAsync( string commandId, bool includeMutation )
+	{
+		if ( Controller is null || !HasTarget || includeMutation && !HasCurrentTarget ) return;
+		var arguments = new Dictionary<string, SnapshotValue>( StringComparer.Ordinal )
+		{
+			["account"] = SnapshotValue.String( TargetAccount.Trim() )
+		};
+		if ( includeMutation )
+		{
+			arguments["flag"] = SnapshotValue.Choice( SelectedFlag );
+			arguments["revision"] = SnapshotValue.Integer( ViewModel.QueriedRevision );
+		}
+		var result = await Controller.RunSchemaCommandAsync( commandId, arguments );
+		OnResult?.Invoke( result );
+	}
+
+	private static string FlagSummary( HL2RPWhitelist flags )
+	{
+		var labels = new List<string>();
+		if ( flags.HasFlag( HL2RPWhitelist.CivilProtection ) ) labels.Add( "Civil Protection" );
+		if ( flags.HasFlag( HL2RPWhitelist.Overwatch ) ) labels.Add( "Overwatch" );
+		if ( flags.HasFlag( HL2RPWhitelist.CityAdministration ) ) labels.Add( "City Administration" );
+		return labels.Count == 0 ? "none" : string.Join( ", ", labels );
+	}
+}

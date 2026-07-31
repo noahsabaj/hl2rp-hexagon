@@ -1,0 +1,438 @@
+$ink: #070a0d;
+$panel: #11161b;
+$panel-raised: #182027;
+$line: rgba( 176, 197, 205, 0.18 );
+$muted: #82919a;
+$paper: #d4d0bb;
+$white: #edf3f4;
+$amber: #d7a84b;
+$cyan: #67c4d4;
+$green: #75c99a;
+$red: #db6a61;
+
+// s&box's `disabled` attribute is ONLY a CSS class - Sandbox.UI.Button.Disabled is literally
+// `get => HasClass("disabled"); set => SetClass("disabled", value);` and nothing in the engine reads
+// it again. Hit testing gates solely on computed style (PanelInput.cs: `PointerEvents != None`), and
+// while pointer-events DEFAULTS to none it also CASCADES - our containers set `pointer-events: all`
+// in ten places, so every descendant button inherits `all` and a dimmed button stays fully clickable.
+//
+// Every disabled style therefore goes through this mixin, so the class cannot be styled without also
+// being disarmed. That is the difference between fixing six rules and closing the hole: the next
+// disabled thing someone adds is disarmed by construction. The engine's own _button.scss:74 pairs
+// them exactly this way.
+@mixin disarmed( $dim: 0.3 ) {
+	opacity: $dim;
+	pointer-events: none;
+	cursor: default;
+	transform: none;
+}
+
+.hl2rp-client-presenter {
+	position: absolute;
+	left: 0;
+	top: 0;
+	right: 0;
+	bottom: 0;
+}
+
+.hl2rp-showcase-root {
+	position: absolute;
+	left: 0;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	font-family: "Roboto";
+	font-size: 14px;
+	color: $white;
+	pointer-events: none;
+
+	button {
+		font-family: "Roboto";
+		cursor: pointer;
+	}
+
+	.micro-label {
+		font-family: "Roboto Mono";
+		font-size: 10px;
+		font-weight: 700;
+		letter-spacing: 1.8px;
+		color: $muted;
+	}
+
+	.hex-button {
+		min-height: 36px;
+		padding: 0 16px;
+		border: 1px solid $line;
+		border-radius: 2px;
+		background-color: rgba( 255, 255, 255, 0.035 );
+		color: $white;
+		font-size: 12px;
+		font-weight: 700;
+		letter-spacing: 0.4px;
+		align-items: center;
+		justify-content: center;
+		transition: all 0.12s ease;
+
+		&:hover { background-color: rgba( 255, 255, 255, 0.09 ); border-color: rgba( 255, 255, 255, 0.3 ); }
+		&:active { transform: scale( 0.98 ); }
+		&.disabled { @include disarmed( 0.32 ); }
+		&.primary { color: #15110a; background-color: $amber; border-color: lighten( $amber, 8% ); }
+		&.primary:hover { background-color: lighten( $amber, 8% ); }
+		&.secondary { background-color: rgba( $cyan, 0.1 ); border-color: rgba( $cyan, 0.42 ); color: lighten( $cyan, 18% ); }
+		&.danger { border-color: rgba( $red, 0.5 ); color: lighten( $red, 12% ); background-color: rgba( $red, 0.1 ); }
+		&.ghost { background-color: transparent; border-color: transparent; }
+		&.wide { min-width: 190px; }
+	}
+
+	.hex-icon-button {
+		width: 38px;
+		height: 38px;
+		border: 1px solid $line;
+		background-color: transparent;
+		color: $muted;
+		font-family: "Material Icons";
+		font-size: 19px;
+		align-items: center;
+		justify-content: center;
+		&:hover { color: $white; background-color: rgba( $red, 0.14 ); border-color: rgba( $red, 0.5 ); }
+	}
+
+	.hex-window {
+		background-color: rgba( $ink, 0.96 );
+		border: 1px solid rgba( 201, 216, 220, 0.16 );
+		box-shadow: 0 24px 90px rgba( 0, 0, 0, 0.72 );
+		pointer-events: all;
+		flex-direction: column;
+		min-width: 560px;
+
+		&::before {
+			content: "";
+			position: absolute;
+			left: -1px;
+			top: -1px;
+			width: 74px;
+			height: 2px;
+			background-color: $amber;
+		}
+	}
+
+	.hex-window__header {
+		min-height: 76px;
+		padding: 17px 20px 15px 22px;
+		border-bottom: 1px solid $line;
+		align-items: center;
+		justify-content: space-between;
+		background: linear-gradient( 90deg, rgba( $amber, 0.055 ), transparent );
+	}
+
+	.hex-window__identity { flex-direction: column; gap: 2px; }
+	.hex-window__eyebrow { font-family: "Roboto Mono"; font-size: 9px; letter-spacing: 2px; color: $amber; }
+	.hex-window__title { font-size: 22px; font-weight: 600; letter-spacing: -0.3px; }
+	.hex-window__subtitle { color: $muted; font-size: 12px; }
+	.hex-window__actions { align-items: center; gap: 8px; }
+	.hex-window__body { flex-grow: 1; flex-direction: column; overflow: hidden; }
+	.hex-window__footer { min-height: 58px; padding: 10px 18px; border-top: 1px solid $line; align-items: center; justify-content: space-between; background-color: rgba( 255, 255, 255, 0.018 ); }
+	.window-status { color: $muted; font-size: 12px; }
+
+	.field-group {
+		flex-direction: column;
+		gap: 7px;
+		.field-label { align-items: baseline; gap: 8px; }
+		label { font-size: 11px; font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase; color: #a8b4b9; }
+		.required { color: $amber; font-family: "Roboto Mono"; font-size: 8px; }
+		.field-hint { margin-top: -4px; color: $muted; font-size: 11px; }
+
+		textentry {
+			min-height: 40px;
+			padding: 10px 12px;
+			background-color: rgba( 0, 0, 0, 0.28 );
+			border: 1px solid $line;
+			border-radius: 2px;
+			color: $white;
+			&:focus { border-color: rgba( $amber, 0.7 ); background-color: rgba( $amber, 0.035 ); }
+		}
+	}
+
+	.choice-row { gap: 7px; align-items: center; &.wrap { flex-wrap: wrap; } }
+	.choice-chip, .priority-chip {
+		min-height: 32px;
+		padding: 0 11px;
+		border: 1px solid $line;
+		background-color: transparent;
+		color: $muted;
+		font-size: 11px;
+		font-weight: 700;
+		&:hover { color: $white; border-color: rgba( $cyan, 0.4 ); }
+		&.is-selected { color: lighten( $cyan, 18% ); border-color: $cyan; background-color: rgba( $cyan, 0.12 ); }
+		&.disabled { @include disarmed( 0.3 ); }
+	}
+
+	.hex-toggle {
+		min-height: 34px;
+		padding: 0 12px;
+		gap: 9px;
+		border: 1px solid $line;
+		background-color: transparent;
+		color: $muted;
+		align-items: center;
+		span { width: 9px; height: 9px; border-radius: 50%; background-color: #4e5960; }
+		&.is-on { color: $green; border-color: rgba( $green, 0.45 ); span { background-color: $green; box-shadow: 0 0 10px rgba( $green, 0.7 ); } }
+	}
+
+	.hex-empty-state {
+		flex-grow: 1;
+		min-height: 240px;
+		padding: 36px;
+		align-items: center;
+		justify-content: center;
+		flex-direction: column;
+		gap: 9px;
+		color: $muted;
+		text-align: center;
+		strong { color: $white; font-size: 18px; }
+		.hex-empty-state__icon { font-family: "Material Icons"; color: $amber; font-size: 40px; }
+		&.compact { min-height: 70px; padding: 18px; font-size: 12px; }
+	}
+
+	.showcase-boot {
+		position: absolute;
+		left: 50%;
+		top: 50%;
+		transform: translate( -50%, -50% );
+		width: 380px;
+		padding: 36px;
+		align-items: center;
+		flex-direction: column;
+		gap: 7px;
+		background-color: rgba( $ink, 0.92 );
+		border: 1px solid $line;
+		strong { margin-top: 8px; font-size: 20px; }
+		p { color: $muted; }
+	}
+	.showcase-boot__mark { gap: 5px; span { width: 7px; height: 28px; background-color: $amber; transform: skewX( -18deg ); animation: boot-pulse 1s infinite alternate; } }
+
+	.character-menu {
+		position: absolute;
+		inset: 0;
+		pointer-events: all;
+		background: linear-gradient( 105deg, rgba( 4, 7, 9, 0.99 ) 0%, rgba( 8, 14, 18, 0.92 ) 48%, rgba( 20, 28, 31, 0.74 ) 100% );
+	}
+	.character-menu__atmosphere { position: absolute; left: 70px; top: 90px; width: 370px; flex-direction: column; }
+	.character-menu__seal { width: 90px; height: 90px; margin-bottom: 24px; border: 3px solid rgba( $amber, 0.7 ); color: $amber; font-family: "Roboto Mono"; font-size: 30px; align-items: center; justify-content: center; transform: rotate( -3deg ); }
+	.character-menu__city { font-size: 45px; font-weight: 800; letter-spacing: -2px; }
+	.character-menu__strap { margin-top: 9px; color: $muted; font-size: 14px; line-height: 1.45; }
+	.character-menu__window { position: absolute; right: 62px; top: 54px; bottom: 54px; width: 1020px; }
+	.character-menu__window .hex-window__body { overflow: scroll; }
+	.entitlement-admin {
+		padding: 16px 18px;
+		gap: 12px;
+		flex-direction: column;
+		background-color: rgba( $ink, 0.92 );
+		border: 1px solid $line;
+		box-shadow: 0 16px 45px rgba( 0, 0, 0, 0.4 );
+		pointer-events: all;
+		overflow: scroll;
+
+		> .field-hint { color: $muted; font-size: 11px; line-height: 1.45; }
+		> .field-group { width: 100%; }
+	}
+	.entitlement-admin--character-menu { position: absolute; left: 70px; top: 350px; width: 370px; max-height: calc( 100% - 410px ); }
+	.entitlement-admin--workspace { position: absolute; left: 50%; top: 50%; z-index: 25; width: 560px; max-height: calc( 100% - 120px ); transform: translate( -50%, -50% ); }
+	.creation-layout { padding: 24px; gap: 24px; }
+	.creation-form { width: 50%; padding-right: 23px; border-right: 1px solid $line; flex-direction: column; gap: 18px; }
+	.creation-form textentry.multiline { min-height: 102px; }
+	.creation-options { flex-grow: 1; flex-direction: column; gap: 23px; }
+	.option-section { flex-direction: column; gap: 8px; }
+	.section-heading { margin-bottom: 5px; color: #aeb9bd; font-size: 11px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase; span { margin-right: 8px; color: $amber; font-family: "Roboto Mono"; } }
+	.option-card { width: 100%; padding: 12px 14px; border: 1px solid $line; background-color: rgba( 255, 255, 255, 0.02 ); color: $white; align-items: flex-start; flex-direction: column; text-align: left; strong { font-size: 13px; } span { margin-top: 3px; color: $muted; font-size: 11px; } &.is-selected { border-color: $amber; background-color: rgba( $amber, 0.09 ); } &.compact { padding: 9px 12px; } &.disabled, &.is-disabled { @include disarmed( 0.4 ); } }
+	.character-grid { padding: 22px; flex-wrap: wrap; gap: 14px; }
+	.character-card { width: calc( 50% - 7px ); min-height: 220px; padding: 18px; border: 1px solid $line; background: linear-gradient( 145deg, rgba( 255,255,255,0.035 ), rgba(255,255,255,0.01) ); flex-direction: column; }
+	.character-card__slot { color: $amber; font-family: "Roboto Mono"; font-size: 9px; letter-spacing: 1.4px; }
+	.character-card__name { margin-top: 12px; font-size: 22px; font-weight: 600; }
+	.character-card__description { margin-top: 4px; color: $muted; font-size: 12px; line-height: 1.4; }
+	.character-card__tags { margin-top: 12px; gap: 6px; span { padding: 4px 7px; border: 1px solid $line; color: #9fb0b7; font-family: "Roboto Mono"; font-size: 9px; } }
+	.character-card__last { margin-top: auto; color: #69777e; font-size: 10px; }
+	.character-card__actions { margin-top: 12px; gap: 7px; }
+	.character-card.is-disabled { @include disarmed( 0.5 ); }
+
+	.hud-vitals { position: absolute; left: 28px; bottom: 30px; width: 350px; padding: 15px; gap: 12px; flex-direction: column; background: linear-gradient( 90deg, rgba( $ink, 0.87 ), rgba( $ink, 0.48 ) ); border-left: 2px solid $amber; }
+	.hud-vitals__identity { flex-direction: column; }
+	.hud-vitals__name { margin-top: 2px; font-size: 18px; font-weight: 600; }
+	.hud-vitals__location { color: $muted; font-size: 10px; }
+	.hud-meter { flex-direction: column; gap: 4px; }
+	.hud-meter__top { justify-content: space-between; align-items: baseline; color: $muted; font-size: 9px; letter-spacing: 1px; strong { color: $white; font-family: "Roboto Mono"; font-size: 14px; } }
+	.hud-meter__track { height: 3px; background-color: rgba(255,255,255,0.12); span { height: 100%; background-color: $green; } }
+	.hud-meter.armor .hud-meter__track span { background-color: $cyan; }
+	.hud-balance { position: absolute; right: 15px; top: 17px; flex-direction: column; align-items: flex-end; color: $muted; font-size: 8px; letter-spacing: 1px; strong { color: $amber; font-family: "Roboto Mono"; font-size: 16px; } }
+	.hud-status-rail { position: absolute; left: 30px; bottom: 238px; gap: 6px; }
+	.status-pill { height: 27px; padding: 0 9px; gap: 6px; background-color: rgba( $ink, 0.75 ); color: #58666d; font-family: "Material Icons"; font-size: 15px; align-items: center; span { font-family: "Roboto Mono"; font-size: 8px; letter-spacing: 1px; } &.is-active { color: $cyan; } &.danger.is-active { color: $red; } }
+	.hud-ammo { position: absolute; right: 32px; bottom: 32px; padding: 12px 16px; background-color: rgba( $ink, 0.76 ); align-items: baseline; }
+	.hud-ammo__magazine { font-family: "Roboto Mono"; font-size: 34px; }
+	.hud-ammo__reserve { margin-left: 6px; color: $muted; font-family: "Roboto Mono"; font-size: 15px; }
+	.hud-ammo .micro-label { position: absolute; right: 15px; top: -9px; }
+
+	// The mask ramps LUMINANCE, not alpha: s&box's default mask-mode is MatchSource, and
+	// ui_filter.shader treats MatchSource exactly like Luminance (mask = GetLuminance(rgb)), despite
+	// MaskMode's own docs saying an image source should use alpha per CSS. This was
+	// `transparent -> black`, which generated a luminance-0 texture, so the whole subtree was
+	// multiplied to fully transparent - correct layout, 20 children, drawing nothing.
+	// NOT because `transparent` is black: s&box maps it to #AAAAAA00, grey with zero alpha
+	// (Color.cs:756). It is Styles.GradientGenerator.LerpPremultiplied that kills it - RGB is
+	// premultiplied by alpha, and the `r /= a` recovery is skipped when a <= 0.0001, so the grey
+	// collapses to zero and never comes back.
+	// black -> white is how the engine's own PlayerListModal writes its masks - the only
+	// mask-image in the entire engine tree, and therefore the only reference worth copying.
+
+	.action-progress { position: absolute; left: 50%; bottom: 135px; transform: translateX( -50% ); width: 390px; padding: 11px 14px; background-color: rgba( $ink, 0.9 ); border: 1px solid $line; flex-direction: column; }
+	.action-progress__copy { justify-content: space-between; span { color: $muted; font-family: "Roboto Mono"; font-size: 8px; } strong { font-size: 12px; } }
+	.action-progress__track { height: 3px; margin-top: 8px; background-color: rgba(255,255,255,0.1); span { height: 100%; background-color: $amber; } }
+	.action-progress > button { position: absolute; right: -34px; top: 4px; width: 28px; height: 28px; border: 0; background-color: rgba($ink,0.8); color: $muted; font-family: "Material Icons"; }
+
+	.notification-stack { position: absolute; right: 28px; top: 88px; width: 330px; gap: 7px; flex-direction: column; pointer-events: all; }
+	.notification { width: 100%; min-height: 62px; padding: 11px 13px 11px 9px; gap: 11px; background-color: rgba( $ink, 0.92 ); border: 1px solid $line; color: $white; text-align: left; .notification__marker { width: 3px; align-self: stretch; background-color: $cyan; } > div:last-child { flex-direction: column; } strong { font-size: 12px; } span { margin-top: 3px; color: $muted; font-size: 11px; } &.tone-positive .notification__marker { background-color: $green; } &.tone-warning .notification__marker { background-color: $amber; } &.tone-critical .notification__marker { background-color: $red; } }
+
+	.combine-overlay { position: absolute; left: 24px; right: 24px; top: 20px; color: rgba( $cyan, 0.9 ); font-family: "Roboto Mono"; text-shadow: 0 0 8px rgba( $cyan, 0.25 ); }
+	.combine-overlay__topline { width: 100%; padding-bottom: 8px; border-bottom: 1px solid rgba($cyan,0.22); justify-content: space-between; font-size: 10px; letter-spacing: 1px; }
+	.combine-overlay__directive { position: absolute; left: 0; top: 34px; width: 390px; flex-direction: column; font-size: 11px; span { color: rgba($cyan,0.55); font-size: 8px; letter-spacing: 2px; } }
+	.combine-overlay__alerts { position: absolute; right: 0; top: 34px; width: 330px; flex-direction: column; gap: 4px; }
+	.combine-alert { padding: 7px 9px; border-left: 2px solid $cyan; background-color: rgba($cyan,0.05); flex-direction: column; span { font-size: 8px; opacity: 0.6; } strong { font-size: 10px; } &.tone-critical { border-color: $red; color: $red; } }
+
+	.restraint-status, .restraint-panel { pointer-events: all; background-color: rgba( $ink, 0.94 ); border: 1px solid rgba($red,0.35); box-shadow: 0 12px 35px rgba(0,0,0,0.45); }
+	.restraint-status { position: absolute; left: 50%; bottom: 80px; transform: translateX(-50%); min-width: 360px; padding: 10px 12px; gap: 10px; align-items: center; .restraint-status__icon { color: $red; font-family: "Material Icons"; font-size: 23px; } > div:nth-child(2) { flex-grow: 1; flex-direction: column; } strong { color: $red; font-family: "Roboto Mono"; font-size: 10px; } span { color: $muted; font-size: 10px; } }
+	.restraint-panel { position: absolute; right: 28px; bottom: 105px; width: 400px; padding: 15px; gap: 13px; .restraint-panel__icon { color: $amber; font-family: "Material Icons"; font-size: 31px; } .restraint-panel__copy { flex-grow: 1; flex-direction: column; } strong { font-size: 14px; } p { color: $muted; font-size: 11px; } .restraint-panel__actions { gap: 7px; flex-direction: column; } }
+
+	.death-screen { position: absolute; inset: 0; z-index: 80; background-color: rgba( 2, 3, 4, 0.91 ); align-items: center; justify-content: center; flex-direction: column; pointer-events: all; }
+	.death-screen__rule { width: 56px; height: 2px; margin-bottom: 18px; background-color: $red; }
+	.death-screen__title { margin-top: 9px; font-size: 38px; font-weight: 300; }
+	.death-screen__cause { margin-top: 8px; color: $muted; font-size: 13px; }
+	.death-screen__timer { margin: 24px 0 10px; color: #9ca8ad; font-family: "Roboto Mono"; font-size: 10px; }
+
+	.showcase-dock { position: absolute; left: 50%; bottom: 24px; z-index: 18; transform: translateX(-50%); padding: 5px; gap: 3px; background-color: rgba( $ink, 0.9 ); border: 1px solid $line; pointer-events: all; }
+	.showcase-dock button { min-width: 70px; height: 44px; padding: 4px 9px; border: 0; border-bottom: 2px solid transparent; background-color: transparent; color: $muted; font-size: 9px; flex-direction: column; align-items: center; justify-content: center; span { font-family: "Material Icons"; font-size: 18px; } &:hover { color: $white; background-color: rgba(255,255,255,0.04); } &.is-active { color: $amber; border-bottom-color: $amber; background-color: rgba($amber,0.08); } }
+	.showcase-dock button.character-session-return { min-width: 145px; margin-left: 4px; border-left: 1px solid $line; color: #9fb0b7; &:hover { color: $amber; } &.is-disabled { @include disarmed( 1 ); color: #536168; background-color: transparent; } }
+
+	.operations-panel, .combine-suite-panel, .scoreboard-panel { position: absolute; inset: 0; z-index: 25; align-items: center; justify-content: center; background-color: rgba( 0, 0, 0, 0.42 ); pointer-events: all; }
+	.operations-window, .combine-suite-window { width: 1280px; height: 790px; }
+	.scoreboard-window { width: 1050px; max-height: 760px; }
+	.workspace-tabs { gap: 2px; button { height: 31px; padding: 0 10px; border: 0; background-color: transparent; color: $muted; font-size: 10px; font-weight: 700; &:hover { color: $white; } &.is-active { color: $amber; background-color: rgba($amber,0.09); } } }
+	.session-status { gap: 7px; color: $green; font-family: "Roboto Mono"; font-size: 9px; span { width: 6px; height: 6px; border-radius: 50%; background-color: $green; } }
+
+	.hex-inventory { flex-grow: 1; min-width: 0; padding: 16px; flex-direction: column; overflow: scroll; }
+	.hex-inventory__meta { margin-bottom: 10px; justify-content: space-between; align-items: center; > div { flex-direction: column; } }
+	.hex-inventory__title { font-size: 17px; font-weight: 600; }
+	.hex-inventory__dimensions { color: $muted; font-family: "Roboto Mono"; font-size: 10px; }
+	.hex-inventory__grid { position: relative; flex-shrink: 0; background-color: rgba( 0, 0, 0, 0.22 ); border: 1px solid $line; }
+	.hex-inventory__cell { position: absolute; border-right: 1px solid rgba(255,255,255,0.055); border-bottom: 1px solid rgba(255,255,255,0.055); }
+	.hex-item { position: absolute; padding: 8px; border: 1px solid rgba(154,177,185,0.2); background: linear-gradient(145deg, #202a30, #141b20); color: $white; text-align: left; flex-direction: column; overflow: hidden; &:hover { border-color: rgba($cyan,0.55); z-index: 2; } &.is-selected { border-color: $amber; box-shadow: inset 0 0 0 1px rgba($amber,0.2); z-index: 3; } }
+	.hex-item__category { color: $muted; font-family: "Roboto Mono"; font-size: 7px; text-transform: uppercase; }
+	.hex-item__name { margin-top: auto; font-size: 11px; font-weight: 700; }
+	.hex-item__quantity { position: absolute; right: 5px; top: 5px; padding: 2px 4px; background-color: rgba(0,0,0,0.55); color: $amber; font-family: "Roboto Mono"; font-size: 9px; }
+	.hex-item-detail { margin-top: 12px; min-height: 92px; padding: 12px; gap: 16px; border: 1px solid $line; background-color: rgba(255,255,255,0.02); }
+	.hex-item-detail__copy { flex-grow: 1; flex-direction: column; }
+	.hex-item-detail__name { margin-top: 3px; font-size: 15px; font-weight: 600; }
+	.hex-item-detail__description { margin-top: 4px; color: $muted; font-size: 11px; }
+	.hex-item-detail__actions { width: 200px; flex-direction: column; gap: 5px; }
+	.single-inventory-layout { height: 100%; padding: 10px 22px; justify-content: center; }
+	.single-inventory-layout .hex-inventory { max-width: 860px; }
+
+	.interaction-banner { padding: 9px 15px; gap: 8px; background-color: rgba($amber,0.08); border-bottom: 1px solid rgba($amber,0.3); color: lighten($amber,15%); font-size: 10px; align-items: center; span { font-family: "Material Icons"; font-size: 17px; } }
+	.transfer-layout { flex-grow: 1; min-height: 0; padding: 10px; gap: 8px; }
+	.transfer-pane { width: calc( 50% - 48px ); min-width: 0; border: 1px solid rgba(255,255,255,0.05); }
+	.transfer-controls { width: 80px; align-items: center; justify-content: center; flex-direction: column; gap: 9px; }
+	.transfer-controls__line { width: 1px; height: 70px; background-color: $line; }
+	.hex-transfer-button { width: 42px; height: 42px; border-radius: 50%; border: 1px solid rgba($cyan,0.4); background-color: rgba($cyan,0.08); color: $cyan; font-family: "Material Icons"; align-items: center; justify-content: center; &.disabled { @include disarmed( 0.25 ); } }
+	// Column: the caption is two labels, and s&box's default flex-direction is Row.
+	.transfer-controls__caption { flex-direction: column; margin-top: 8px; color: #66767d; font-family: "Roboto Mono"; font-size: 7px; text-align: center; }
+
+	.vendor-layout { flex-grow: 1; min-height: 0; }
+	.vendor-catalog { flex-grow: 1; padding: 20px; flex-direction: column; overflow: scroll; }
+	.vendor-heading { padding-bottom: 16px; border-bottom: 1px solid $line; justify-content: space-between; > div:first-child { flex-direction: column; } strong { margin-top: 3px; font-size: 21px; } p { color: $muted; } }
+	.vendor-balance { padding: 10px 14px; border: 1px solid rgba($amber,0.35); color: $amber; font-family: "Roboto Mono"; font-size: 17px; flex-direction: column; align-items: flex-end; span { color: $muted; font-size: 7px; } }
+	.vendor-offers { margin-top: 12px; flex-direction: column; gap: 5px; }
+	.vendor-offer { min-height: 86px; padding: 10px; border: 1px solid $line; background-color: rgba(255,255,255,0.02); align-items: center; gap: 11px; &.is-disabled { @include disarmed( 0.45 ); } }
+	.vendor-offer__icon { width: 52px; height: 52px; background-color: rgba($cyan,0.07); color: $cyan; font-family: "Material Icons"; font-size: 24px; align-items: center; justify-content: center; }
+	.vendor-offer__copy { flex-grow: 1; flex-direction: column; span { color: $muted; font-family: "Roboto Mono"; font-size: 7px; } strong { font-size: 14px; } p { color: $muted; font-size: 10px; } }
+	.vendor-offer__stock { width: 55px; color: #b2bfc3; font-family: "Roboto Mono"; font-size: 12px; flex-direction: column; span { color: $muted; font-size: 7px; } }
+	.vendor-offer__price { width: 80px; color: $amber; font-family: "Roboto Mono"; font-size: 13px; }
+	.vendor-sell { width: 330px; padding: 20px; border-left: 1px solid $line; flex-direction: column; overflow: scroll; }
+	.sell-row { padding: 10px 0; border-bottom: 1px solid $line; align-items: center; gap: 8px; > div { flex-grow: 1; flex-direction: column; } strong { font-size: 12px; } span { color: $muted; font-size: 9px; } }
+
+	.permit-layout { flex-grow: 1; min-height: 0; padding: 28px; gap: 28px; }
+	.permit-intro { width: 300px; padding-right: 28px; border-right: 1px solid $line; flex-direction: column; strong { margin-top: 8px; font-size: 25px; } p { margin-top: 8px; color: $muted; line-height: 1.5; } }
+	.permit-balance { margin-top: 28px; color: $muted; font-family: "Roboto Mono"; font-size: 9px; flex-direction: column; strong { color: $amber; font-size: 20px; } }
+	.permit-cards { flex-grow: 1; flex-wrap: wrap; align-content: flex-start; gap: 12px; overflow: scroll; }
+	.permit-card { width: calc(50% - 6px); min-height: 210px; padding: 18px; border: 1px solid rgba($amber,0.24); background: linear-gradient(150deg, rgba($amber,0.07), rgba(255,255,255,0.015)); flex-direction: column; .permit-card__seal { color: $amber; font-family: "Material Icons"; font-size: 28px; } > span { margin-top: 8px; color: $muted; font-family: "Roboto Mono"; font-size: 8px; } > strong { margin-top: 3px; font-size: 17px; } p { color: $muted; font-size: 11px; } &.is-owned { border-color: rgba($green,0.5); } }
+	.permit-card__footer { margin-top: auto; align-items: center; justify-content: space-between; > span { color: $muted; font-size: 9px; } }
+	.permit-owned { color: $green; font-family: "Roboto Mono"; font-size: 9px; letter-spacing: 1px; }
+
+	.scoreboard-panel { background-color: rgba(0,0,0,0.6); }
+	.scoreboard-window .hex-window__body { padding: 12px 18px 18px; overflow: scroll; }
+	.scoreboard-columns, .scoreboard-row { align-items: center; > *:nth-child(1) { width: 52%; } > *:nth-child(2) { width: 23%; } > *:nth-child(3) { width: 25%; } }
+	.scoreboard-columns { height: 28px; padding: 0 12px; color: $muted; font-family: "Roboto Mono"; font-size: 8px; letter-spacing: 1px; }
+	.scoreboard-row { min-height: 66px; padding: 8px 12px; border-top: 1px solid $line; background-color: rgba(255,255,255,0.012); &.is-local { border-left: 2px solid $amber; background-color: rgba($amber,0.05); } }
+	.scoreboard-row__identity { gap: 10px; align-items: center; > div:last-child { flex-direction: column; } strong { font-size: 13px; } span { max-width: 380px; color: $muted; font-size: 9px; white-space: nowrap; overflow: hidden; } }
+	.scoreboard-row__avatar { width: 36px; height: 36px; border-radius: 50%; background-color: rgba($cyan,0.1); color: $cyan; font-weight: 700; align-items: center; justify-content: center; }
+	.scoreboard-row__assignment { flex-direction: column; strong { color: #b9c6ca; font-family: "Roboto Mono"; font-size: 9px; } span { color: $muted; font-size: 9px; } }
+	.scoreboard-row__status { gap: 6px; color: $muted; font-size: 10px; align-items: center; .presence { width: 5px; height: 5px; border-radius: 50%; background-color: $green; } }
+
+	.civic-layout { flex-grow: 1; min-height: 0; padding: 20px; flex-direction: column; gap: 15px; }
+	.civic-dossier { min-height: 118px; padding: 15px; border: 1px solid $line; background: linear-gradient(90deg, rgba($cyan,0.06), transparent); align-items: center; }
+	.civic-photo { width: 74px; height: 82px; margin-right: 15px; background-color: rgba($cyan,0.1); border: 1px solid rgba($cyan,0.22); flex-direction: column; align-items: center; justify-content: center; span { color: $cyan; font-family: "Material Icons"; font-size: 39px; } small { color: $cyan; font-family: "Roboto Mono"; font-size: 7px; } }
+	.civic-identity { flex-grow: 1; flex-direction: column; strong { margin-top: 3px; font-size: 24px; } }
+	.civic-id { margin-top: 7px; color: $amber; font-family: "Roboto Mono"; font-size: 11px; letter-spacing: 2px; }
+	.civic-score { width: 140px; align-items: flex-end; flex-direction: column; span { color: $muted; font-family: "Roboto Mono"; font-size: 8px; } strong { color: $amber; font-family: "Roboto Mono"; font-size: 30px; } small { color: $muted; font-size: 9px; } }
+	.civic-priority { flex-direction: column; }
+	.priority-chip.priority-malignant.is-selected, .priority-chip.priority-detain.is-selected { color: $red; border-color: $red; background-color: rgba($red,0.1); }
+	.civic-content { flex-grow: 1; min-height: 0; gap: 16px; }
+	.civic-record-editor { width: 55%; flex-direction: column; textentry { flex-grow: 1; min-height: 190px; padding: 12px; border: 1px solid $line; background-color: rgba(0,0,0,0.2); color: $white; } .hex-button { align-self: flex-end; margin-top: 8px; } }
+	.infraction-list { flex-grow: 1; padding-left: 16px; border-left: 1px solid $line; flex-direction: column; overflow: scroll; }
+	.infraction-row { padding: 10px 0; border-bottom: 1px solid $line; gap: 8px; > div:first-child { flex-grow: 1; flex-direction: column; } strong { font-size: 11px; } span { color: $muted; font-size: 8px; } }
+	.infraction-points { color: $red; font-family: "Roboto Mono"; font-size: 12px; }
+
+	.objectives-layout { flex-grow: 1; min-height: 0; padding: 20px; gap: 20px; }
+	.objective-list { flex-grow: 1; min-width: 0; flex-direction: column; gap: 6px; overflow: scroll; }
+	.objective-card { min-height: 92px; padding: 13px; gap: 12px; border: 1px solid $line; background-color: rgba(255,255,255,0.02); color: $white; text-align: left; .objective-card__state { color: $amber; font-family: "Material Icons"; font-size: 21px; } > div:last-child { flex-direction: column; } span { color: $muted; font-family: "Roboto Mono"; font-size: 8px; } strong { margin-top: 4px; font-size: 15px; } p { margin-top: 3px; color: #9caaaf; font-size: 11px; } &.is-selected { border-color: $amber; } &.is-complete { opacity: 0.5; .objective-card__state { color: $green; } } }
+	.objective-editor { width: 360px; padding-left: 20px; border-left: 1px solid $line; flex-direction: column; gap: 13px; }
+	.objective-editor .field-group textentry.multiline { min-height: 150px; }
+
+	.note-layout { flex-grow: 1; min-height: 0; padding: 32px; gap: 34px; align-items: center; justify-content: center; background-color: #101519; }
+	.note-paper { width: 570px; height: 590px; padding: 45px 44px 30px 58px; background-color: $paper; color: #272b29; box-shadow: 0 22px 55px rgba(0,0,0,0.55); flex-direction: column; transform: rotate(-0.5deg); }
+	.note-paper__rings { position: absolute; left: 25px; top: 0; bottom: 0; width: 1px; border-left: 1px solid rgba($red,0.35); }
+	.note-paper textentry { border: 0; background-color: transparent; color: #272b29; }
+	.note-paper .note-body { flex-grow: 1; padding: 15px 0; font-family: "Roboto Mono"; font-size: 13px; line-height: 1.7; }
+	.note-count { align-self: flex-end; color: rgba(35,40,38,0.55); font-family: "Roboto Mono"; font-size: 9px; }
+	.note-tools { width: 280px; flex-direction: column; strong { margin-top: 7px; font-size: 21px; } p { margin-top: 7px; color: $muted; line-height: 1.5; } .hex-button { margin-top: 23px; } }
+
+	.radio-layout { flex-grow: 1; min-height: 0; padding: 48px; gap: 70px; align-items: center; justify-content: center; }
+	.radio-device { position: relative; width: 310px; height: 480px; padding: 52px 28px 28px; border: 5px solid #20272a; border-radius: 16px; background: linear-gradient(145deg,#303a3e,#151b1e); box-shadow: 0 24px 50px rgba(0,0,0,0.55); flex-direction: column; }
+	.radio-device__antenna { position: absolute; left: 46px; top: -115px; width: 18px; height: 120px; border-radius: 8px 8px 0 0; background-color: #252d30; }
+	.radio-device__speaker { height: 170px; margin-bottom: 28px; border: 1px solid #101416; border-radius: 8px; background: linear-gradient( to bottom, #101416, #293236 ); }
+	.radio-device__display { height: 105px; padding: 14px; border: 4px solid #111617; background-color: #8fa88a; color: #172019; font-family: "Roboto Mono"; flex-direction: column; span { font-size: 8px; } strong { font-size: 25px; } small { font-size: 10px; } }
+	.radio-device__power { position: absolute; right: 28px; bottom: 29px; width: 43px; height: 43px; border-radius: 50%; border: 1px solid #586266; background-color: #1a2022; color: #687579; font-family: "Material Icons"; align-items: center; justify-content: center; &.is-on { color: $green; box-shadow: 0 0 12px rgba($green,0.35); } }
+	.radio-console { width: 440px; flex-direction: column; gap: 16px; }
+	.preset-grid { flex-wrap: wrap; gap: 7px; button { width: calc(50% - 4px); min-height: 55px; padding: 9px; border: 1px solid $line; background-color: rgba(255,255,255,0.02); color: $white; text-align: left; flex-direction: column; span { font-size: 11px; } strong { color: $cyan; font-family: "Roboto Mono"; font-size: 13px; } } }
+
+	.scanner-mode { background-color: rgba(0, 10, 12, 0.74); }
+	.scanner-mode .combine-suite-window { width: calc(100% - 48px); height: calc(100% - 48px); border-color: rgba($cyan,0.34); }
+	.scanner-layout { flex-grow: 1; min-height: 0; padding: 12px; flex-direction: column; }
+	.scanner-feed { position: relative; flex-grow: 1; border: 1px solid rgba($cyan,0.24); background: radial-gradient( rgba($cyan,0.08), rgba(2,10,12,0.92) ); overflow: hidden; }
+	.scanner-feed::after { content: ""; position: absolute; inset: 0; background: linear-gradient( to bottom, transparent, rgba($cyan,0.025) ); }
+	.scanner-feed__reticle { position: absolute; left: 50%; top: 50%; width: 170px; height: 170px; transform: translate(-50%,-50%); border: 1px solid rgba($cyan,0.55); border-radius: 50%; align-items: center; justify-content: center; span { position: absolute; width: 210px; height: 1px; background-color: rgba($cyan,0.3); &:nth-child(2) { width: 1px; height: 210px; } } strong { position: absolute; top: -28px; color: $cyan; font-family: "Roboto Mono"; font-size: 8px; letter-spacing: 1px; } }
+	// Column: each telemetry block is two labels, and s&box's default flex-direction is Row.
+	.scanner-feed__telemetry { position: absolute; z-index: 2; flex-direction: column; color: rgba($cyan,0.75); font-family: "Roboto Mono"; font-size: 9px; line-height: 1.6; &.top-left { left: 16px; top: 15px; } &.top-right { right: 16px; top: 15px; text-align: right; } }
+	.scanner-contacts { position: absolute; left: 18px; bottom: 18px; z-index: 2; flex-direction: column; gap: 5px; }
+	.scanner-contact { padding: 5px 8px; gap: 7px; background-color: rgba(0,20,23,0.75); color: $cyan; font-family: "Roboto Mono"; font-size: 8px; span { width: 5px; height: 5px; background-color: $cyan; } &.is-priority { color: $red; span { background-color: $red; } } }
+	.scanner-controls { height: 85px; padding: 11px 0 0; gap: 8px; justify-content: center; }
+	.scanner-control { min-width: 140px; padding: 0 18px; border: 1px solid rgba($cyan,0.3); background-color: rgba($cyan,0.06); color: $cyan; flex-direction: column; align-items: center; justify-content: center; font-size: 9px; letter-spacing: 1px; span { font-family: "Material Icons"; font-size: 22px; } &.is-active,&.primary { background-color: rgba($cyan,0.18); border-color: $cyan; } &.danger { color: $red; border-color: rgba($red,0.45); background-color: rgba($red,0.08); } &.disabled { @include disarmed( 0.3 ); } }
+
+	.local-error { position: absolute; left: 50%; top: 28px; z-index: 100; transform: translateX(-50%); min-height: 44px; padding: 0 16px; gap: 9px; border: 1px solid rgba($red,0.55); background-color: rgba($ink,0.95); color: lighten($red,12%); pointer-events: all; span { font-family: "Material Icons"; font-size: 18px; } }
+	.item-presentation-backdrop { position: absolute; inset: 0; z-index: 120; background-color: rgba(0,0,0,0.72); align-items: center; justify-content: center; pointer-events: all; }
+	.item-presentation-window { width: 620px; max-height: calc(100% - 80px); }
+	.item-presentation-fields { padding: 18px; flex-direction: column; gap: 8px; overflow: scroll; }
+	.item-presentation-field { min-height: 48px; padding: 9px 12px; border: 1px solid $line; background-color: rgba(255,255,255,0.02); flex-direction: column; span { color: $muted; font-family: "Roboto Mono"; font-size: 8px; letter-spacing: 1px; text-transform: uppercase; } strong { margin-top: 3px; color: $white; font-size: 13px; } &.is-body { min-height: 190px; strong { white-space: normal; line-height: 1.55; } } }
+}
+
+@keyframes boot-pulse {
+	from { opacity: 0.25; transform: skewX(-18deg) translateY(3px); }
+	to { opacity: 1; transform: skewX(-18deg) translateY(-3px); }
+}

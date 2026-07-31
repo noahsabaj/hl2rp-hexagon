@@ -1,0 +1,85 @@
+@using System
+@using System.Linq
+@using System.Threading.Tasks
+@using Hexagon.V2.Client
+@using Hexagon.V2.Domain
+@using Hexagon.V2.Kernel
+@using Hexagon.V2.Networking
+@using Sandbox.UI
+@namespace HL2RP.UI
+@inherits Panel
+
+<root class="transfer-layout @(IsSearch ? "is-search" : string.Empty)">
+	<div class="transfer-pane">
+		<InventoryGrid Snapshot="@ViewModel.Source" SelectedItemId="@_selectedSource" EmptyMessage="No transferable items."
+			OnSelect="@SelectSource" OnAction="@RunActionAsync" />
+	</div>
+	<div class="transfer-controls">
+		<div class="transfer-controls__line"></div>
+		<button class="hex-transfer-button" disabled="@(!ViewModel.CanDeposit || _selectedSource is null)"
+			@onclick="@(() => TransferAsync( ViewModel.Source, ViewModel.Destination, _selectedSource ))">arrow_forward</button>
+		<button class="hex-transfer-button" disabled="@(!ViewModel.CanTake || _selectedDestination is null)"
+			@onclick="@(() => TransferAsync( ViewModel.Destination, ViewModel.Source, _selectedDestination ))">arrow_back</button>
+		@* Two labels, not a break tag: s&box registers no "br" element, so it becomes an empty Panel
+	   in a flex row and the caption renders as "ATOMICTRANSFER" on one line. *@
+	<div class="transfer-controls__caption"><label>ATOMIC</label><label>TRANSFER</label></div>
+	</div>
+	<div class="transfer-pane">
+		<InventoryGrid Snapshot="@ViewModel.Destination" SelectedItemId="@_selectedDestination" EmptyMessage="Nothing is stored here."
+			OnSelect="@SelectDestination" OnAction="@RunActionAsync" />
+	</div>
+</root>
+
+@code
+{
+	[Parameter, EditorRequired] public InventoryTransferViewModel ViewModel { get; set; } = null!;
+	[Parameter] public IHexClientController? Controller { get; set; }
+	[Parameter] public bool IsSearch { get; set; }
+	[Parameter] public Action<OperationResult>? OnResult { get; set; }
+
+	private ItemId? _selectedSource;
+	private ItemId? _selectedDestination;
+
+	protected override void OnParametersSet()
+	{
+		if ( ViewModel is null )
+			throw new InvalidOperationException( $"{nameof(InventoryTransferPanel)} requires {nameof(ViewModel)}." );
+	}
+
+	private void SelectSource( InventoryItemSnapshot item ) => _selectedSource = item.ItemId;
+	private void SelectDestination( InventoryItemSnapshot item ) => _selectedDestination = item.ItemId;
+
+	private async Task RunActionAsync( InventoryItemSnapshot item, ItemActionSnapshot action )
+	{
+		if ( Controller is null || !action.Enabled ) return;
+		var inventory = ViewModel.Source.Items.Any( candidate => candidate.ItemId == item.ItemId )
+			? ViewModel.Source : ViewModel.Destination;
+		OnResult?.Invoke( await Controller.RunItemActionAsync( inventory.InventoryId, item.ItemId, action.ActionId ) );
+	}
+
+	private async Task TransferAsync( InventorySnapshot source, InventorySnapshot destination, ItemId? itemId )
+	{
+		if ( Controller is null || itemId is not ItemId id ) return;
+		var item = source.Items.FirstOrDefault( candidate => candidate.ItemId == id );
+		if ( item is null ) return;
+		var placement = FindOpenCell( destination, item.Width, item.Height );
+		if ( placement is null )
+		{
+			OnResult?.Invoke( OperationResult.Failure( ErrorCode.Conflict, $"{destination.Title} has no contiguous space." ) );
+			return;
+		}
+		OnResult?.Invoke( await Controller.MoveItemAsync( source.InventoryId, destination.InventoryId, id, placement.Value.X, placement.Value.Y ) );
+	}
+
+	private static (int X, int Y)? FindOpenCell( InventorySnapshot inventory, int width, int height )
+	{
+		for ( var y = 0; y <= inventory.Height - height; y++ )
+		for ( var x = 0; x <= inventory.Width - width; x++ )
+		{
+			var blocked = inventory.Items.Any( item => x < item.X + item.Width && x + width > item.X
+				&& y < item.Y + item.Height && y + height > item.Y );
+			if ( !blocked ) return (x, y);
+		}
+		return null;
+	}
+}

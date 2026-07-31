@@ -1,0 +1,352 @@
+@using System
+@using System.Linq
+@using System.Threading.Tasks
+@using Hexagon.V2.Client
+@using Hexagon.V2.Client.Chat
+@using Hexagon.V2.Kernel
+@using HL2RP.V2.Schema
+@using Hexagon.V2.Networking
+@using Sandbox
+@using Sandbox.UI
+@namespace HL2RP.UI
+@inherits Panel
+
+<root class="hud-layer">
+	<div class="hud-vitals">
+		<div class="hud-vitals__identity">
+			<div class="micro-label">ACTIVE IDENTITY</div>
+			<div class="hud-vitals__name">@ViewModel.Public.CharacterName</div>
+			<div class="hud-vitals__location">@ViewModel.District · @ViewModel.Location</div>
+		</div>
+		<div class="hud-meter health">
+			<div class="hud-meter__top"><span>VITALS</span><strong>@ViewModel.Health</strong></div>
+			<div class="hud-meter__track"><span style="width: @Percent( ViewModel.Health, ViewModel.MaximumHealth )%;"></span></div>
+		</div>
+		<div class="hud-meter armor">
+			<div class="hud-meter__top"><span>PROTECTION</span><strong>@ViewModel.Armor</strong></div>
+			<div class="hud-meter__track"><span style="width: @Percent( ViewModel.Armor, ViewModel.MaximumArmor )%;"></span></div>
+		</div>
+		@if ( ViewModel.Private is not null )
+		{
+			<div class="hud-balance"><span>TOKENS</span><strong>@ViewModel.Private.Balance.ToString( "N0" )</strong></div>
+		}
+	</div>
+
+	<div class="hud-status-rail">
+		<div class="status-pill @(ViewModel.FlashlightEnabled ? "is-active" : string.Empty)">flashlight <span>LIGHT</span></div>
+		<div class="status-pill @(ViewModel.RadioEnabled ? "is-active" : string.Empty)">radio <span>RADIO</span></div>
+		@if ( ViewModel.Public.IsWeaponRaised )
+		{
+			<div class="status-pill danger is-active">crisis_alert <span>WEAPON RAISED</span></div>
+		}
+	</div>
+
+	@if ( ViewModel.Magazine >= 0 )
+	{
+		<div class="hud-ammo">
+			<div class="hud-ammo__magazine">@ViewModel.Magazine.ToString( "00" )</div>
+			<div class="hud-ammo__reserve">/ @ViewModel.ReserveAmmunition.ToString( "000" )</div>
+			<div class="micro-label">SIDEARM</div>
+		</div>
+	}
+
+	@* Chat is the framework's now: HexChatPanel owns the transient entry, the fading log and the
+	   scrollback, and HexChatComposer owns what a typed line means. HL2RP supplies the channels,
+	   the lines, and what to do with a command. The nine-button channel row is gone -- picking a
+	   channel needed a cursor, and the cursor is hidden while embodied, which is why the old panel
+	   was unreachable in play. *@
+	<HexChatPanel Lines="@ChatLines()" TargetLabel="@Composer.StickyChannel.DisplayName"
+		FadeSeconds="@(8f)" OnSubmit="@HandleChatSubmit"
+		OnCycleChannel="@CycleChatChannel" OpenAction="Chat" CycleAction="@CycleChannelAction" />
+
+	@if ( Action is not null )
+	{
+		<div class="action-progress">
+			<div class="action-progress__copy"><span>@Action.ActionId.Value</span><strong>@Action.Label</strong></div>
+			<div class="action-progress__track"><span style="width: @ActionPercent( Action )%;"></span></div>
+			@if ( Action.CanCancel )
+			{
+				<button @onclick="@CancelActionAsync">close</button>
+			}
+		</div>
+	}
+
+	<div class="notification-stack">
+		@foreach ( var notice in Notifications.Where( notification => notification.ExpiresAtUtc > DateTimeOffset.UtcNow ) )
+		{
+			<button class="notification tone-@notice.Tone.ToString().ToLowerInvariant()" @onclick="@(() => OnDismissNotification?.Invoke( notice.Id ))">
+				<div class="notification__marker"></div>
+				<div><strong>@notice.Title</strong><span>@notice.Message</span></div>
+			</button>
+		}
+	</div>
+
+	@if ( Restraint is not null && (Restraint.IsRestrained || Restraint.TargetCharacterId is not null) )
+	{
+		<div class="restraint-status @(Restraint.IsRestrained ? "is-restrained" : string.Empty)">
+			<div class="restraint-status__icon">link</div>
+			<div>
+				<strong>@(Restraint.IsRestrained ? "RESTRAINED" : "RESTRAINT READY")</strong>
+				<span>@Restraint.StatusText</span>
+			</div>
+			@if ( Restraint.CanSearch && Restraint.TargetCharacterId is not null )
+			{
+				<button class="hex-button secondary"
+					@onclick="@(() => OnOpenSearch?.Invoke( new SearchOpenRequest( Restraint.TargetCharacterId.Value ) ))">Search</button>
+			}
+		</div>
+	}
+
+	@if ( Combine is not null && Combine.Visible )
+	{
+		<div class="combine-overlay">
+			<div class="combine-overlay__topline">
+				<span>CCA://@Combine.Division.ToUpperInvariant()</span>
+				<strong>@Combine.Rank @Combine.Callsign</strong>
+			</div>
+			<div class="combine-overlay__directive"><span>DIRECTIVE</span>@Combine.Directive</div>
+			<div class="combine-overlay__alerts">
+				@foreach ( var alert in Combine.Alerts.TakeLast( 3 ) )
+				{
+					<div class="combine-alert tone-@alert.Tone.ToString().ToLowerInvariant()">
+						<span>@alert.Code</span><strong>@alert.Message</strong>
+					</div>
+				}
+			</div>
+		</div>
+	}
+
+	@if ( Death is not null && Death.Visible )
+	{
+		<div class="death-screen">
+			<div class="death-screen__rule"></div>
+			<div class="micro-label">CIVIC STATUS // TERMINATED</div>
+			<div class="death-screen__title">You are deceased.</div>
+			<div class="death-screen__cause">@Death.Cause</div>
+			@if ( Death.RespawnAtUtc is DateTimeOffset availableAt && availableAt > DateTimeOffset.UtcNow )
+			{
+				<div class="death-screen__timer">Body reconstruction available in @Math.Ceiling( (availableAt - DateTimeOffset.UtcNow).TotalSeconds )s</div>
+			}
+			<button class="hex-button primary" disabled="@(!Death.CanRespawn)" @onclick="@(() => OnRespawn?.Invoke())">
+				@(Death.CanRespawn ? "Re-enter city" : "Awaiting reconstruction")
+			</button>
+		</div>
+	}
+</root>
+
+@code
+{
+	[Parameter, EditorRequired] public HudViewModel ViewModel { get; set; } = null!;
+	[Parameter] public ChatSnapshot? Chat { get; set; }
+	[Parameter] public System.Collections.Immutable.ImmutableArray<NotificationViewModel> Notifications { get; set; }
+	[Parameter] public ActionProgressSnapshot? Action { get; set; }
+	[Parameter] public DeathViewModel? Death { get; set; }
+	[Parameter] public RestraintViewModel? Restraint { get; set; }
+	[Parameter] public CombineOverlayViewModel? Combine { get; set; }
+	[Parameter] public IHexClientController? Controller { get; set; }
+	[Parameter] public Action<OperationResult>? OnResult { get; set; }
+	[Parameter] public Action<Guid>? OnDismissNotification { get; set; }
+	[Parameter] public Action<SearchOpenRequest>? OnOpenSearch { get; set; }
+	[Parameter] public Action? OnRespawn { get; set; }
+	[Parameter] public ScoreboardViewModel? Scoreboard { get; set; }
+
+	// Client-authored lines (command usage, /help, resolution failures). They are not chat: the
+	// server never sees them, and nobody else does either.
+	// Keyed, not bare strings: the list is trimmed from the front, so an index is not a stable
+	// identity, and two identical echoes must still fade independently.
+	private readonly List<(string Key, string Text)> _localMessages = new();
+	private int _localMessageSequence;
+
+	/// <summary>
+	/// The action that cycles the sticky channel. Empty until the project defines one — Hexagon
+	/// cannot bind an input action on a consuming game's behalf, so the panel degrades to
+	/// prefixes-only rather than failing.
+	/// </summary>
+	public const string CycleChannelAction = "ChatChannel";
+
+	private HexChatComposer? _composer;
+
+	/// <summary>
+	/// Built from the channels the SCHEMA declares, so the panel's channel list, the prefixes and
+	/// the dead-rule all come from the same registrations the host validates against.
+	/// </summary>
+	private HexChatComposer Composer => _composer ??= new HexChatComposer(
+		HL2RPChatChannels.Views(), HL2RPIds.Channels.InCharacter );
+
+	protected override void OnParametersSet()
+	{
+		if ( ViewModel is null )
+			throw new InvalidOperationException( $"{nameof(HudLayer)} requires {nameof(ViewModel)}." );
+	}
+
+	private bool IsDead => Death is not null;
+
+	private void CycleChatChannel() => Composer.CycleChannel( IsDead );
+
+	/// <summary>
+	/// Server messages and this client's own console lines, oldest first. Console lines carry no
+	/// author, which is how the panel tells them apart from speech.
+	/// </summary>
+	private IReadOnlyList<HexChatLine> ChatLines()
+	{
+		var lines = new List<HexChatLine>();
+		if ( Chat is not null )
+		{
+			foreach ( var message in Chat.Messages.TakeLast( 40 ) )
+				lines.Add( new HexChatLine(
+					message.Text,
+					message.MessageId.ToString(),
+					message.AuthorName,
+					message.ChannelId.ToUpperInvariant(),
+					ChannelColour( message.ChannelId ) ) );
+		}
+
+		foreach ( var local in _localMessages )
+			lines.Add( new HexChatLine(
+				local.Text, local.Key, ChannelLabel: "CONSOLE", Colour: "#d7a84b" ) );
+		return lines;
+	}
+
+	private static string? ChannelColour( string channelId ) =>
+		HL2RPChatChannels.Colour( channelId );
+
+	// A named method, not an inline lambda: the razor generator cannot infer a delegate type for
+	// `text => _ = SubmitChatAsync( text )` and fails with CS8917 — and only the ENGINE compile says
+	// so, because dotnet build does not run s&box's razor generator.
+	private void HandleChatSubmit( string text ) => _ = SubmitChatAsync( text );
+
+	private async Task SubmitChatAsync( string text )
+	{
+		if ( Controller is null ) return;
+		var intent = Composer.Compose( text, IsDead );
+		switch ( intent.Kind )
+		{
+			case HexChatIntentKind.Ignored:
+				return;
+			case HexChatIntentKind.Console:
+				Echo( intent.Message );
+				break;
+			case HexChatIntentKind.Command:
+				await RunSlashCommandAsync( intent.Text );
+				break;
+			case HexChatIntentKind.Channel:
+				var result = await Controller.SendChatAsync( intent.ChannelId, intent.Text );
+				if ( result.Failed ) Echo( result.Error!.Message );
+				OnResult?.Invoke( result );
+				break;
+		}
+
+		StateHasChanged();
+	}
+
+	private static int Percent( int value, int maximum ) => maximum <= 0 ? 0 : Math.Clamp( value * 100 / maximum, 0, 100 );
+
+	private static int ActionPercent( ActionProgressSnapshot action )
+	{
+		var elapsed = DateTimeOffset.UtcNow - action.StartedAtUtc;
+		return Math.Clamp( (int)(elapsed.TotalMilliseconds / action.Duration.TotalMilliseconds * 100), 0, 100 );
+	}
+
+	/// <summary>
+	/// This layer draws three values derived from the wall clock — action progress, the respawn
+	/// countdown, and which notifications have expired — but the engine rebuilds a Razor tree only when it
+	/// is dirty, and the base <c>BuildHash</c> returns a constant. Nothing else marks this panel dirty
+	/// per frame: the presenter rebuilds on store changes, and the host publishes only when a refresh
+	/// is due. So the gap between pushes is unbounded, and the worst case is the COMMON case — a
+	/// player performing a timed action is standing still, and a dead player watching a countdown is
+	/// by definition not moving.
+	/// <para>
+	/// Quantized to display granularity, never raw ticks: whole percent, whole second, count of
+	/// unexpired notices. Hashing the clock itself would rebuild the whole layer — including a
+	/// forty-message chat log — every single frame.
+	/// </para>
+	/// </summary>
+	protected override int BuildHash()
+	{
+		var now = DateTimeOffset.UtcNow;
+		var actionPercent = Action is null ? -1 : ActionPercent( Action );
+		var respawnSeconds = Death?.RespawnAtUtc is DateTimeOffset availableAt
+			? (int)Math.Ceiling( (availableAt - now).TotalSeconds )
+			: -1;
+		// IsDefaultOrEmpty first: Notifications is an ImmutableArray [Parameter] with no
+		// EditorRequired, and enumerating a default one throws into Panel's render catch, which
+		// degrades into per-frame warning spam rather than anything visible.
+		var liveNotifications = Notifications.IsDefaultOrEmpty
+			? 0
+			: Notifications.Count( notice => notice.ExpiresAtUtc > now );
+		return HashCode.Combine( actionPercent, respawnSeconds, liveNotifications );
+	}
+
+	/// <summary>
+	/// A leading '/' means the player is addressing the game, not the room. Anything that fails
+	/// here is answered locally rather than being spoken aloud - a mistyped /kill must never reach
+	/// other players as in-character speech.
+	/// </summary>
+	private async Task RunSlashCommandAsync( string text )
+	{
+		if ( IsHelpRequest( text ) )
+		{
+			ShowHelp();
+			return;
+		}
+
+		var parsed = SlashCommandParser.Parse( text );
+		if ( parsed.Failed )
+		{
+			Echo( parsed.Error!.Message );
+			return;
+		}
+
+		var bound = SlashCommandParser.Bind( parsed.Value, ResolveCharacterName );
+		if ( bound.Failed )
+		{
+			Echo( bound.Error!.Message );
+			return;
+		}
+
+		var result = await Controller!.RunSchemaCommandAsync(
+			parsed.Value.Descriptor.CommandId, bound.Value );
+		if ( result.Failed ) Echo( result.Error!.Message );
+		OnResult?.Invoke( result );
+	}
+
+	private static bool IsHelpRequest( string text )
+	{
+		var tokens = SlashCommandParser.Tokenize( text.TrimStart().TrimStart( SlashCommandParser.Prefix ) );
+		return tokens.Count > 0 && string.Equals( tokens[0], "help", StringComparison.OrdinalIgnoreCase );
+	}
+
+	private void ShowHelp()
+	{
+		Echo( "Commands (the server still checks your capabilities):" );
+		foreach ( var descriptor in SlashCommandCatalog.All.OrderBy( entry => entry.Name, StringComparer.Ordinal ) )
+			Echo( $"{descriptor.Usage} - {descriptor.Summary}" );
+	}
+
+	// Resolved against the scoreboard, which is the same set of characters the panels already let
+	// the player act on, so typing a name grants no reach the UI did not already give.
+	private OperationResult<Guid> ResolveCharacterName( string name )
+	{
+		var candidates = Scoreboard is null
+			? Array.Empty<SlashCommandTarget>()
+			: Scoreboard.Players
+				.Where( player => player.CharacterId is not null )
+				.Select( player => new SlashCommandTarget( player.CharacterId!.Value.Value, player.DisplayName ) )
+				.ToArray();
+		return SlashCommandTargets.Resolve( name, candidates );
+	}
+
+	private void Echo( string message )
+	{
+		_localMessages.Add( ($"local:{_localMessageSequence++}", message) );
+		if ( _localMessages.Count > 40 ) _localMessages.RemoveRange( 0, _localMessages.Count - 40 );
+	}
+
+	private async Task CancelActionAsync()
+	{
+		if ( Controller is null || Action is null )
+			return;
+
+		OnResult?.Invoke( await Controller.CancelActionAsync( Action.InstanceId ) );
+	}
+}

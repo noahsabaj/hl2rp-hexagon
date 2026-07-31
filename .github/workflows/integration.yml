@@ -1,0 +1,59 @@
+name: hl2rp
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    name: hl2rp / integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out HL2RP
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          path: hl2rp-hexagon
+      - name: Read and validate Hexagon lock
+        id: lock
+        shell: bash
+        run: |
+          repository="$(jq -r '.repository' hl2rp-hexagon/hexagon.lock.json)"
+          commit="$(jq -r '.commit' hl2rp-hexagon/hexagon.lock.json)"
+          [[ "$repository" =~ ^[a-z0-9_.-]+/[a-z0-9_.-]+$ ]]
+          [[ "$commit" =~ ^[a-f0-9]{40}$ ]]
+          echo "repository=$repository" >> "$GITHUB_OUTPUT"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+      - name: Check out locked Hexagon
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          repository: ${{ steps.lock.outputs.repository }}
+          ref: ${{ steps.lock.outputs.commit }}
+          path: hexagon
+      - name: Verify locked Hexagon HEAD
+        shell: bash
+        run: test "$(git -C hexagon rev-parse HEAD)" = "${{ steps.lock.outputs.commit }}"
+      - name: Install .NET 10
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: 10.0.x
+          cache: true
+          cache-dependency-path: |
+            hexagon/tests/packages.lock.json
+            hl2rp-hexagon/tests/packages.lock.json
+      - name: Run locked portable integration
+        shell: pwsh
+        working-directory: hl2rp-hexagon
+        run: ./tools/verify-portable.ps1 -HexagonRoot ../hexagon
+      - name: Require a clean generated-file diff
+        shell: bash
+        run: |
+          git -C hexagon diff --exit-code
+          git -C hl2rp-hexagon diff --exit-code
+          test -z "$(git -C hexagon status --porcelain)"
+          test -z "$(git -C hl2rp-hexagon status --porcelain)"

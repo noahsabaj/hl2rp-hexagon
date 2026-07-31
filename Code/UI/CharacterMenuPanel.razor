@@ -1,0 +1,301 @@
+@using System
+@using System.Collections.Generic
+@using System.Linq
+@using System.Threading.Tasks
+@using Hexagon.V2.Client
+@using Hexagon.V2.Domain
+@using Hexagon.V2.Kernel
+@using Hexagon.V2.Networking
+@using Sandbox.UI
+@namespace HL2RP.UI
+@inherits Panel
+
+<root class="character-menu">
+	<div class="character-menu__atmosphere">
+		<div class="character-menu__seal">C17</div>
+		<div class="character-menu__city">CITY SEVENTEEN</div>
+		<div class="character-menu__strap">A curated Half-Life 2 roleplay reference schema</div>
+	</div>
+
+	<HL2RPWindow Eyebrow="HEXAGON / IDENTITY" Title="@(Creating ? "Citizen Registration" : "Choose a Character")"
+		Subtitle="@(Creating ? "Every submitted field is revalidated by the host." : $"{ViewModel.Characters.Characters.Count} of {ViewModel.MaximumSlots} dossiers in use")"
+		Variant="character-menu__window">
+		<HeaderActions>
+			<button class="hex-button ghost" @onclick="@RefreshAsync">Refresh</button>
+			<button class="hex-button secondary" disabled="@(ViewModel.Characters.Characters.Count >= ViewModel.MaximumSlots)"
+				@onclick="@(() => Creating = !Creating)">@(Creating ? "Back to dossiers" : "Create character")</button>
+		</HeaderActions>
+		<Body>
+			@if ( Creating )
+			{
+				<div class="creation-layout">
+					<div class="creation-form">
+						<div class="field-group">
+							<label>Full name</label>
+							<TextEntry Value:bind="@Name" MaxLength="@ViewModel.Creation.NameLimit" Placeholder="First and last name" />
+						</div>
+						<div class="field-group">
+							<label>Physical description</label>
+							<TextEntry Value:bind="@Description" MaxLength="@ViewModel.Creation.DescriptionLimit"
+								Multiline="@true" Placeholder="A concise, observable description" />
+						</div>
+
+						@foreach ( var field in ViewModel.Creation.Fields )
+						{
+							<div class="field-group">
+								<div class="field-label">
+									<label>@field.Label</label>
+									@if ( field.Required )
+									{
+										<span class="required">required</span>
+									}
+								</div>
+								<div class="field-hint">@field.Hint</div>
+								@if ( field.Kind is SnapshotValueKind.String or SnapshotValueKind.Integer )
+								{
+									<TextEntry Value="@GetFieldText( field.Id )"
+										OnTextEdited="@((string value) => SetFieldText( field.Id, value ))"
+										Placeholder="@(field.Kind == SnapshotValueKind.Integer ? "0" : field.Label)" />
+								}
+								else if ( field.Kind == SnapshotValueKind.Boolean )
+								{
+									<button class="hex-toggle @(GetBoolean( field.Id ) ? "is-on" : string.Empty)"
+										@onclick="@(() => ToggleBoolean( field.Id ))">
+										<span></span>@(GetBoolean( field.Id ) ? "Enabled" : "Disabled")
+									</button>
+								}
+								else
+								{
+									<div class="choice-row">
+										@foreach ( var option in field.Options )
+										{
+											<button class="choice-chip @(GetChoice( field.Id ) == option.Value ? "is-selected" : string.Empty)"
+												Tooltip="@option.Description"
+												@onclick="@(() => SetChoice( field.Id, option.Value ))">@option.Label</button>
+										}
+									</div>
+								}
+							</div>
+						}
+					</div>
+
+					<div class="creation-options">
+						<div class="option-section">
+							<div class="section-heading"><span>01</span> Affiliation</div>
+							@foreach ( var faction in ViewModel.Creation.Factions )
+							{
+								<button class="option-card @(SelectedFaction == faction.Id ? "is-selected" : string.Empty)"
+									disabled="@(!faction.Enabled)" @onclick="@(() => SelectFaction( faction.Id ))">
+									<strong>@faction.Label</strong><span>@faction.Description</span>
+								</button>
+							}
+						</div>
+						<div class="option-section">
+							<div class="section-heading"><span>02</span> Assignment</div>
+							<div class="choice-row wrap">
+								<button class="choice-chip @(SelectedClass is null ? "is-selected" : string.Empty)"
+									@onclick="@(() => SelectedClass = null)">No class</button>
+								@foreach ( var characterClass in ClassesForSelectedFaction )
+								{
+									<button class="choice-chip @(SelectedClass == characterClass.Id ? "is-selected" : string.Empty)"
+										disabled="@(!characterClass.Enabled)" Tooltip="@characterClass.Description"
+										@onclick="@(() => SelectedClass = characterClass.Id)">@characterClass.Label</button>
+								}
+							</div>
+						</div>
+						<div class="option-section">
+							<div class="section-heading"><span>03</span> Presentation</div>
+							@foreach ( var model in ModelsForSelectedFaction )
+							{
+								<button class="option-card compact @(SelectedModel == model.Id ? "is-selected" : string.Empty)"
+									disabled="@(!model.Enabled)" @onclick="@(() => SelectedModel = model.Id)">
+									<strong>@model.Label</strong><span>@model.Description</span>
+								</button>
+							}
+						</div>
+					</div>
+				</div>
+			}
+			else if ( ViewModel.Characters.Characters.Count == 0 )
+			{
+				<div class="hex-empty-state">
+					<div class="hex-empty-state__icon">badge</div>
+					<strong>No civic dossier exists</strong>
+					<span>Register a character to enter the showcase.</span>
+					<button class="hex-button primary" @onclick="@(() => Creating = true)">Begin registration</button>
+				</div>
+			}
+			else
+			{
+				<div class="character-grid">
+					@foreach ( var character in ViewModel.Characters.Characters )
+					{
+						<div class="character-card @(character.IsBanned ? "is-disabled" : string.Empty)">
+							<div class="character-card__slot">SLOT @((character.Slot + 1).ToString( "00" ))</div>
+							<div class="character-card__name">@character.Name</div>
+							<div class="character-card__description">@character.Description</div>
+							<div class="character-card__tags">
+								<span>@character.Faction.Value</span>
+								@if ( character.Class is ClassId characterClass ) { <span>@characterClass.Value</span> }
+							</div>
+							<div class="character-card__last">Last active @character.LastPlayedAt.ToLocalTime().ToString( "MMM d, HH:mm" )</div>
+							<div class="character-card__actions">
+								<button class="hex-button primary" disabled="@character.IsBanned"
+									@onclick="@(() => LoadAsync( character.CharacterId ))">@(character.IsBanned ? "Access suspended" : "Enter city")</button>
+								<button class="hex-button danger ghost" @onclick="@(() => DeleteAsync( character.CharacterId ))">Delete</button>
+							</div>
+						</div>
+					}
+				</div>
+			}
+		</Body>
+		<Footer>
+			<div class="window-status">@(string.IsNullOrWhiteSpace( LocalStatus ) ? ViewModel.StatusText : LocalStatus)</div>
+			@if ( Creating )
+			{
+				<button class="hex-button primary wide @(SubmissionBlocked ? "disabled" : string.Empty)"
+					disabled="@SubmissionBlocked" @onclick="@CreateAsync">
+					@(ViewModel.IsBusy ? "Submitting…" : "Submit dossier")
+				</button>
+			}
+		</Footer>
+	</HL2RPWindow>
+	@if ( ViewModel.Entitlements is EntitlementAdministrationViewModel entitlements )
+	{
+		<EntitlementAdministrationPanel ViewModel="@entitlements" Controller="@Controller"
+			Variant="entitlement-admin--character-menu"
+			OnResult="@ReportEntitlementResult" />
+	}
+</root>
+
+@code
+{
+	[Parameter, EditorRequired] public CharacterMenuViewModel ViewModel { get; set; } = null!;
+	[Parameter] public IHexClientController? Controller { get; set; }
+	[Parameter] public Action<OperationResult>? OnResult { get; set; }
+
+	private readonly CharacterCreationDraftState _draft = new();
+	private bool Creating { get; set; }
+	private string Name { get; set; } = string.Empty;
+	private string Description { get; set; } = string.Empty;
+	private DefinitionId? SelectedModel
+	{
+		get => _draft.SelectedModel;
+		set => _draft.SelectModel( value );
+	}
+	private FactionId? SelectedFaction => _draft.SelectedFaction;
+	private ClassId? SelectedClass
+	{
+		get => _draft.SelectedClass;
+		set => _draft.SelectClass( value );
+	}
+	private string LocalStatus { get; set; } = string.Empty;
+
+	private bool CanSubmit => _draft.CanSubmit( Name, Description );
+	private bool SubmissionBlocked => !CanSubmit || ViewModel.IsBusy;
+
+	protected override void OnParametersSet()
+	{
+		if ( ViewModel is null )
+			throw new InvalidOperationException( $"{nameof(CharacterMenuPanel)} requires {nameof(ViewModel)}." );
+
+		_draft.Reconcile( ViewModel.Creation );
+	}
+
+	private string GetFieldText( string id ) => _draft.GetFieldText( id );
+	private void SetFieldText( string id, string value )
+	{
+		_draft.SetFieldText( id, value );
+		StateHasChanged();
+	}
+	private bool GetBoolean( string id ) => _draft.GetBoolean( id );
+	private void ToggleBoolean( string id )
+	{
+		_draft.ToggleBoolean( id );
+		StateHasChanged();
+	}
+	private string GetChoice( string id ) => _draft.GetChoice( id );
+	private void SetChoice( string id, string value )
+	{
+		_draft.SetChoice( id, value );
+		StateHasChanged();
+	}
+	private IEnumerable<ClassChoice> ClassesForSelectedFaction => SelectedFaction is FactionId factionId
+		? ViewModel.Creation.Classes.Where( choice => choice.FactionId == factionId )
+		: Enumerable.Empty<ClassChoice>();
+	private IEnumerable<ModelChoice> ModelsForSelectedFaction => SelectedFaction is FactionId factionId
+		? ViewModel.Creation.Models.Where( choice => choice.FactionId == factionId )
+		: Enumerable.Empty<ModelChoice>();
+
+	private void SelectFaction( FactionId factionId )
+	{
+		_draft.SelectFaction( factionId );
+		StateHasChanged();
+	}
+
+	private async Task CreateAsync()
+	{
+		if ( ViewModel.IsBusy )
+			return;
+		if ( Controller is null )
+		{
+			LocalStatus = "Waiting for a host connection.";
+			StateHasChanged();
+			return;
+		}
+		if ( !CanSubmit || SelectedModel is not DefinitionId model || SelectedFaction is not FactionId faction )
+		{
+			LocalStatus = "Complete every required field and choose an available affiliation and presentation.";
+			StateHasChanged();
+			return;
+		}
+
+		var fields = _draft.BuildFields();
+
+		var result = await Controller.CreateCharacterAsync( new CharacterCreationInput(
+			Name.Trim(), Description.Trim(), model, faction, SelectedClass, fields ) );
+		Report( result, result.Succeeded ? "Dossier accepted." : result.Error?.Message ?? "Registration failed." );
+		if ( result.Succeeded )
+		{
+			Name = string.Empty;
+			Description = string.Empty;
+			_draft.Reset( ViewModel.Creation );
+			Creating = false;
+			await Controller.RequestCharactersAsync();
+		}
+	}
+
+	private async Task LoadAsync( CharacterId id )
+	{
+		if ( Controller is not IHexClientController controller )
+			return;
+
+		Report( await controller.LoadCharacterAsync( id ), "Entering city…" );
+	}
+
+	private async Task DeleteAsync( CharacterId id )
+	{
+		if ( Controller is not IHexClientController controller )
+			return;
+
+		Report( await controller.DeleteCharacterAsync( id ), "Dossier removed." );
+	}
+
+	private async Task RefreshAsync()
+	{
+		if ( Controller is not IHexClientController controller )
+			return;
+
+		Report( await controller.RequestCharactersAsync(), "Dossiers refreshed." );
+	}
+
+	private void Report( OperationResult result, string successMessage )
+	{
+		LocalStatus = result.Succeeded ? successMessage : result.Error?.Message ?? "The request was denied.";
+		OnResult?.Invoke( result );
+		StateHasChanged();
+	}
+
+	private void ReportEntitlementResult( OperationResult result ) =>
+		Report( result, "Account entitlement state updated." );
+}

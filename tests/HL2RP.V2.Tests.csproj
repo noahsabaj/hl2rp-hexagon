@@ -1,0 +1,77 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>HL2RP.V2.Tests</RootNamespace>
+    <LangVersion>14</LangVersion>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <IsPackable>false</IsPackable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MSTest" Version="4.0.2" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Microsoft.VisualStudio.TestTools.UnitTesting" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="MSTestSettings.cs" />
+    <Compile Include="Schema/**/*.cs" />
+    <Compile Include="Domain/**/*.cs" />
+    <Compile Include="Features/**/*.cs" />
+    <Compile Include="Architecture/**/*.cs" />
+    <Compile Include="Showcase/**/*.cs" />
+    <Compile Include="Runtime/**/*.cs" />
+    <Compile Include="UI/**/*.cs" />
+    <Compile Include="../Code/Assembly.cs" Link="Product/Assembly.cs" />
+    <Compile Include="../Code/Schema/**/*.cs" Link="Product/Schema/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="../Code/Domain/**/*.cs" Link="Product/Domain/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="../Code/Features/**/*.cs" Link="Product/Features/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="../Code/Showcase/**/*.cs" Link="Product/Showcase/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="../Code/Runtime/HL2RPRuntimeLogic.cs" Link="Product/Runtime/HL2RPRuntimeLogic.cs" />
+	<Compile Include="../Code/Runtime/HL2RPClientCommandSink.cs" Link="Product/Runtime/HL2RPClientCommandSink.cs" />
+	<Compile Include="../Code/Runtime/HL2RPSchemaCommandSink.cs" Link="Product/Runtime/HL2RPSchemaCommandSink.cs" />
+	<Compile Include="../Code/Runtime/HL2RPCommandProjectionDelta.cs" Link="Product/Runtime/HL2RPCommandProjectionDelta.cs" />
+	<Compile Include="../Code/Runtime/HL2RPMaintenanceSupervisor.cs" Link="Product/Runtime/HL2RPMaintenanceSupervisor.cs" />
+	<Compile Include="../Code/Runtime/HL2RPRecoverySnapshot.cs" Link="Product/Runtime/HL2RPRecoverySnapshot.cs" />
+	<Compile Include="../Code/Runtime/HL2RPObjectiveCommandRouter.cs" Link="Product/Runtime/HL2RPObjectiveCommandRouter.cs" />
+	<Compile Include="../Code/Runtime/HL2RPCharacterLoadAdmission.cs" Link="Product/Runtime/HL2RPCharacterLoadAdmission.cs" />
+	<Compile Include="../Code/Runtime/HL2RPPresentationPlanning.cs" Link="Product/Runtime/HL2RPPresentationPlanning.cs" />
+	<Compile Include="../Code/Runtime/HL2RPProjectionIndex.cs" Link="Product/Runtime/HL2RPProjectionIndex.cs" />
+	<Compile Include="../Code/Runtime/HL2RPPresentationComposer.cs" Link="Product/Runtime/HL2RPPresentationComposer.cs" />
+	<Compile Include="../Code/Runtime/HL2RPCommandExecution.cs" Link="Product/Runtime/HL2RPCommandExecution.cs" />
+	<Compile Include="../Code/Runtime/HL2RPTimedActionOwnership.cs" Link="Product/Runtime/HL2RPTimedActionOwnership.cs" />
+	<Compile Include="../Code/Runtime/HL2RPWorldItemReconciliation.cs" Link="Product/Runtime/HL2RPWorldItemReconciliation.cs" />
+	<Compile Include="../Code/Runtime/HL2RPObjectHierarchy.cs" Link="Product/Runtime/HL2RPObjectHierarchy.cs" />
+	<Compile Include="../Code/Runtime/HL2RPCharacterLifecycleGate.cs" Link="Product/Runtime/HL2RPCharacterLifecycleGate.cs" />
+	<Compile Include="../Code/Runtime/HL2RPSceneFeatureAdmission.cs" Link="Product/Runtime/HL2RPSceneFeatureAdmission.cs" />
+	<Compile Include="../Code/Runtime/HL2RPRetryablePersistenceLease.cs" Link="Product/Runtime/HL2RPRetryablePersistenceLease.cs" />
+	<Compile Include="../Code/Runtime/HL2RPDurableStorageCore.cs" Link="Product/Runtime/HL2RPDurableStorageCore.cs" />
+    <Compile Include="../Code/Runtime/HL2RPCreationAvailability.cs" Link="Product/Runtime/HL2RPCreationAvailability.cs" />
+    <Compile Include="../Code/UI/HL2RPPresentationFields.cs" Link="Product/UI/HL2RPPresentationFields.cs" />
+    <Compile Include="../Code/UI/HL2RPShowcaseProjection.cs" Link="Product/UI/HL2RPShowcaseProjection.cs" />
+    <Compile Include="../Code/UI/ItemActionArgumentBuilder.cs" Link="Product/UI/ItemActionArgumentBuilder.cs" />
+    <Compile Include="../Code/UI/InventoryGridRules.cs" Link="Product/UI/InventoryGridRules.cs" />
+    <Compile Include="../Code/UI/ShowcaseViewModels.cs" Link="Product/UI/ShowcaseViewModels.cs" />
+    <Compile Include="../Code/UI/InteractionWorkspaceCoordinator.cs" Link="Product/UI/InteractionWorkspaceCoordinator.cs" />
+	<Compile Include="../Code/UI/CharacterSessionReturnCoordinator.cs" Link="Product/UI/CharacterSessionReturnCoordinator.cs" />
+	<Compile Include="../Code/UI/CharacterSessionPresentationState.cs" Link="Product/UI/CharacterSessionPresentationState.cs" />
+	<Compile Include="../Code/UI/CharacterCreationDraftState.cs" Link="Product/UI/CharacterCreationDraftState.cs" />
+    <Compile Include="../../hexagon/Code/V2/Kernel/**/*.cs" Link="Hexagon/Kernel/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="../../hexagon/Code/V2/Persistence/**/*.cs" Link="Hexagon/Persistence/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="../../hexagon/Code/V2/Domain/**/*.cs" Link="Hexagon/Domain/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="../../hexagon/Code/V2/Application/**/*.cs" Link="Hexagon/Application/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="../../hexagon/Code/V2/Composition/**/*.cs" Link="Hexagon/Composition/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="../../hexagon/Code/V2/Client/HexClientStore.cs" Link="Hexagon/Client/HexClientStore.cs" />
+    <Compile Include="../../hexagon/Code/V2/Client/ClientController.cs" Link="Hexagon/Client/ClientController.cs" />
+    <Compile Include="../../hexagon/Code/V2/Networking/**/*.cs" Link="Hexagon/Networking/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+</Project>
