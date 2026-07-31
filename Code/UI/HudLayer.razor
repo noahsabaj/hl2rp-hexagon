@@ -152,7 +152,10 @@
 
 	// Client-authored lines (command usage, /help, resolution failures). They are not chat: the
 	// server never sees them, and nobody else does either.
-	private readonly List<string> _localMessages = new();
+	// Keyed, not bare strings: the list is trimmed from the front, so an index is not a stable
+	// identity, and two identical echoes must still fade independently.
+	private readonly List<(string Key, string Text)> _localMessages = new();
+	private int _localMessageSequence;
 
 	/// <summary>
 	/// The action that cycles the sticky channel. Empty until the project defines one — Hexagon
@@ -192,24 +195,20 @@
 			foreach ( var message in Chat.Messages.TakeLast( 40 ) )
 				lines.Add( new HexChatLine(
 					message.Text,
+					message.MessageId.ToString(),
 					message.AuthorName,
 					message.ChannelId.ToUpperInvariant(),
-					ChannelColour( message.ChannelId ),
-					_lineClock ) );
+					ChannelColour( message.ChannelId ) ) );
 		}
 
 		foreach ( var local in _localMessages )
-			lines.Add( new HexChatLine( local, ChannelLabel: "CONSOLE", Colour: "#d7a84b", ReceivedAt: _lineClock ) );
+			lines.Add( new HexChatLine(
+				local.Text, local.Key, ChannelLabel: "CONSOLE", Colour: "#d7a84b" ) );
 		return lines;
 	}
 
 	private static string? ChannelColour( string channelId ) =>
 		HL2RPChatChannels.Colour( channelId );
-
-	// Stamped when the line set last changed, so the fade measures how long THIS client has had a
-	// line on screen rather than how old the message is.
-	private float _lineClock = RealTime.Now;
-	private int _lastLineCount = -1;
 
 	// A named method, not an inline lambda: the razor generator cannot infer a delegate type for
 	// `text => _ = SubmitChatAsync( text )` and fails with CS8917 — and only the ENGINE compile says
@@ -339,7 +338,7 @@
 
 	private void Echo( string message )
 	{
-		_localMessages.Add( message );
+		_localMessages.Add( ($"local:{_localMessageSequence++}", message) );
 		if ( _localMessages.Count > 40 ) _localMessages.RemoveRange( 0, _localMessages.Count - 40 );
 	}
 
