@@ -317,6 +317,50 @@
         }
       ],
       "Children": []
+    },
+    {
+      "__guid": "c4a7e000-0000-4000-8000-000000000001",
+      "__version": 2,
+      "Flags": 0,
+      "Name": "Crate",
+      "Position": "330,-150,20",
+      "Rotation": "0,0,0,1",
+      "Scale": "0.8,0.8,0.8",
+      "Tags": "container",
+      "Enabled": true,
+      "NetworkMode": 1,
+      "NetworkFlags": 0,
+      "NetworkOrphaned": 0,
+      "NetworkTransmit": true,
+      "OwnerTransfer": 1,
+      "Components": [
+        {
+          "__type": "Hexagon.Container",
+          "__guid": "c4a7e000-0000-4000-8000-000000000002",
+          "__enabled": true,
+          "Title": "Crate",
+          "Width": 4,
+          "Height": 4,
+          "Requires": ""
+        },
+        {
+          "__type": "Sandbox.ModelRenderer",
+          "__guid": "c4a7e000-0000-4000-8000-000000000003",
+          "__enabled": true,
+          "Model": "models/dev/box.vmdl",
+          "Tint": "0.45,0.33,0.2,1"
+        },
+        {
+          "__type": "Sandbox.BoxCollider",
+          "__guid": "c4a7e000-0000-4000-8000-000000000004",
+          "__enabled": true,
+          "Center": "0,0,0",
+          "Scale": "50,50,50",
+          "Static": true,
+          "IsTrigger": false
+        }
+      ],
+      "Children": []
     }
   ]
 }

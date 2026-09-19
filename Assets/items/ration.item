@@ -5,5 +5,8 @@
   "Height": 1,
   "Tint": "0.8,0.75,0.5,1",
   "__references": [],
-  "__version": 0
+  "__version": 0,
+  "Consumable": true,
+  "UseTitle": "Eat",
+  "UseEmote": "eats a ration"
 }
