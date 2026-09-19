@@ -8,9 +8,9 @@ runs is Hexagon, and HL2RP supplies assets.
 
 | What | Where |
 | --- | --- |
-| Factions: Citizen, and Civil Protection, which needs an operator whitelist and has `door.lock` | `Assets/factions` |
-| Items: ration, water, radio, and a keycard that grants `door.lock` to whoever holds it | `Assets/items` |
-| The city: spawn, doors, game manager, HUD | `Assets/scenes/main.scene` |
+| Factions: Citizen, and Civil Protection, which needs an operator whitelist, has `door.lock` and is paid a wage | `Assets/factions` |
+| Items: ration, water and bandage to use up; radio; a keycard that grants `door.lock`; a zip tie that grants `person.restrain`; a pistol and its rounds | `Assets/items` |
+| The city: spawn, two doors (one for sale), a crate, a ration vendor, game manager, HUD | `Assets/scenes/main.scene` |
 
 Code belongs here only when it is about this setting, such as the Combine. Anything another
 roleplay game would also want belongs in Hexagon.
