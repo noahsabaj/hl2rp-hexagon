@@ -99,6 +99,8 @@ public sealed class HL2RPSceneEntityBehaviorService
 			loaded.Value.Character,
 			loaded.Value.Document,
 			HL2RPPersistence.Payload( HL2RPPersistence.ForcefieldState, next ),
+			// No session proof: a forcefield toggle is a one-shot interaction, authorized for range
+			// and line of sight by the caller immediately before this call. Doors hold a session.
 			null,
 			cancellationToken );
 		if ( !committed.Succeeded ) return HL2RPFeaturePersistence.Failure<ForcefieldStateChangedEvent>( committed.Error! );

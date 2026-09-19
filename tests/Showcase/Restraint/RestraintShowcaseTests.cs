@@ -299,12 +299,67 @@ public sealed class RestraintShowcaseTests
 			civilProtection.Actor.AccountId,
 			civilProtection.Actor.CharacterId,
 			interactable.Target);
-		Assert.AreEqual(ErrorCode.PolicyDenied, unrestrainedGeneric.Error!.Code);
+		// An unrestrained target authorizes proximity only: the timed restrain action needs it,
+		// but it must carry no session and no inventory grant.
+		Assert.IsTrue(unrestrainedGeneric.Succeeded, unrestrainedGeneric.Error?.Message);
+		Assert.IsNull(unrestrainedGeneric.Value.Session);
 		Assert.IsFalse(environment.Access.Has(
 			civilProtection.Actor.ConnectionId,
 			civilProtection.Actor.CharacterId,
 			target.InventoryId,
 			InventoryCapability.View));
+	}
+
+	[TestMethod]
+	public async Task OfficerRestrainsSearchesAndReleasesThroughTheProductionInteractable()
+	{
+		await using var environment = await ShowcaseTestEnvironment.CreateAsync();
+		var tie = ShowcaseTestEnvironment.ZipTie();
+		var officer = await environment.SeedCharacterAsync(220, HL2RPIds.Factions.CivilProtection,
+			HL2RPIds.Classes.Unit, tie);
+		var target = await environment.SeedCharacterAsync(221);
+		var authorities = new HL2RPIncrementalChatAuthorityDirectory();
+		authorities.Rebuild(1, new[]
+		{
+			LiveAuthority(officer, HL2RPIds.Factions.CivilProtection, HL2RPIds.Permissions.Restraint)
+		});
+		var reader = new RestraintStateReader(environment.Repositories);
+		var authorization = new RestraintPermissionAuthorizer(environment.Repositories, authorities);
+		// The same interactable the scene directory resolves for every character target.
+		var interactable = new CharacterRestraintInteractable(
+			target.Actor.CharacterId, environment.Repositories, reader, authorization);
+		var authority = new InteractionAuthorityService(
+			new FakeWorld(officer.Actor, interactable.Target),
+			new FakeDirectory(interactable),
+			new InteractionSessionService(environment.Clock),
+			environment.Access,
+			ShowcaseTestEnvironment.AllowPolicy<ServerInteractionContext>(),
+			environment.Clock);
+		var restraints = new RestraintService(environment.Repositories, environment.Access,
+			environment.Layout, authority, environment.Clock);
+		var search = new RestraintSearchService(
+			environment.Repositories, authority, environment.Access, reader, authorization);
+
+		var premature = search.Open(officer.Actor, target.Actor.CharacterId, target.InventoryId);
+		Assert.AreEqual(ErrorCode.PolicyDenied, premature.Error!.Code);
+
+		var ticket = restraints.Begin(officer.Actor, target.Actor.CharacterId, officer.InventoryId, tie.Id);
+		Assert.IsTrue(ticket.Succeeded, ticket.Error?.Message);
+		environment.Clock.Advance(RestraintService.RestraintDuration);
+		var restrained = await restraints.CompleteAsync(ticket.Value.TicketId, officer.Actor);
+		Assert.IsTrue(restrained.Succeeded, restrained.Error?.Message);
+		Assert.IsTrue(restraints.IsRestrained(target.Actor.CharacterId));
+
+		var opened = search.Open(officer.Actor, target.Actor.CharacterId, target.InventoryId);
+		Assert.IsTrue(opened.Succeeded, opened.Error?.Message);
+
+		var released = await restraints.ReleaseAsync(target.Actor.CharacterId);
+		Assert.IsTrue(released.Succeeded && released.Value, released.Error?.Message);
+		Assert.IsFalse(restraints.IsRestrained(target.Actor.CharacterId));
+		Assert.IsFalse(environment.Access.Has(
+			officer.Actor.ConnectionId, officer.Actor.CharacterId, target.InventoryId, InventoryCapability.View));
+		var again = await restraints.ReleaseAsync(target.Actor.CharacterId);
+		Assert.IsTrue(again.Succeeded && !again.Value);
 	}
 
 	[TestMethod]

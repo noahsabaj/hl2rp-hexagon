@@ -21,21 +21,8 @@ public static class CombatTraitNames
 
 internal static class CombatPersistence
 {
-	public static OperationResult<T> Decode<T>(TypedPayload payload, IPersistedTypeCodec<T> codec) where T : class
-	{
-		if (payload.TypeId.Value != codec.Key.Value || payload.TypeVersion != codec.CurrentVersion)
-			return OperationResult<T>.Failure(ErrorCode.PersistedTypeInvalid,
-				$"Expected '{codec.Key}' v{codec.CurrentVersion}.");
-		try
-		{
-			return OperationResult<T>.Success(codec.Deserialize(payload.Data, payload.TypeVersion));
-		}
-		catch (Exception)
-		{
-			return OperationResult<T>.Failure(ErrorCode.PersistedTypeInvalid,
-				$"Payload '{codec.Key}' is malformed.");
-		}
-	}
+	public static OperationResult<T> Decode<T>(TypedPayload payload, IPersistedTypeCodec<T> codec) where T : class =>
+		HL2RP.V2.Features.HL2RPFeaturePersistence.Decode(payload, codec);
 
 	public static OperationResult<T> DecodeTrait<T>(ItemRecord item, string trait,
 		IPersistedTypeCodec<T> codec) where T : class
@@ -55,21 +42,10 @@ internal static class CombatPersistence
 	}
 
 	public static OperationResult Failure(PersistenceError error) =>
-		OperationResult.Failure(Map(error.Code), error.Message);
+		HL2RP.V2.Features.HL2RPFeaturePersistence.Failure(error);
 
 	public static OperationResult<T> Failure<T>(PersistenceError error) =>
-		OperationResult<T>.Failure(Map(error.Code), error.Message);
-
-	private static ErrorCode Map(PersistenceErrorCode code) => code switch
-	{
-		PersistenceErrorCode.NotFound => ErrorCode.NotFound,
-		PersistenceErrorCode.AlreadyExists => ErrorCode.Conflict,
-		PersistenceErrorCode.RevisionConflict => ErrorCode.Conflict,
-		PersistenceErrorCode.TypeNotRegistered => ErrorCode.PersistedTypeInvalid,
-		PersistenceErrorCode.CollectionTypeMismatch => ErrorCode.PersistedTypeInvalid,
-		PersistenceErrorCode.InvalidOperation => ErrorCode.InvalidArgument,
-		_ => ErrorCode.InternalError
-	};
+		HL2RP.V2.Features.HL2RPFeaturePersistence.Failure<T>(error);
 }
 
 public sealed class EquipCombatItemActionHandler : IItemActionHandler
@@ -262,41 +238,4 @@ public sealed class ReloadPistolItemActionHandler : IItemActionHandler
 
 	private static OperationResult<ItemActionPlan> Failure<T>(OperationResult<T> result) =>
 		OperationResult<ItemActionPlan>.Failure(result.Error!.Code, result.Error.Message);
-}
-
-public sealed class ReplenishPistolAmmunitionItemActionHandler : IItemActionHandler
-{
-	private readonly ICharacterCombatGate _gate;
-
-	public ReplenishPistolAmmunitionItemActionHandler(ICharacterCombatGate? gate = null) =>
-		_gate = gate ?? new AllowCharacterCombatGate();
-
-	public ActionId Id { get; } = new(HL2RPIds.Actions.Replenish);
-
-	public OperationResult<ItemActionPlan> Plan(ItemActionContext context)
-	{
-		var gate = _gate.Authorize(context.Actor.CharacterId);
-		if (gate.Failed) return OperationResult<ItemActionPlan>.Failure(gate.Error!.Code, gate.Error.Message);
-		if (context.Item.Definition.Value != HL2RPIds.Items.PistolAmmunition)
-			return OperationResult<ItemActionPlan>.Failure(ErrorCode.PolicyDenied,
-				"Ammunition replenishment requires a pistol ammunition item.");
-		var state = CombatPersistence.DecodeTrait(context.Item, CombatTraitNames.Ammunition,
-			HL2RPPersistence.PistolAmmunition);
-		if (state.Failed)
-			return OperationResult<ItemActionPlan>.Failure(state.Error!.Code, state.Error.Message);
-		if (state.Value.Rounds is < 0 or > PistolItemState.MagazineCapacity)
-			return OperationResult<ItemActionPlan>.Failure(ErrorCode.PersistedTypeInvalid,
-				"Ammunition count is outside registered limits.");
-		if (state.Value.Rounds == PistolItemState.MagazineCapacity)
-			return OperationResult<ItemActionPlan>.Failure(ErrorCode.Conflict, "Ammunition is already replenished.");
-		return OperationResult<ItemActionPlan>.Success(new ItemActionPlan
-		{
-			UpdatedItems = new Dictionary<ItemId, ItemRecord>
-			{
-				[context.Item.Id] = CombatPersistence.ReplaceTrait(context.Item, CombatTraitNames.Ammunition,
-					HL2RPPersistence.PistolAmmunition,
-					state.Value with { Rounds = PistolItemState.MagazineCapacity })
-			}
-		});
-	}
 }

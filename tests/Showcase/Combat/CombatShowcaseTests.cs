@@ -18,7 +18,7 @@ namespace HL2RP.V2.Tests.Showcase.Combat;
 public sealed class CombatShowcaseTests
 {
 	[TestMethod]
-	public async Task TypedEquipReloadReplenishAndUnequipActionsCommitThroughNeutralBoundary()
+	public async Task TypedEquipReloadAndUnequipActionsCommitThroughNeutralBoundary()
 	{
 		await using var environment = await ShowcaseTestEnvironment.CreateAsync();
 		var pistol = ShowcaseTestEnvironment.Pistol(6, equipped: false);
@@ -34,8 +34,7 @@ public sealed class CombatShowcaseTests
 			{
 				new EquipCombatItemActionHandler(),
 				new UnequipCombatItemActionHandler(),
-				new ReloadPistolItemActionHandler(),
-				new ReplenishPistolAmmunitionItemActionHandler()
+				new ReloadPistolItemActionHandler()
 			}),
 			environment.Schema.CreatePolicyPipeline<ItemActionContext>().Value,
 			new PostCommitEventBus<ItemActionCommittedEvent>());
@@ -46,9 +45,11 @@ public sealed class CombatShowcaseTests
 			new ActionId(HL2RPIds.Actions.Reload)));
 		Assert.AreEqual(PistolItemState.MagazineCapacity, environment.ReadPistol(pistol.Id).MagazineRounds);
 		Assert.AreEqual(0, environment.ReadAmmunition(ammunition.Id).Rounds);
-		AssertSuccess(await service.ExecuteAsync(seeded.Actor, seeded.InventoryId, ammunition.Id,
-			new ActionId(HL2RPIds.Actions.Replenish)));
-		Assert.AreEqual(PistolItemState.MagazineCapacity, environment.ReadAmmunition(ammunition.Id).Rounds);
+		// Spent ammunition is never refilled for free; a fresh box has to be bought.
+		var refill = await service.ExecuteAsync(seeded.Actor, seeded.InventoryId, ammunition.Id,
+			new ActionId("replenish"));
+		Assert.IsTrue(refill.Failed);
+		Assert.AreEqual(0, environment.ReadAmmunition(ammunition.Id).Rounds);
 		AssertSuccess(await service.ExecuteAsync(seeded.Actor, seeded.InventoryId, pistol.Id,
 			new ActionId(HL2RPIds.Actions.Unequip)));
 		Assert.IsFalse(environment.ReadPistol(pistol.Id).Equipped);
@@ -141,16 +142,11 @@ public sealed class CombatShowcaseTests
 		Assert.AreEqual(0, damage.CommitCount);
 		damage.StageResult = OperationResult.Success();
 
-		var vestService = new ProtectiveVestService(environment.Repositories, environment.Access);
-		environment.Provider.FailNextCommit();
-		var failedVest = await vestService.ApplyAsync(seeded.Actor, seeded.InventoryId, vest.Id, 50);
-		Assert.IsTrue(failedVest.Failed);
-		Assert.AreEqual(100, environment.ReadVest(vest.Id).Durability);
-		var applied = await vestService.ApplyAsync(seeded.Actor, seeded.InventoryId, vest.Id, 50);
-		Assert.IsTrue(applied.Succeeded, applied.Error?.Message);
-		Assert.AreEqual(15L, applied.Value.AbsorbedDamage);
-		Assert.AreEqual(35L, applied.Value.AppliedDamage);
-		Assert.AreEqual(85, environment.ReadVest(vest.Id).Durability);
+		// Vest mitigation is planned by the same pure planner the shot transaction stages.
+		var planned = ProtectiveVestDamagePlanner.Plan(environment.ReadVest(vest.Id), 50);
+		Assert.IsTrue(planned.Succeeded, planned.Error?.Message);
+		Assert.AreEqual(15L, planned.Value.AbsorbedDamage);
+		Assert.AreEqual(35L, planned.Value.AppliedDamage);
 	}
 
 	[TestMethod]
@@ -429,6 +425,42 @@ public sealed class CombatShowcaseTests
 	}
 
 	[TestMethod]
+	public async Task DeathReleasesRestraintAndAnUndroppablePistolCannotBlockIt()
+	{
+		await using var environment = await ShowcaseTestEnvironment.CreateAsync();
+		var pistol = ShowcaseTestEnvironment.Pistol(equipped: true, raised: true);
+		var seeded = await environment.SeedCharacterAsync(104, items: new[] { pistol });
+		var captor = await environment.SeedCharacterAsync(105, HL2RPIds.Factions.CivilProtection);
+		var restrained = await new CharacterReferenceMutationService(environment.Repositories).UpsertAsync(
+			HL2RP.V2.Showcase.Restraint.RestraintService.DocumentKey(seeded.Actor.CharacterId),
+			new CharacterReferenceRecord
+			{
+				Category = HL2RP.V2.Showcase.Restraint.RestraintService.ReferenceCategory,
+				CharacterId = seeded.Actor.CharacterId,
+				RelatedCharacterId = captor.Actor.CharacterId,
+				State = HL2RPPersistence.Payload(HL2RPPersistence.Restraint,
+					new RestraintReferenceState { RestrainedAtUtc = environment.Clock.UtcNow, Active = true })
+			});
+		Assert.IsTrue(restrained.Succeeded, restrained.Error?.Message);
+		var service = new CombatLifecycleService(environment.Repositories, environment.Schema,
+			environment.Layout, new DenyWorldModels(), environment.Clock, new FakeLifecycleBoundary());
+		var transform = new WorldTransformRecord
+		{
+			PositionX = 1, PositionY = 2, PositionZ = 3,
+			RotationX = 0, RotationY = 0, RotationZ = 0, RotationW = 1
+		};
+
+		var died = await service.DieAsync(seeded.Actor, seeded.InventoryId, transform, "test");
+
+		Assert.IsTrue(died.Succeeded, died.Error?.Message);
+		Assert.IsNull(died.Value.DroppedPistol);
+		Assert.IsNotNull(environment.Repositories.Inventories.Find(DomainKeys.Inventory(seeded.InventoryId))!.Value.Find(pistol.Id));
+		Assert.IsFalse(environment.ReadPistol(pistol.Id).Equipped);
+		Assert.IsFalse(new HL2RP.V2.Showcase.Restraint.RestraintStateReader(environment.Repositories)
+			.IsRestrained(seeded.Actor.CharacterId));
+	}
+
+	[TestMethod]
 	public async Task CharacterExitCleanupClearsDeathLifecycleAndHealthUniformly()
 	{
 		await using var environment = await ShowcaseTestEnvironment.CreateAsync();
@@ -528,6 +560,11 @@ public sealed class CombatShowcaseTests
 	private sealed class AllowWorldModels : IWorldModelCatalog
 	{
 		public bool IsValidModel(string modelPath) => !string.IsNullOrWhiteSpace(modelPath);
+	}
+
+	private sealed class DenyWorldModels : IWorldModelCatalog
+	{
+		public bool IsValidModel(string modelPath) => false;
 	}
 
 	private sealed class FakeLifecycleBoundary : ICombatLifecycleBoundary

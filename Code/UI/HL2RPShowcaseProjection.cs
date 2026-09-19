@@ -37,10 +37,10 @@ public sealed class HL2RPShowcaseProjection
 		var storageInventory = store.Inventories.FirstOrDefault(inventory => inventory.Kind == InventoryViewKind.Storage);
 		var vendorInventory = store.Inventories.FirstOrDefault(inventory => inventory.Kind == InventoryViewKind.Vendor);
 		var searchInventory = store.Inventories.FirstOrDefault(inventory => inventory.Kind == InventoryViewKind.Search);
-		var storageSessionId = ReadSession(privatePlayer, "interaction.storage_session");
-		var searchSessionId = ReadSession(privatePlayer, "interaction.search_session");
-		var vendorSessionId = ReadSession(privatePlayer, "interaction.vendor_session");
-		var scannerSessionId = ReadSession(privatePlayer, "interaction.scanner_session");
+		var storageSessionId = ReadSession(privatePlayer, HL2RPPresentationFields.InteractionSession(InteractionSessionKind.Storage));
+		var searchSessionId = ReadSession(privatePlayer, HL2RPPresentationFields.InteractionSession(InteractionSessionKind.CharacterSearch));
+		var vendorSessionId = ReadSession(privatePlayer, HL2RPPresentationFields.InteractionSession(InteractionSessionKind.Vendor));
+		var scannerSessionId = ReadSession(privatePlayer, HL2RPPresentationFields.InteractionSession(InteractionSessionKind.Scanner));
 		var equipment = BuildEquipment( mainInventory );
 		var schemaViews = store.SchemaViews;
 		var creationAvailability = TryGetSchemaView(
@@ -55,8 +55,7 @@ public sealed class HL2RPShowcaseProjection
 				store.CharacterList ?? new CharacterListSnapshot(0, Array.Empty<CharacterSummarySnapshot>()),
 				CreateCharacterDefinition( creationAvailability ),
 				entitlementAdministration,
-				4,
-				false,
+				CharacterRules.MaximumSlots,
 				store.Lifecycle == ClientLifecycleState.Disconnected
 					? "Waiting for a host connection."
 					: "Choose a dossier or register a new identity.");
@@ -113,7 +112,7 @@ public sealed class HL2RPShowcaseProjection
 			: BuildScanner(privatePlayer, scannerSessionId);
 		var combine = BuildCombine(publicPlayer, privatePlayer, objectives);
 		var death = publicPlayer?.IsDead == true
-			? new DeathViewModel(true, ReadString(privatePlayer, "death.cause", "Cause unavailable"),
+			? new DeathViewModel(ReadString(privatePlayer, "death.cause", "Cause unavailable"),
 				ReadUnixMilliseconds( privatePlayer, "death.respawn_available_at_ms" ),
 				ReadBool(privatePlayer, "death.can_respawn"))
 			: null;
@@ -204,8 +203,8 @@ public sealed class HL2RPShowcaseProjection
 					new CreationFieldOption("city_17", "City 17", "Long-term City 17 resident."),
 					new CreationFieldOption("relocated", "Relocated", "Recently transferred from another city."),
 					new CreationFieldOption("outlands", "Outlands", "Processed from an outlying region.")))),
-		48,
-		512);
+		CharacterRules.MaximumNameLength,
+		CharacterRules.MaximumDescriptionLength);
 	}
 
 	private static IReadOnlyDictionary<string, bool> ParseCreationAvailability( SchemaViewSnapshot? view )
@@ -333,7 +332,7 @@ public sealed class HL2RPShowcaseProjection
 		string description)
 	{
 		var owned = ownedKinds.Contains(kind);
-		return new PermitCardViewModel($"permit_{kind}", name, description, 250, owned, !owned,
+		return new PermitCardViewModel($"permit_{kind}", name, description, PermitPurchaseService.DefaultPrice, owned, !owned,
 			owned ? "Credential verified" : "Available through Civil Administration");
 	}
 
@@ -596,7 +595,7 @@ public sealed class HL2RPShowcaseProjection
 	private static ScannerViewModel? BuildScanner(PlayerPrivateSnapshot? state, InteractionSessionId? sessionId)
 	{
 		if (!ReadBool(state, "scanner.piloting")) return null;
-		return new ScannerViewModel(true, ReadString(state, "scanner.unit", "SCN-00"),
+		return new ScannerViewModel(ReadString(state, "scanner.unit", "SCN-00"),
 			ReadBool(state, "scanner.spotlight"), null, sessionId, ImmutableArray<ScannerContactViewModel>.Empty);
 	}
 
@@ -625,7 +624,7 @@ public sealed class HL2RPShowcaseProjection
 			contacts.Add(new ScannerContactViewModel(label, distance, priority));
 		}
 
-		return new ScannerViewModel(true, unitName, spotlight, photoReadyAt,
+		return new ScannerViewModel(unitName, spotlight, photoReadyAt,
 			new InteractionSessionId(session), contacts.MoveToImmutable());
 	}
 
@@ -636,12 +635,11 @@ public sealed class HL2RPShowcaseProjection
 	{
 		if (player?.Faction is not FactionId faction || faction.Value == HL2RPIds.Factions.Citizen) return null;
 		var directive = ActiveDirective(objectives);
-		return new CombineOverlayViewModel(true,
+		return new CombineOverlayViewModel(
 			ReadString(state, "combine.rank", player.Class?.Value ?? "UNIT"),
 			ReadString(state, "combine.division", faction.Value),
 			ReadString(state, "combine.callsign", player.CharacterName),
-			directive,
-			ImmutableArray<CombineAlertViewModel>.Empty);
+			directive);
 	}
 
 	internal static string ActiveDirective(ObjectivesViewModel? objectives) =>
@@ -682,7 +680,8 @@ public sealed class HL2RPShowcaseProjection
 		return new ScoreboardViewModel(
 			"City 17 Roleplay",
 			"Hexagon v2 / HL2RP",
-			ReadString(privatePlayer, "server.map", "main"),
+			// The host does not publish a map name yet; show none rather than inventing one.
+			ReadString(privatePlayer, "server.map", string.Empty),
 			players.ToImmutable(),
 			privatePlayer?.Permissions.Contains(
 				HL2RPIds.Permissions.CivicData, StringComparer.Ordinal) == true);

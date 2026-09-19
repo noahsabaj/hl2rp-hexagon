@@ -112,7 +112,7 @@ public sealed class CivicService
 					Points = points,
 					IssuedAtUtc = _clock.UtcNow,
 					IssuedBy = actor.AccountId
-				} ).ToArray();
+				} ).TakeLast( CivicRecordState.MaximumInfractions ).ToArray();
 				return OperationResult<HL2RPCharacterState>.Success( state with
 				{
 					CivicRecord = state.CivicRecord with
@@ -153,14 +153,14 @@ public sealed class CivicService
 		CancellationToken cancellationToken = default )
 	{
 		recordText ??= string.Empty;
-		if ( !Enum.IsDefined( priority ) || recordText.Length > 4_096 ||
+		if ( !Enum.IsDefined( priority ) || recordText.Length > HL2RPFeaturePersistence.MaximumDocumentTextLength ||
 			recordText.Any( value => char.IsControl( value ) && value is not '\r' and not '\n' and not '\t' ) )
 			return ValueTask.FromResult( OperationResult<CivicMutationReceipt>.Failure(
 				ErrorCode.InvalidArgument, "Civic record priority or text is invalid." ) );
 		return MutateAsync(
 			actor,
 			targetCharacterId,
-			HL2RPFeatureOperation.SetPriority,
+			HL2RPFeatureOperation.UpdateRecord,
 			state => OperationResult<HL2RPCharacterState>.Success( state with
 			{
 				CivicRecord = state.CivicRecord with
@@ -179,10 +179,10 @@ public sealed class CivicService
 		Func<HL2RPCharacterState, OperationResult<HL2RPCharacterState>> mutate,
 		CancellationToken cancellationToken )
 	{
-		var actorValidation = ValidateActor( actor );
-		if ( actorValidation.Failed )
+		var actorCharacter = _repositories.Characters.Find( DomainKeys.Character( actor.CharacterId ) );
+		if ( actorCharacter is null || actorCharacter.Value.AccountId != actor.AccountId )
 			return OperationResult<CivicMutationReceipt>.Failure(
-				actorValidation.Error!.Code, actorValidation.Error.Message );
+				ErrorCode.Unauthorized, "Active character does not belong to the actor." );
 		var document = _repositories.Characters.Find( DomainKeys.Character( targetCharacterId ) );
 		if ( document is null )
 			return OperationResult<CivicMutationReceipt>.Failure( ErrorCode.NotFound, "Target character was not found." );
@@ -207,6 +207,10 @@ public sealed class CivicService
 			SchemaState = HL2RPPersistence.Payload( HL2RPPersistence.CharacterState, changed.Value )
 		};
 		var unitOfWork = _repositories.Provider.BeginUnitOfWork();
+		// The actor's authority was proved against this snapshot; a self-edit is already
+		// fenced by the editor below.
+		if ( actor.CharacterId != targetCharacterId )
+			HL2RPUnitOfWork.RequireActorState( unitOfWork, _repositories, actorCharacter );
 		var editor = unitOfWork.Edit( _repositories.Characters, document );
 		if ( editor is null )
 		{
@@ -224,14 +228,6 @@ public sealed class CivicService
 		HL2RPFeaturePersistence.PublishAudit(
 			_audit, actor, operation, targetCharacterId.ToString(), _clock.UtcNow, committed.Value.Sequence );
 		return OperationResult<CivicMutationReceipt>.Success( receipt );
-	}
-
-	private OperationResult ValidateActor( InventoryActor actor )
-	{
-		var character = _repositories.Characters.Find( DomainKeys.Character( actor.CharacterId ) );
-		return character is not null && character.Value.AccountId == actor.AccountId
-			? OperationResult.Success()
-			: OperationResult.Failure( ErrorCode.Unauthorized, "Active character does not belong to the actor." );
 	}
 }
 

@@ -10,46 +10,30 @@ namespace HL2RP.V2.Features;
 public sealed record NoteEditReceipt(
 	ItemId NoteItemId, string Text, long CommitSequence, CommitReceipt Commit ) : IHL2RPCommittedOperation;
 
-public sealed record PermitIssuedReceipt(
-	ItemId PermitItemId,
-	CharacterId OwnerCharacterId,
-	BusinessPermitKind Kind,
-	long CommitSequence,
-	CommitReceipt Commit ) : IHL2RPCommittedOperation;
-
 public sealed class DocumentService
 {
-	public const int MaximumNoteUnicodeScalars = 4_096;
+	public const int MaximumNoteUnicodeScalars = HL2RPFeaturePersistence.MaximumDocumentTextLength;
 
 	private readonly DomainRepositories _repositories;
 	private readonly InventoryAccessService _access;
-	private readonly IAggregateIdGenerator _ids;
-	private readonly InventoryLayoutService _layout;
 	private readonly IHexClock _clock;
 	private readonly PolicyPipeline<HL2RPFeaturePolicyContext> _policy;
 	private readonly PostCommitEventBus<NoteEditReceipt> _noteEvents;
-	private readonly PostCommitEventBus<PermitIssuedReceipt> _permitEvents;
 	private readonly PostCommitEventBus<AdminAuditFact> _audit;
 
 	public DocumentService(
 		DomainRepositories repositories,
 		InventoryAccessService access,
-		IAggregateIdGenerator ids,
-		InventoryLayoutService layout,
 		IHexClock clock,
 		PolicyPipeline<HL2RPFeaturePolicyContext> policy,
 		PostCommitEventBus<NoteEditReceipt>? noteEvents = null,
-		PostCommitEventBus<PermitIssuedReceipt>? permitEvents = null,
 		PostCommitEventBus<AdminAuditFact>? audit = null )
 	{
 		_repositories = repositories;
 		_access = access;
-		_ids = ids;
-		_layout = layout;
 		_clock = clock;
 		_policy = policy;
 		_noteEvents = noteEvents ?? new PostCommitEventBus<NoteEditReceipt>();
-		_permitEvents = permitEvents ?? new PostCommitEventBus<PermitIssuedReceipt>();
 		_audit = audit ?? new PostCommitEventBus<AdminAuditFact>();
 	}
 
@@ -106,7 +90,9 @@ public sealed class DocumentService
 				state.Value with
 				{
 					Text = normalized.Value,
-					OwnerCharacterId = actor.CharacterId,
+					// Writing claims authorship, which stops a later holder forging the text.
+					// Saving the note blank releases it, so a note can be handed on and reused.
+					OwnerCharacterId = normalized.Value.Length == 0 ? null : actor.CharacterId,
 					UpdatedAtUtc = _clock.UtcNow
 				} )
 		};
@@ -139,96 +125,6 @@ public sealed class DocumentService
 		return OperationResult<NoteEditReceipt>.Success( receipt );
 	}
 
-	public async ValueTask<OperationResult<PermitIssuedReceipt>> IssuePermitAsync(
-		InventoryActor actor,
-		CharacterId ownerCharacterId,
-		InventoryId destinationInventoryId,
-		BusinessPermitKind kind,
-		DateTimeOffset? expiresAtUtc,
-		CancellationToken cancellationToken = default )
-	{
-		if ( !Enum.IsDefined( kind ) ||
-			expiresAtUtc is not null && (expiresAtUtc.Value.Offset != TimeSpan.Zero || expiresAtUtc <= _clock.UtcNow) )
-			return OperationResult<PermitIssuedReceipt>.Failure( ErrorCode.InvalidArgument, "Permit kind or expiry is invalid." );
-		var actorCharacter = _repositories.Characters.Find( DomainKeys.Character( actor.CharacterId ) );
-		var owner = _repositories.Characters.Find( DomainKeys.Character( ownerCharacterId ) );
-		var destination = _repositories.Inventories.Find( DomainKeys.Inventory( destinationInventoryId ) );
-		if ( actorCharacter is null || actorCharacter.Value.AccountId != actor.AccountId )
-			return OperationResult<PermitIssuedReceipt>.Failure( ErrorCode.Unauthorized, "Actor binding is invalid." );
-		if ( owner is null || destination is null ||
-			destination.Value.Owner != InventoryOwner.Character( ownerCharacterId ) )
-			return OperationResult<PermitIssuedReceipt>.Failure( ErrorCode.NotFound, "Permit owner inventory was not found." );
-		var access = _access.Prove(
-			actor.ConnectionId,
-			actor.CharacterId,
-			destinationInventoryId,
-			InventoryCapability.TransferIn );
-		if ( access is null )
-			return OperationResult<PermitIssuedReceipt>.Failure( ErrorCode.Unauthorized, "Permit transfer capability is missing." );
-		var policy = _policy.Evaluate( new HL2RPFeaturePolicyContext
-		{
-			Actor = actor,
-			Operation = HL2RPFeatureOperation.IssuePermit,
-			TargetCharacterId = ownerCharacterId
-		} );
-		if ( policy.Failed )
-			return OperationResult<PermitIssuedReceipt>.Failure( policy.Error!.Code, policy.Error.Message );
-		var item = new ItemRecord
-		{
-			Id = _ids.NewItemId(),
-			Definition = new DefinitionId( HL2RPIds.Items.BusinessPermit ),
-			Traits = new Dictionary<string, TypedPayload>( StringComparer.Ordinal )
-			{
-				["permit"] = HL2RPPersistence.Payload(
-					HL2RPPersistence.BusinessPermit,
-					new BusinessPermitItemState
-					{
-						Kind = kind,
-						OwnerCharacterId = ownerCharacterId,
-						IssuedAtUtc = _clock.UtcNow,
-						ExpiresAtUtc = expiresAtUtc,
-						Revoked = false
-					} )
-			}
-		};
-		var layoutDependencies = HL2RPUnitOfWork.CaptureInventoryLayout(
-			_repositories, destination.Value );
-		var firstFit = _layout.FindFirstFit( destination.Value, item );
-		if ( firstFit.Failed )
-			return OperationResult<PermitIssuedReceipt>.Failure( firstFit.Error!.Code, firstFit.Error.Message );
-		var placed = _layout.AddAt( destination.Value, item, firstFit.Value.X, firstFit.Value.Y );
-		if ( placed.Failed )
-			return OperationResult<PermitIssuedReceipt>.Failure( placed.Error!.Code, placed.Error.Message );
-		var unitOfWork = _repositories.Provider.BeginUnitOfWork();
-		unitOfWork.Require( access );
-		HL2RPUnitOfWork.RequireActorState( unitOfWork, _repositories, actorCharacter );
-		HL2RPUnitOfWork.RequireActorState( unitOfWork, _repositories, owner );
-		HL2RPUnitOfWork.RequireInventoryLayout( unitOfWork, _repositories, layoutDependencies );
-		var inventoryEditor = unitOfWork.Edit( _repositories.Inventories, destination );
-		if ( inventoryEditor is null )
-		{
-			await HL2RPUnitOfWork.DisposeAsync( unitOfWork );
-			return OperationResult<PermitIssuedReceipt>.Failure( ErrorCode.Conflict, "Destination inventory changed." );
-		}
-		inventoryEditor.Replace( placed.Value );
-		unitOfWork.Save( inventoryEditor );
-		unitOfWork.Create( _repositories.Items, DomainKeys.Item( item.Id ), item );
-		var committed = await HL2RPUnitOfWork.CommitAndDisposeAsync( unitOfWork, cancellationToken );
-		if ( !committed.Succeeded )
-			return HL2RPFeaturePersistence.Failure<PermitIssuedReceipt>( committed.Error! );
-		var receipt = new PermitIssuedReceipt(
-			item.Id, ownerCharacterId, kind, committed.Value!.Sequence, committed.Value );
-		_permitEvents.Publish( receipt );
-		HL2RPFeaturePersistence.PublishAudit(
-			_audit,
-			actor,
-			HL2RPFeatureOperation.IssuePermit,
-			ownerCharacterId.ToString(),
-			_clock.UtcNow,
-			committed.Value.Sequence );
-		return OperationResult<PermitIssuedReceipt>.Success( receipt );
-	}
-
 	private OperationResult<ItemProof> RequireItem(
 		InventoryActor actor,
 		InventoryId inventoryId,
@@ -236,18 +132,7 @@ public sealed class DocumentService
 		string definitionId,
 		InventoryCapability capability )
 	{
-		var character = _repositories.Characters.Find( DomainKeys.Character( actor.CharacterId ) );
-		var inventory = _repositories.Inventories.Find( DomainKeys.Inventory( inventoryId ) );
-		var item = _repositories.Items.Find( DomainKeys.Item( itemId ) );
-		if ( character is null || inventory is null || item is null )
-			return OperationResult<ItemProof>.Failure( ErrorCode.NotFound, "Character, inventory or item was not found." );
-		if ( character.Value.AccountId != actor.AccountId || inventory.Value.Find( itemId ) is null ||
-			item.Value.Definition.Value != definitionId )
-			return OperationResult<ItemProof>.Failure( ErrorCode.Unauthorized, "Item ownership proof failed." );
-		var access = _access.Prove( actor.ConnectionId, actor.CharacterId, inventoryId, capability );
-		if ( access is null )
-			return OperationResult<ItemProof>.Failure( ErrorCode.Unauthorized, "Inventory capability is missing." );
-		return OperationResult<ItemProof>.Success( new ItemProof( character, inventory, item, access ) );
+		return ItemProof.Require( _repositories, _access, actor, inventoryId, itemId, definitionId, capability );
 	}
 
 	private static OperationResult<string> NormalizeNote( string text )
@@ -285,12 +170,6 @@ public sealed class DocumentService
 		}
 		return OperationResult<string>.Success( normalized );
 	}
-
-	private sealed record ItemProof(
-		DocumentSnapshot<CharacterRecord> Character,
-		DocumentSnapshot<InventoryRecord> Inventory,
-		DocumentSnapshot<ItemRecord> Item,
-		InventoryAccessProof Access );
 }
 
 internal static class PermitInspector

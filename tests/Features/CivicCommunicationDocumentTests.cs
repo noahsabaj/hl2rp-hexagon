@@ -62,6 +62,75 @@ public sealed class CivicCommunicationDocumentTests
 	}
 
 	[TestMethod]
+	public async Task DeniedCivicAndNoteOperationsWriteNothingAndAuditNothing()
+	{
+		await using var environment = await FeatureTestEnvironment.CreateAsync();
+		var actor = environment.Actor();
+		var targetActor = environment.Actor( 43 );
+		var target = environment.Character( targetActor );
+		var note = environment.Item(
+			HL2RPIds.Items.Note,
+			new Dictionary<string, TypedPayload>
+			{
+				["note"] = HL2RPPersistence.Payload(
+					HL2RPPersistence.Note,
+					new NoteItemState { Text = "original", OwnerCharacterId = null, UpdatedAtUtc = environment.Clock.UtcNow } )
+			} );
+		var inventory = environment.Inventory( actor.CharacterId, new[] { new InventoryPlacement( note.Id, 0, 0 ) } );
+		await environment.SeedAsync( unitOfWork =>
+		{
+			unitOfWork.Create( environment.Repositories.Characters, DomainKeys.Character( actor.CharacterId ), environment.Character( actor ) );
+			unitOfWork.Create( environment.Repositories.Characters, DomainKeys.Character( target.Id ), target );
+			unitOfWork.Create( environment.Repositories.Items, DomainKeys.Item( note.Id ), note );
+			unitOfWork.Create( environment.Repositories.Inventories, DomainKeys.Inventory( inventory.Id ), inventory );
+		} );
+		environment.Grant( actor, inventory.Id, InventoryCapability.View | InventoryCapability.Use );
+		var audit = new RecordingHandler<AdminAuditFact>();
+		var civic = new CivicService(
+			environment.Repositories, environment.Clock, FeatureTestEnvironment.DenyPolicy(), audit: audit.Bus() );
+		var documents = new DocumentService(
+			environment.Repositories, environment.Access, environment.Clock,
+			FeatureTestEnvironment.DenyPolicy(), audit: audit.Bus() );
+
+		var infraction = await civic.AddInfractionAsync( actor, target.Id, "17-1", "Denied", 3 );
+		var record = await civic.UpdateRecordAsync( actor, target.Id, CivicPriorityStatus.Detain, "Denied" );
+		var edited = await documents.EditNoteAsync( actor, inventory.Id, note.Id, "forged" );
+
+		Assert.AreEqual( ErrorCode.PolicyDenied, infraction.Error!.Code );
+		Assert.AreEqual( ErrorCode.PolicyDenied, record.Error!.Code );
+		Assert.AreEqual( ErrorCode.PolicyDenied, edited.Error!.Code );
+		Assert.HasCount( 0, civic.Read( target.Id ).Value.CivicRecord.Infractions );
+		Assert.AreEqual( "original", documents.ReadNote( actor, inventory.Id, note.Id ).Value.Text );
+		Assert.HasCount( 0, audit.Events );
+	}
+
+	[TestMethod]
+	public async Task InfractionsAreCappedAndARecordRewriteIsAuditedAsItsOwnOperation()
+	{
+		await using var environment = await FeatureTestEnvironment.CreateAsync();
+		var actor = environment.Actor();
+		var target = environment.Character( environment.Actor( 43 ) );
+		await environment.SeedAsync( unitOfWork =>
+		{
+			unitOfWork.Create( environment.Repositories.Characters, DomainKeys.Character( actor.CharacterId ), environment.Character( actor ) );
+			unitOfWork.Create( environment.Repositories.Characters, DomainKeys.Character( target.Id ), target );
+		} );
+		var audit = new RecordingHandler<AdminAuditFact>();
+		var civic = new CivicService(
+			environment.Repositories, environment.Clock, FeatureTestEnvironment.AllowPolicy(), audit: audit.Bus() );
+
+		for ( var index = 0; index < CivicRecordState.MaximumInfractions + 3; index++ )
+			Assert.IsTrue( (await civic.AddInfractionAsync( actor, target.Id, $"17-{index}", "Repeat", 1 )).Succeeded );
+		var rewritten = await civic.UpdateRecordAsync( actor, target.Id, CivicPriorityStatus.Detain, "Rewritten." );
+
+		Assert.IsTrue( rewritten.Succeeded, rewritten.Error?.Message );
+		var stored = civic.Read( target.Id ).Value.CivicRecord;
+		Assert.HasCount( CivicRecordState.MaximumInfractions, stored.Infractions );
+		Assert.AreEqual( "17-3", stored.Infractions[0].Code, "The oldest entries are the ones dropped." );
+		Assert.AreEqual( HL2RPFeatureOperation.UpdateRecord, audit.Events[^1].Operation );
+	}
+
+	[TestMethod]
 	public async Task IntroductionsAndCityObjectivesUseTypedCommittedState()
 	{
 		await using var environment = await FeatureTestEnvironment.CreateAsync();
@@ -212,7 +281,8 @@ public sealed class CivicCommunicationDocumentTests
 			inventory,
 			new FixedClock(),
 			new PolicyPipeline<ChatSendContext>(
-				new PolicyHandler<ChatSendContext>( "built_in", new AllowPolicy<ChatSendContext>() ) ) );
+				new PolicyHandler<ChatSendContext>( "built_in", new AllowPolicy<ChatSendContext>() ) ),
+			new AlwaysAliveChat() );
 		var character = new FeatureTestCharacterFactory().Create( actor );
 
 		var sent = service.Send( actor, character, HL2RPIds.Channels.Radio, "Radio check" );
@@ -267,7 +337,7 @@ public sealed class CivicCommunicationDocumentTests
 	}
 
 	[TestMethod]
-	public async Task NoteAndPermitMutationsCommitThroughDedicatedTypedServices()
+	public async Task NoteMutationsCommitThroughTheDedicatedTypedService()
 	{
 		await using var environment = await FeatureTestEnvironment.CreateAsync();
 		var actor = environment.Actor();
@@ -299,24 +369,18 @@ public sealed class CivicCommunicationDocumentTests
 		var service = new DocumentService(
 			environment.Repositories,
 			environment.Access,
-			environment.Ids,
-			environment.Layout,
 			environment.Clock,
 			FeatureTestEnvironment.AllowPolicy() );
 
 		var edited = await service.EditNoteAsync( actor, actorInventory.Id, note.Id, "  Civic note  " );
-		var permit = await service.IssuePermitAsync(
-			actor, owner.Id, ownerInventory.Id, BusinessPermitKind.Food, environment.Clock.UtcNow.AddDays( 30 ) );
 
 		Assert.IsTrue( edited.Succeeded, edited.Error?.Message );
 		Assert.AreEqual( "Civic note", service.ReadNote( actor, actorInventory.Id, note.Id ).Value.Text );
-		Assert.IsTrue( permit.Succeeded, permit.Error?.Message );
-		var permitItem = environment.Repositories.Items.Find( DomainKeys.Item( permit.Value.PermitItemId ) )!.Value;
-		var permitState = HL2RPPersistence.BusinessPermit.Deserialize(
-			permitItem.Traits["permit"].Data,
-			permitItem.Traits["permit"].TypeVersion );
-		Assert.AreEqual( owner.Id, permitState.OwnerCharacterId );
-		Assert.AreEqual( BusinessPermitKind.Food, permitState.Kind );
+		Assert.AreEqual( actor.CharacterId, service.ReadNote( actor, actorInventory.Id, note.Id ).Value.OwnerCharacterId );
+		var blanked = await service.EditNoteAsync( actor, actorInventory.Id, note.Id, "   " );
+		Assert.IsTrue( blanked.Succeeded, blanked.Error?.Message );
+		Assert.IsNull( service.ReadNote( actor, actorInventory.Id, note.Id ).Value.OwnerCharacterId,
+			"A blanked note is released so its next holder can write on it." );
 	}
 
 	private static LiveInventoryItemView RadioView( CharacterId owner, string frequency, bool powered ) => new(

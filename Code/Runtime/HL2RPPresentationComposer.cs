@@ -278,7 +278,7 @@ internal sealed class HL2RPPresentationComposer
 				var pistol = HL2RPPersistence.Pistol.Deserialize( payload.Data, payload.TypeVersion );
 				if ( pistol.Equipped && pistol.Raised ) return true;
 			}
-			catch ( Exception ) { }
+			catch ( Exception exception ) { Features.HL2RPFeaturePersistence.Warn( $"Pistol '{item.Id}' state is unreadable: {exception.Message}" ); }
 		}
 		return false;
 	}
@@ -299,7 +299,7 @@ internal sealed class HL2RPPresentationComposer
 		values["restraint.active"] = SnapshotValue.Boolean( _services.RestraintState.IsRestrained( character.Id ) );
 		var activeSessions = Sessions?.ActiveSessions.Where( value => value.CharacterId == character.Id ).ToArray() ?? Array.Empty<InteractionSession>();
 		foreach ( var session in activeSessions )
-			values[$"interaction.{session.Kind.ToString().ToLowerInvariant()}_session"] = SnapshotValue.String( session.Id.Value.ToString( "D" ) );
+			values[HL2RP.UI.HL2RPPresentationFields.InteractionSession( session.Kind )] = SnapshotValue.String( session.Id.Value.ToString( "D" ) );
 		var connection = _host.Clients.FirstOrDefault( value => value.CharacterId == character.Id )?.ConnectionId ?? default;
 		values["action.active"] = SnapshotValue.Boolean(
 			_services.ActiveRestraintActions.Contains( connection ) || _services.ActivePistolActions.Contains( connection ) );
@@ -396,7 +396,7 @@ internal sealed class HL2RPPresentationComposer
 					connectionId, character, inventory, item, inventoryItems, action ) );
 				var state = new Dictionary<string, SnapshotValue>(
 					HL2RPInventoryItemState.Project( item, characterId, _services.Clock.UtcNow ), StringComparer.Ordinal );
-				TrackItemPresentationDeadline( item );
+				TrackItemPresentationDeadline( connectionId, item );
 				var sell = VendorSellAvailabilityFor( connectionId, character, inventory, item );
 				if ( sell is not null )
 				{
@@ -422,7 +422,7 @@ internal sealed class HL2RPPresentationComposer
 		return snapshots;
 	}
 
-	internal void TrackItemPresentationDeadline( ItemRecord item )
+	internal void TrackItemPresentationDeadline( ConnectionId connectionId, ItemRecord item )
 	{
 		try
 		{
@@ -448,9 +448,9 @@ internal sealed class HL2RPPresentationComposer
 					permitPayload.Data, permitPayload.TypeVersion ).ExpiresAtUtc;
 			}
 			if ( refreshAt is DateTimeOffset deadline && deadline > _services.Clock.UtcNow )
-				_services.PresentationInvalidation.TrackRefreshDeadline( $"item:{item.Id}", deadline );
+				_services.PresentationInvalidation.TrackRefreshDeadline( connectionId, $"item:{item.Id}", deadline );
 		}
-		catch ( Exception ) { }
+		catch ( Exception exception ) { Features.HL2RPFeaturePersistence.Warn( $"Item '{item.Id}' refresh deadline is unreadable: {exception.Message}" ); }
 	}
 
 	internal ItemActionSnapshot ActionSnapshot(
@@ -553,7 +553,7 @@ internal sealed class HL2RPPresentationComposer
 	{
 		if ( !item.Traits.TryGetValue( "tokens", out var payload ) ) return 1;
 		try { return Math.Max( 1, HL2RPPersistence.TokenStack.Deserialize( payload.Data, payload.TypeVersion ).Amount ); }
-		catch ( Exception ) { return 1; }
+		catch ( Exception exception ) { Features.HL2RPFeaturePersistence.Warn( $"Token stack amount is unreadable: {exception.Message}" ); return 1; }
 	}
 
 	internal IReadOnlyList<SchemaViewSnapshot> BuildSchemaViews(
@@ -691,7 +691,7 @@ internal sealed class HL2RPPresentationComposer
 				foreach ( var objective in HL2RPObjectiveProjection.Rows( state ) )
 					rows.Add( new Dictionary<string, SnapshotValue>( objective, StringComparer.Ordinal ) );
 			}
-			catch ( Exception ) { rows.Clear(); }
+			catch ( Exception exception ) { Features.HL2RPFeaturePersistence.Warn( $"City state is unreadable: {exception.Message}" ); rows.Clear(); }
 		}
 		return new SchemaViewSnapshot( HL2RPIds.Panels.Objectives, revision,
 			new Dictionary<string, SnapshotValue>
@@ -706,7 +706,10 @@ internal sealed class HL2RPPresentationComposer
 		CharacterRecord character,
 		long revision )
 	{
-		var target = _host.NearestCharacterTarget( character.Id );
+		// Matches the maintenance observer: only Combine characters have a restraint target.
+		var target = character.Faction.Value is HL2RPIds.Factions.CivilProtection or HL2RPIds.Factions.Overwatch
+			? _host.NearestCharacterTarget( character.Id )
+			: null;
 		_services.PresentationInvalidation.RememberRestraintTarget( connectionId, target?.Id );
 		var subjectId = target?.Id ?? character.Id;
 		var restrained = _services.RestraintState.IsRestrained( subjectId );
@@ -759,7 +762,7 @@ internal sealed class HL2RPPresentationComposer
 					[HL2RPPresentationFields.Vendor.Balance] = SnapshotValue.Integer( character.Balance )
 				}, rows );
 		}
-		catch ( Exception ) { return null; }
+		catch ( Exception exception ) { Features.HL2RPFeaturePersistence.Warn( $"Vendor presentation state is unreadable: {exception.Message}" ); return null; }
 	}
 
 	internal SchemaViewSnapshot ScannerView( ScannerPilotSession session, long revision )

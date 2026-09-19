@@ -389,11 +389,7 @@ internal sealed class HL2RPCommandExecution
 
 	private void LogWorldItemReconciliation( WorldItemReconciliationReceipt receipt, string stage )
 	{
-		if ( receipt.Disposition != WorldItemReconciliationDisposition.Applied )
-			_services.Warn(
-				$"HL2RP_WORLD_ITEM_DEGRADED item={receipt.ItemId.Value:D} stage={stage} " +
-				$"disposition={receipt.Disposition} attempt={receipt.Attempt} " +
-				$"code={receipt.Error?.Code} message={receipt.Error?.Message}" );
+		if ( HL2RPDegradedBoundaryMessages.WorldItem( receipt, stage ) is { } message ) _services.Warn( message );
 	}
 
 	internal OperationResult SendChat( InventoryActor actor, SendChatCommand command )
@@ -728,14 +724,25 @@ internal sealed class HL2RPCommandExecution
 		return OperationResult.Success();
 	}
 
-	internal OperationResult PublishAdministrationAudit( InventoryActor actor )
+	/// <summary>
+	/// An operator's marker in the audit trail. The note is what makes it worth recording:
+	/// without one the fact said only that this command had been run.
+	/// </summary>
+	internal OperationResult PublishAdministrationAudit( InventoryActor actor, HL2RPCommandArguments arguments )
 	{
+		var note = arguments.OptionalString( "note" );
+		if ( note.Failed ) return Failure( note.Error! );
+		var text = (note.Value ?? string.Empty).Trim();
+		if ( text.Length > 256 || text.Any( char.IsControl ) )
+			return OperationResult.Failure( ErrorCode.InvalidArgument, "Audit note must be at most 256 printable characters." );
 		_services.Audit.Publish( new AdminAuditFact
 		{
 			ActorAccountId = actor.AccountId,
 			ActorCharacterId = actor.CharacterId,
 			Operation = HL2RPFeatureOperation.AdministrationAudit,
-			Target = $"character:{actor.CharacterId.Value:D}",
+			Target = text.Length == 0
+				? $"character:{actor.CharacterId.Value:D}"
+				: $"character:{actor.CharacterId.Value:D} note:{text}",
 			OccurredAtUtc = _services.Clock.UtcNow,
 			CommitSequence = _services.Provider.Health.Sequence
 		} );
@@ -962,12 +969,18 @@ internal sealed class HL2RPCommandExecution
 			var delay = ticket.Value.CompletesAtUtc - _services.Clock.UtcNow;
 			if ( delay > TimeSpan.Zero ) await Task.Delay( delay, linked.Token );
 			if ( !_services.ActiveRestraintActions.TryClaimCommit( actor.ConnectionId, active ) )
+			{
+				_ = _services.Restraints.Cancel( ticket.Value.TicketId, actor );
 				return OperationResult.Failure( ErrorCode.Conflict, "Restraint action was cancelled." );
+			}
 			var completed = await _services.Restraints.CompleteAsync(
 				ticket.Value.TicketId, actor, CancellationToken.None );
 			if ( completed.Succeeded )
 			{
 				projectionDelta.Observe( completed.Value );
+				// The consumed zip tie left the actor's inventory in the same commit.
+				projectionDelta.Inventories.Add( main.Id );
+				projectionDelta.Items.Add( zip.Id );
 				durableSuccess = true;
 			}
 			return Untyped( completed );
@@ -1114,8 +1127,7 @@ internal sealed class HL2RPCommandExecution
 
 	private void LogScannerBoundaryError( OperationError? error )
 	{
-		if ( error is not null )
-			_services.Warn( $"HL2RP_SCANNER_BOUNDARY_DEGRADED code={error.Code} message={error.Message}" );
+		if ( HL2RPDegradedBoundaryMessages.ScannerBoundary( error ) is { } message ) _services.Warn( message );
 	}
 
 	internal async ValueTask<OperationResult> DoorOwnershipAsync(

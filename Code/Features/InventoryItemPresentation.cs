@@ -124,8 +124,9 @@ public static class HL2RPInventoryItemState
 				}
 			}
 		}
-		catch ( Exception )
+		catch ( Exception exception )
 		{
+			HL2RPFeaturePersistence.Warn( $"Item '{item.Id}' state is unreadable: {exception.Message}" );
 			values.Clear();
 		}
 		return values;
@@ -197,7 +198,6 @@ public static class HL2RPItemActionAvailability
 				? Enabled( routed, invocation )
 				: Disabled( routed, "Only Civil Protection or Overwatch may use restraints.", invocation ),
 			(HL2RPIds.Items.Pistol, _) => Pistol( routed, context, invocation ),
-			(HL2RPIds.Items.PistolAmmunition, HL2RPIds.Actions.Replenish) => Ammunition( routed, context, invocation ),
 			(HL2RPIds.Items.ProtectiveVest, _) => Vest( routed, context, invocation ),
 			_ => Disabled( routed, "Action requirements are unavailable.", invocation )
 		};
@@ -318,17 +318,6 @@ public static class HL2RPItemActionAvailability
 				: Disabled( routed, "No pistol ammunition is available.", invocation );
 		}
 		return Disabled( routed, "Pistol action is unsupported.", invocation );
-	}
-
-	private static ItemActionSnapshot Ammunition( ItemActionSnapshot routed,
-		HL2RPItemActionAvailabilityContext context, ItemActionInvocationKind invocation )
-	{
-		var state = Decode( context.Item, "ammunition", HL2RPPersistence.PistolAmmunition );
-		if ( state.Failed || state.Value.Rounds is < 0 or > PistolItemState.MagazineCapacity )
-			return Disabled( routed, "Ammunition state is malformed.", invocation );
-		return state.Value.Rounds < PistolItemState.MagazineCapacity
-			? Enabled( routed, invocation )
-			: Disabled( routed, "Ammunition is already replenished.", invocation );
 	}
 
 	private static ItemActionSnapshot Vest( ItemActionSnapshot routed,

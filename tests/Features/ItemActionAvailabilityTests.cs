@@ -26,8 +26,6 @@ public sealed class ItemActionAvailabilityTests
 		var ammunition = Ammunition( 5 );
 		var withReserve = Context( pistol, ammunition );
 		Assert.IsTrue( Project( withReserve, HL2RPIds.Actions.Reload ).Enabled );
-		var fullAmmunition = Ammunition( PistolItemState.MagazineCapacity );
-		AssertDisabled( Project( Context( fullAmmunition ), HL2RPIds.Actions.Replenish ), "already replenished" );
 
 		var destroyedVest = Vest( 0, equipped: false );
 		AssertDisabled( Project( Context( destroyedVest ), HL2RPIds.Actions.Equip ), "Destroyed armor" );

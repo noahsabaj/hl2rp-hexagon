@@ -299,8 +299,8 @@ public sealed class HL2RPShowcaseProjectionTests
 		});
 		var store = Store(connection, character, roster,
 			privateValues: Fields(
-				("interaction.storage_session", SnapshotValue.String(storageSession.Value.ToString("D"))),
-				("interaction.search_session", SnapshotValue.String(searchSession.Value.ToString("D")))),
+				(HL2RPPresentationFields.InteractionSession(Hexagon.V2.Application.InteractionSessionKind.Storage), SnapshotValue.String(storageSession.Value.ToString("D"))),
+				(HL2RPPresentationFields.InteractionSession(Hexagon.V2.Application.InteractionSessionKind.CharacterSearch), SnapshotValue.String(searchSession.Value.ToString("D")))),
 			inventories: new[]
 			{
 				Inventory(InventoryViewKind.Main, "Inventory"),

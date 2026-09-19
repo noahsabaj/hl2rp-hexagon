@@ -264,3 +264,21 @@ public sealed class HL2RPWorldItemReconciler
 		int Attempt,
 		DateTimeOffset NextAttemptAtUtc );
 }
+
+/// <summary>
+/// The degraded-boundary log lines, worded once. The host writes them to the engine log and the
+/// command executor to its injected sink, and each used to carry its own copy of the text.
+/// </summary>
+internal static class HL2RPDegradedBoundaryMessages
+{
+	public static string? ScannerBoundary( OperationError? error ) => error is null
+		? null
+		: $"HL2RP_SCANNER_BOUNDARY_DEGRADED code={error.Code} message={error.Message}";
+
+	public static string? WorldItem( WorldItemReconciliationReceipt receipt, string stage ) =>
+		receipt.Disposition == WorldItemReconciliationDisposition.Applied
+			? null
+			: $"HL2RP_WORLD_ITEM_DEGRADED item={receipt.ItemId.Value:D} stage={stage} " +
+				$"disposition={receipt.Disposition} attempt={receipt.Attempt} " +
+				$"code={receipt.Error?.Code} message={receipt.Error?.Message}";
+}

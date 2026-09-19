@@ -233,6 +233,19 @@ public sealed class ScannerPilotService
 		}
 	}
 
+	/// <summary>
+	/// True while this connection holds the live pilot session for that drone. The interaction
+	/// world uses it to measure a pilot's reach from the drone rather than from the frozen body
+	/// left at the dock, which the drone leaves behind within a second of flight.
+	/// </summary>
+	public bool IsPiloting(ConnectionId connectionId, SceneEntityId scannerId)
+	{
+		lock (_cleanupSync)
+			return _active.Values.Any(value =>
+				value.ScannerId == scannerId && value.Actor.ConnectionId == connectionId &&
+				!_terminating.Contains(value.SessionId));
+	}
+
 	public int PendingCleanupCount
 	{
 		get
@@ -356,7 +369,8 @@ public sealed class ScannerPilotService
 			operation = new CleanupOperation(
 				active,
 				recovery.Reason,
-				cancellationToken,
+				// Cleanup never inherits a caller token: a shutdown mid-retry must still finish it.
+				CancellationToken.None,
 				recovery.CreatedAtUtc)
 			{
 				BoundaryError = recovery.BoundaryError
@@ -1427,38 +1441,12 @@ public sealed class ScannerPilotService
 
 internal static class ScannerPersistence
 {
-	public static OperationResult<T> Decode<T>(TypedPayload payload, IPersistedTypeCodec<T> codec) where T : class
-	{
-		if (payload.TypeId.Value != codec.Key.Value || payload.TypeVersion != codec.CurrentVersion)
-			return OperationResult<T>.Failure(ErrorCode.PersistedTypeInvalid,
-				$"Expected '{codec.Key}' v{codec.CurrentVersion}.");
-		try
-		{
-			return OperationResult<T>.Success(codec.Deserialize(payload.Data, payload.TypeVersion));
-		}
-		catch (Exception)
-		{
-			return OperationResult<T>.Failure(ErrorCode.PersistedTypeInvalid,
-				$"Payload '{codec.Key}' is malformed.");
-		}
-	}
+	public static OperationResult<T> Decode<T>(TypedPayload payload, IPersistedTypeCodec<T> codec) where T : class =>
+		HL2RP.V2.Features.HL2RPFeaturePersistence.Decode(payload, codec);
 
 	public static OperationResult Failure(PersistenceError error) =>
-		OperationResult.Failure(Map(error.Code), error.Message);
+		HL2RP.V2.Features.HL2RPFeaturePersistence.Failure(error);
 
 	public static OperationResult<T> Failure<T>(PersistenceError error) =>
-		OperationResult<T>.Failure(Map(error.Code), error.Message);
-
-	private static ErrorCode Map(PersistenceErrorCode code) => code switch
-	{
-		PersistenceErrorCode.NotFound => ErrorCode.NotFound,
-		PersistenceErrorCode.AlreadyExists or PersistenceErrorCode.RevisionConflict => ErrorCode.Conflict,
-		PersistenceErrorCode.TypeNotRegistered or PersistenceErrorCode.CollectionTypeMismatch => ErrorCode.PersistedTypeInvalid,
-		PersistenceErrorCode.InvalidOperation => ErrorCode.InvalidArgument,
-		PersistenceErrorCode.InvariantViolation => ErrorCode.InvariantViolation,
-		PersistenceErrorCode.LeaseUnavailable => ErrorCode.LeaseUnavailable,
-		PersistenceErrorCode.StorageLimitExceeded => ErrorCode.StorageLimitExceeded,
-		PersistenceErrorCode.StaleTransaction => ErrorCode.StaleTransaction,
-		_ => ErrorCode.InternalError
-	};
+		HL2RP.V2.Features.HL2RPFeaturePersistence.Failure<T>(error);
 }

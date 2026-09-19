@@ -161,41 +161,70 @@ public sealed class CombatLifecycleService
 		WorldItemRecord? worldItem = null;
 		long sequence = 0;
 		CommitReceipt? commitReceipt = null;
-		if (equipped.Count == 1)
+		// Death also ends a restraint: nothing else releases one without a CP/OW actor in range.
+		var restraintKey = Restraint.RestraintService.DocumentKey(actor.CharacterId);
+		var restraint = _repositories.CharacterReferences.Find(restraintKey);
+		if (restraint is not null && restraint.Value.Category != Restraint.RestraintService.ReferenceCategory)
+			restraint = null;
+		if (equipped.Count == 1 || restraint is not null)
 		{
-			var pistol = equipped[0];
-			if (!_schema.Items.TryGet(pistol.Document.Value.Definition.Value, out var definition) ||
-				!definition!.CanDrop || string.IsNullOrWhiteSpace(definition.WorldModel) ||
-				!_models.IsValidModel(definition.WorldModel))
-				return OperationResult<DeathTransitionReceipt>.Failure(ErrorCode.PolicyDenied,
-					"Equipped pistol has no validated world-drop model.");
-			if (_repositories.WorldItems.Find(DomainKeys.WorldItem(pistol.Document.Value.Id)) is not null)
-				return OperationResult<DeathTransitionReceipt>.Failure(ErrorCode.Conflict,
-					"Equipped pistol already has a world location.");
-			var removed = _layout.Remove(inventory.Value, pistol.Document.Value.Id);
-			if (removed.Failed) return Failure<DeathTransitionReceipt>(removed.Error!);
-			worldItem = new WorldItemRecord
-			{
-				ItemId = pistol.Document.Value.Id,
-				Transform = dropTransform,
-				Revision = 0
-			};
-
 			var unitOfWork = _repositories.Provider.BeginUnitOfWork();
-			var inventoryEditor = unitOfWork.Edit(_repositories.Inventories, inventory);
-			var itemEditor = unitOfWork.Edit(_repositories.Items, pistol.Document);
-			if (inventoryEditor is null || itemEditor is null)
+			if (equipped.Count == 1)
 			{
-				await HL2RPUnitOfWork.DisposeAsync(unitOfWork);
-				return OperationResult<DeathTransitionReceipt>.Failure(ErrorCode.Conflict,
-					"Death inventory or pistol changed before commit.");
+				var pistol = equipped[0];
+				// A pistol that cannot be dropped stays in the inventory, unequipped. Refusing the
+				// death instead would leave its holder unkillable for as long as it is equipped.
+				var droppable = _schema.Items.TryGet(pistol.Document.Value.Definition.Value, out var definition) &&
+					definition!.CanDrop && !string.IsNullOrWhiteSpace(definition.WorldModel) &&
+					_models.IsValidModel(definition.WorldModel);
+				if (droppable && _repositories.WorldItems.Find(DomainKeys.WorldItem(pistol.Document.Value.Id)) is not null)
+				{
+					await HL2RPUnitOfWork.DisposeAsync(unitOfWork);
+					return OperationResult<DeathTransitionReceipt>.Failure(ErrorCode.Conflict,
+						"Equipped pistol already has a world location.");
+				}
+				var itemEditor = unitOfWork.Edit(_repositories.Items, pistol.Document);
+				if (itemEditor is null)
+				{
+					await HL2RPUnitOfWork.DisposeAsync(unitOfWork);
+					return OperationResult<DeathTransitionReceipt>.Failure(ErrorCode.Conflict,
+						"Death pistol changed before commit.");
+				}
+				itemEditor.Replace(CombatPersistence.ReplaceTrait(itemEditor.Value, CombatTraitNames.Pistol,
+					HL2RPPersistence.Pistol, pistol.State with { Equipped = false, Raised = false }));
+				unitOfWork.Save(itemEditor);
+				if (droppable)
+				{
+					var removed = _layout.Remove(inventory.Value, pistol.Document.Value.Id);
+					var inventoryEditor = removed.Failed ? null : unitOfWork.Edit(_repositories.Inventories, inventory);
+					if (removed.Failed || inventoryEditor is null)
+					{
+						await HL2RPUnitOfWork.DisposeAsync(unitOfWork);
+						return removed.Failed
+							? Failure<DeathTransitionReceipt>(removed.Error!)
+							: OperationResult<DeathTransitionReceipt>.Failure(ErrorCode.Conflict,
+								"Death inventory changed before commit.");
+					}
+					worldItem = new WorldItemRecord
+					{
+						ItemId = pistol.Document.Value.Id,
+						Transform = dropTransform,
+						Revision = 0
+					};
+					inventoryEditor.Replace(removed.Value);
+					unitOfWork.Save(inventoryEditor);
+					unitOfWork.Create(_repositories.WorldItems, DomainKeys.WorldItem(pistol.Document.Value.Id), worldItem);
+				}
 			}
-			inventoryEditor.Replace(removed.Value);
-			itemEditor.Replace(CombatPersistence.ReplaceTrait(itemEditor.Value, CombatTraitNames.Pistol,
-				HL2RPPersistence.Pistol, pistol.State with { Equipped = false, Raised = false }));
-			unitOfWork.Save(inventoryEditor);
-			unitOfWork.Save(itemEditor);
-			unitOfWork.Create(_repositories.WorldItems, DomainKeys.WorldItem(pistol.Document.Value.Id), worldItem);
+			if (restraint is not null)
+			{
+				var released = new CharacterReferenceMutationService(_repositories).StageDelete(unitOfWork, restraintKey);
+				if (released.Failed)
+				{
+					await HL2RPUnitOfWork.DisposeAsync(unitOfWork);
+					return Failure<DeathTransitionReceipt>(released.Error!);
+				}
+			}
 			var committed = await HL2RPUnitOfWork.CommitAndDisposeAsync(unitOfWork, cancellationToken);
 			if (!committed.Succeeded) return CombatPersistence.Failure<DeathTransitionReceipt>(committed.Error!);
 			sequence = committed.Value!.Sequence;

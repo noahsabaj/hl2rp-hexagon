@@ -16,21 +16,19 @@ on the host.
 Restricted creation uses a schema-owned account entitlement repository keyed by
 the authenticated `AccountId`. Unknown flags, malformed documents, wrong
 document keys, stale revisions, and unknown target accounts fail closed. The
-editor-authored bootstrap-operator component is the only non-persisted seed
-authority; it cannot be changed by a client. Bootstrap operators and active City
+server ConVar `hl2rp-operator-accounts` is the only non-persisted seed
+authority; it cannot be changed by a client and is never stored in a scene. Bootstrap operators and active City
 Administration characters use the same host-authorized Access panel, while the
 creation menu consumes receiver-specific enabled rows authored by the host.
 The synthetic smoke-test account is an in-memory verification overlay and is
 never written to the real entitlement collection.
 
 For a fresh-store dedicated acceptance run, seed the two test accounts before
-the evidence window. Temporarily place the authenticated setup account's Steam
-ID64 in the scene's `HL2RP Bootstrap Operators` component without saving the
-scene, run the real Access workspace, and commit the required Civil Protection
-and City Administration grants. Shut that editor-hosted instance down cleanly,
-preserve the same `hexagon/persistence/v3/hl2rp` root (or identical explicit
-root override), reload/discard the scene edit, and require a clean Git status
-with the tracked `AccountIds` still empty. Only the subsequent dedicated-server
+the evidence window. Start the host with `hl2rp-operator-accounts` set to the
+authenticated setup account's Steam ID64, run the real Access workspace, and
+commit the required Civil Protection and City Administration grants. Shut that
+instance down cleanly and preserve the same `hexagon/persistence/v3/hl2rp` root
+(or identical explicit root override). Only the subsequent dedicated-server
 run with two distinct remote authenticated clients is acceptance evidence; the
 full procedure and artifact requirements are documented in the sibling
 Hexagon `docs/testing.md` runbook.

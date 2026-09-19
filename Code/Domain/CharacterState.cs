@@ -50,6 +50,9 @@ public sealed record CivicInfractionState
 
 public sealed record CivicRecordState
 {
+	/// <summary>Oldest entries are dropped past this bound so a record cannot grow without limit.</summary>
+	public const int MaximumInfractions = 64;
+
 	public required long Points { get; init; }
 	public required CivicPriorityStatus Priority { get; init; }
 	public string RecordText { get; init; } = string.Empty;

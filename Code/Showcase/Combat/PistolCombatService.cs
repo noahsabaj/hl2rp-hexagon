@@ -164,8 +164,7 @@ public sealed class PistolCombatService
 	private readonly TimeSpan _fireInterval;
 	private readonly long _damagePerShot;
 	private readonly Func<Guid> _createTicketId;
-	private readonly Dictionary<Guid, PistolRaiseTicket> _pendingRaises = new();
-	private readonly HashSet<(CharacterId CharacterId, ItemId ItemId)> _raisedThisSession = new();
+	private readonly RaiseSessionState _raise = new();
 
 	public PistolCombatService(
 		DomainRepositories repositories,
@@ -204,17 +203,14 @@ public sealed class PistolCombatService
 		if (!resolved.Value.State.Equipped)
 			return OperationResult<PistolRaiseTicket>.Failure(ErrorCode.PolicyDenied,
 				"Pistol must be equipped before it can be raised.");
-		if (resolved.Value.State.Raised || _raisedThisSession.Contains((actor.CharacterId, pistolId)))
+		if (resolved.Value.State.Raised || _raise.IsRaised(actor.CharacterId, pistolId))
 			return OperationResult<PistolRaiseTicket>.Failure(ErrorCode.Conflict, "Pistol is already raised.");
-		foreach (var stale in _pendingRaises.Values
-			.Where(ticket => ticket.Actor.ConnectionId == actor.ConnectionId && ticket.PistolId == pistolId)
-			.Select(ticket => ticket.Id).ToArray())
-			_pendingRaises.Remove(stale);
+		_raise.RemovePending(ticket => ticket.Actor.ConnectionId == actor.ConnectionId && ticket.PistolId == pistolId);
 		var ticket = new PistolRaiseTicket(_createTicketId(), actor, inventoryId, pistolId,
 			_clock.UtcNow + _raiseDelay);
 		if (ticket.Id == Guid.Empty)
 			return OperationResult<PistolRaiseTicket>.Failure(ErrorCode.InternalError, "Raise ticket identity is invalid.");
-		_pendingRaises.Add(ticket.Id, ticket);
+		_raise.AddPending(ticket);
 		return OperationResult<PistolRaiseTicket>.Success(ticket);
 	}
 
@@ -224,13 +220,13 @@ public sealed class PistolCombatService
 		CancellationToken cancellationToken = default)
 	{
 		cancellationToken.ThrowIfCancellationRequested();
-		if (!_pendingRaises.TryGetValue(ticketId, out var ticket) || ticket.Actor != actor)
+		if (!_raise.TryGetPending(ticketId, out var ticket) || ticket.Actor != actor)
 			return ValueTask.FromResult(OperationResult<PistolStateTransitionReceipt>.Failure(ErrorCode.Unauthorized,
 				"Raise ticket is stale or bound to another actor."));
 		if (_clock.UtcNow < ticket.ReadyAtUtc)
 			return ValueTask.FromResult(OperationResult<PistolStateTransitionReceipt>.Failure(
 				ErrorCode.Conflict, "Pistol raise delay has not completed."));
-		_pendingRaises.Remove(ticketId);
+		_raise.RemovePending(pending => pending.Id == ticketId);
 		var resolved = Resolve(actor, ticket.InventoryId, ticket.PistolId);
 		if (resolved.Failed) return ValueTask.FromResult(Failure<PistolStateTransitionReceipt>(resolved.Error!));
 		if (!resolved.Value.State.Equipped)
@@ -241,7 +237,7 @@ public sealed class PistolCombatService
 		// would create a first durable transaction that a later failed fire could hide
 		// from the command outcome and projection receipt. The first durable raise is
 		// therefore committed atomically with ammunition and damage in FireAsync.
-		_raisedThisSession.Add((actor.CharacterId, ticket.PistolId));
+		_raise.MarkRaised(actor.CharacterId, ticket.PistolId);
 		return ValueTask.FromResult(OperationResult<PistolStateTransitionReceipt>.Success(
 			new PistolStateTransitionReceipt(
 				actor.CharacterId,
@@ -255,9 +251,7 @@ public sealed class PistolCombatService
 
 	public bool CancelRaise(Guid ticketId, InventoryActor actor)
 	{
-		if (!_pendingRaises.TryGetValue(ticketId, out var ticket) || ticket.Actor != actor) return false;
-		_pendingRaises.Remove(ticketId);
-		return true;
+		return _raise.RemovePending(ticket => ticket.Id == ticketId && ticket.Actor == actor) > 0;
 	}
 
 	public async ValueTask<OperationResult<PistolStateTransitionReceipt>> LowerAsync(
@@ -270,7 +264,7 @@ public sealed class PistolCombatService
 		if (resolved.Failed) return Failure<PistolStateTransitionReceipt>(resolved.Error!);
 		if (!resolved.Value.State.Raised)
 		{
-			if (!_raisedThisSession.Remove((actor.CharacterId, pistolId)))
+			if (!_raise.Unraise(actor.CharacterId, pistolId))
 				return OperationResult<PistolStateTransitionReceipt>.Failure(
 					ErrorCode.Conflict, "Pistol is already lowered.");
 			RemovePending(actor.CharacterId, pistolId);
@@ -292,7 +286,7 @@ public sealed class PistolCombatService
 			cancellationToken);
 		if (committed.Succeeded)
 		{
-			_raisedThisSession.Remove((actor.CharacterId, pistolId));
+			_raise.Unraise(actor.CharacterId, pistolId);
 			RemovePending(actor.CharacterId, pistolId);
 		}
 		return committed;
@@ -307,7 +301,7 @@ public sealed class PistolCombatService
 		if (resolved.Failed) return Failure<PistolFireReceipt>(resolved.Error!);
 		var state = resolved.Value.State;
 		if (!state.Equipped ||
-			!_raisedThisSession.Contains((intent.Actor.CharacterId, intent.PistolId)))
+			!_raise.IsRaised(intent.Actor.CharacterId, intent.PistolId))
 			return OperationResult<PistolFireReceipt>.Failure(ErrorCode.PolicyDenied,
 				"Pistol is not host-raised for this combat session.");
 		if (state.MagazineRounds <= 0)
@@ -391,16 +385,13 @@ public sealed class PistolCombatService
 		var resolved = Resolve(actor, inventoryId, pistolId);
 		return resolved.Succeeded
 			? OperationResult<bool>.Success(resolved.Value.State.Equipped &&
-				_raisedThisSession.Contains((actor.CharacterId, pistolId)))
+				_raise.IsRaised(actor.CharacterId, pistolId))
 			: Failure<bool>(resolved.Error!);
 	}
 
 	public void ClearCharacter(CharacterId characterId)
 	{
-		foreach (var key in _pendingRaises.Where(pair => pair.Value.Actor.CharacterId == characterId)
-			.Select(pair => pair.Key).ToArray())
-			_pendingRaises.Remove(key);
-		_raisedThisSession.RemoveWhere(value => value.CharacterId == characterId);
+		_raise.ClearCharacter(characterId);
 	}
 
 	/// <summary>
@@ -683,15 +674,79 @@ public sealed class PistolCombatService
 
 	private void ClearAllSessions()
 	{
-		_pendingRaises.Clear();
-		_raisedThisSession.Clear();
+		_raise.Clear();
 	}
 
 	private void RemovePending(CharacterId characterId, ItemId pistolId)
 	{
-		foreach (var key in _pendingRaises.Where(pair => pair.Value.Actor.CharacterId == characterId &&
-			pair.Value.PistolId == pistolId).Select(pair => pair.Key).ToArray())
-			_pendingRaises.Remove(key);
+		_raise.RemovePending(ticket => ticket.Actor.CharacterId == characterId && ticket.PistolId == pistolId);
+	}
+
+	/// <summary>
+	/// Host-session raise authority: pending raise tickets and the pistols raised this session.
+	/// Fire and lower await commits between reading and writing this state, so every access is
+	/// one locked operation instead of relying on continuations resuming on a single thread.
+	/// </summary>
+	private sealed class RaiseSessionState
+	{
+		private readonly object _sync = new();
+		private readonly Dictionary<Guid, PistolRaiseTicket> _pending = new();
+		private readonly HashSet<(CharacterId CharacterId, ItemId ItemId)> _raised = new();
+
+		public bool IsRaised(CharacterId characterId, ItemId pistolId)
+		{
+			lock (_sync) return _raised.Contains((characterId, pistolId));
+		}
+
+		public void MarkRaised(CharacterId characterId, ItemId pistolId)
+		{
+			lock (_sync) _raised.Add((characterId, pistolId));
+		}
+
+		public bool Unraise(CharacterId characterId, ItemId pistolId)
+		{
+			lock (_sync) return _raised.Remove((characterId, pistolId));
+		}
+
+		public void AddPending(PistolRaiseTicket ticket)
+		{
+			lock (_sync) _pending.Add(ticket.Id, ticket);
+		}
+
+		public bool TryGetPending(Guid ticketId, out PistolRaiseTicket ticket)
+		{
+			lock (_sync) return _pending.TryGetValue(ticketId, out ticket!);
+		}
+
+		public int RemovePending(Func<PistolRaiseTicket, bool> match)
+		{
+			lock (_sync)
+			{
+				var keys = _pending.Where(pair => match(pair.Value)).Select(pair => pair.Key).ToArray();
+				foreach (var key in keys) _pending.Remove(key);
+				return keys.Length;
+			}
+		}
+
+		public void ClearCharacter(CharacterId characterId)
+		{
+			lock (_sync)
+			{
+				foreach (var key in _pending.Where(pair => pair.Value.Actor.CharacterId == characterId)
+					.Select(pair => pair.Key).ToArray())
+					_pending.Remove(key);
+				_raised.RemoveWhere(value => value.CharacterId == characterId);
+			}
+		}
+
+		public void Clear()
+		{
+			lock (_sync)
+			{
+				_pending.Clear();
+				_raised.Clear();
+			}
+		}
 	}
 
 	private static OperationResult Failure(OperationError error) =>

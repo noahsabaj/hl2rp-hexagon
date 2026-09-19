@@ -69,6 +69,9 @@ public sealed record PistolAmmunitionItemState
 
 public sealed record ProtectiveVestItemState
 {
+	public const int DefaultDurability = 100;
+	public const int DefaultDamageReductionPermille = 300;
+
 	public required int Durability { get; init; }
 	public required int DamageReductionPermille { get; init; }
 	public required bool Equipped { get; init; }

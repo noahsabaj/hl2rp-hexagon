@@ -164,6 +164,7 @@ public sealed class CommunicationsAuthorityTests
 				{
 					new PolicyHandler<ChatSendContext>( "runtime", new HL2RPChatRuntimePolicy() )
 				} ),
+			new AlwaysAliveChat(),
 			globalRateLimit: globalLimit,
 			admission: admission );
 		var requests = new RecordingHandler<RequestFact>();
@@ -423,7 +424,8 @@ public sealed class CommunicationsAuthorityTests
 				new[]
 				{
 					new PolicyHandler<ChatSendContext>( "runtime", new HL2RPChatRuntimePolicy() )
-				} ) );
+				} ),
+			new AlwaysAliveChat() );
 		var character = Character( actor, HL2RPIds.Factions.CivilProtection );
 
 		var request = service.Send( actor, character, HL2RPIds.Channels.Request, "Bypass" );

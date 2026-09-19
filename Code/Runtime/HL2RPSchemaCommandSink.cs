@@ -31,7 +31,7 @@ public interface IHL2RPSchemaCommandRoutes<TActor>
 		InventoryActor actor, HL2RPCommandArguments arguments, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken );
 	ValueTask<OperationResult> DoorOwnershipAsync(
 		InventoryActor actor, HL2RPCommandArguments arguments, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken );
-	OperationResult PublishAdministrationAudit( InventoryActor actor );
+	OperationResult PublishAdministrationAudit( InventoryActor actor, HL2RPCommandArguments arguments );
 	ValueTask<OperationResult> BuyAsync(
 		InventoryActor actor, HL2RPCommandArguments arguments, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken );
 	ValueTask<OperationResult> SellAsync(
@@ -94,7 +94,7 @@ public static class HL2RPSchemaCommandSink
 				actor.Value, arguments, projectionDelta, cancellationToken ),
 			HL2RPIds.Commands.DoorOwnership => await routes.DoorOwnershipAsync(
 				actor.Value, arguments, projectionDelta, cancellationToken ),
-			HL2RPIds.Commands.AdministrationAudit => routes.PublishAdministrationAudit( actor.Value ),
+			HL2RPIds.Commands.AdministrationAudit => routes.PublishAdministrationAudit( actor.Value, arguments ),
 			HL2RPIds.Commands.CommerceBuy => await routes.BuyAsync(
 				actor.Value, arguments, projectionDelta, cancellationToken ),
 			HL2RPIds.Commands.CommerceSell => await routes.SellAsync(

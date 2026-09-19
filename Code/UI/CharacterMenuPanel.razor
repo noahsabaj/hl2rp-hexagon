@@ -155,7 +155,7 @@
 			{
 				<button class="hex-button primary wide @(SubmissionBlocked ? "disabled" : string.Empty)"
 					disabled="@SubmissionBlocked" @onclick="@CreateAsync">
-					@(ViewModel.IsBusy ? "Submitting…" : "Submit dossier")
+					@(_submitting ? "Submitting…" : "Submit dossier")
 				</button>
 			}
 		</Footer>
@@ -192,7 +192,8 @@
 	private string LocalStatus { get; set; } = string.Empty;
 
 	private bool CanSubmit => _draft.CanSubmit( Name, Description );
-	private bool SubmissionBlocked => !CanSubmit || ViewModel.IsBusy;
+	private bool _submitting;
+	private bool SubmissionBlocked => !CanSubmit || _submitting;
 
 	protected override void OnParametersSet()
 	{
@@ -235,7 +236,8 @@
 
 	private async Task CreateAsync()
 	{
-		if ( ViewModel.IsBusy )
+		// The panel owns this flag: a double click must not send two create commands.
+		if ( _submitting )
 			return;
 		if ( Controller is null )
 		{
@@ -252,8 +254,18 @@
 
 		var fields = _draft.BuildFields();
 
-		var result = await Controller.CreateCharacterAsync( new CharacterCreationInput(
-			Name.Trim(), Description.Trim(), model, faction, SelectedClass, fields ) );
+		_submitting = true;
+		StateHasChanged();
+		OperationResult result;
+		try
+		{
+			result = await Controller.CreateCharacterAsync( new CharacterCreationInput(
+				Name.Trim(), Description.Trim(), model, faction, SelectedClass, fields ) );
+		}
+		finally
+		{
+			_submitting = false;
+		}
 		Report( result, result.Succeeded ? "Dossier accepted." : result.Error?.Message ?? "Registration failed." );
 		if ( result.Succeeded )
 		{

@@ -162,14 +162,17 @@ internal sealed class HL2RPServerInteractionWorld : IServerInteractionWorld
 	private readonly Func<CharacterId, HexPlayerBody?> _players;
 	private readonly IReadOnlyDictionary<SceneEntityId, HL2RPSceneFeatureComponent> _features;
 	private readonly IRestraintStateReader _restraints;
+	private readonly Func<ConnectionId, SceneEntityId, bool> _isPiloting;
 
 	public HL2RPServerInteractionWorld(
 		Scene scene,
 		Func<ConnectionId, HL2RPInteractionActorState?> actors,
 		Func<CharacterId, HexPlayerBody?> players,
 		IReadOnlyDictionary<SceneEntityId, HL2RPSceneFeatureComponent> features,
-		IRestraintStateReader restraints )
+		IRestraintStateReader restraints,
+		Func<ConnectionId, SceneEntityId, bool> isPiloting )
 	{
+		_isPiloting = isPiloting ?? throw new ArgumentNullException( nameof(isPiloting) );
 		_scene = scene;
 		_actors = actors;
 		_players = players;
@@ -203,13 +206,20 @@ internal sealed class HL2RPServerInteractionWorld : IServerInteractionWorld
 			context = null!;
 			return false;
 		}
+		// A pilot acts through the drone, not through the body frozen at the dock. Entry is still
+		// measured eye-to-drone above; once the pilot session exists, reach is measured from the
+		// drone itself, or the 130-unit range would eject the pilot within a second of flight.
+		var actorPoint = target.Kind == InteractionTargetKind.SceneEntity &&
+			_isPiloting( connectionId, new SceneEntityId( target.Id ) )
+			? targetPosition
+			: new WorldPoint( position.x, position.y, position.z );
 		context = new ServerInteractionContext
 		{
 			ConnectionId = connectionId,
 			AccountId = actor.Account,
 			CharacterId = characterId,
 			Target = target,
-			ActorPosition = new WorldPoint( position.x, position.y, position.z ),
+			ActorPosition = actorPoint,
 			TargetPosition = targetPosition,
 			IsAlive = !actor.IsDead,
 			IsRestrained = _restraints.IsRestrained( characterId )

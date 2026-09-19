@@ -97,7 +97,7 @@
 		</div>
 	}
 
-	@if ( Combine is not null && Combine.Visible )
+	@if ( Combine is not null )
 	{
 		<div class="combine-overlay">
 			<div class="combine-overlay__topline">
@@ -105,18 +105,10 @@
 				<strong>@Combine.Rank @Combine.Callsign</strong>
 			</div>
 			<div class="combine-overlay__directive"><span>DIRECTIVE</span>@Combine.Directive</div>
-			<div class="combine-overlay__alerts">
-				@foreach ( var alert in Combine.Alerts.TakeLast( 3 ) )
-				{
-					<div class="combine-alert tone-@alert.Tone.ToString().ToLowerInvariant()">
-						<span>@alert.Code</span><strong>@alert.Message</strong>
-					</div>
-				}
-			</div>
 		</div>
 	}
 
-	@if ( Death is not null && Death.Visible )
+	@if ( Death is not null )
 	{
 		<div class="death-screen">
 			<div class="death-screen__rule"></div>

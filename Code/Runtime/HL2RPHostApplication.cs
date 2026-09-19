@@ -59,7 +59,6 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 	private readonly HL2RPCharacterLifecycleGate _characterLifecycle = new();
 	private readonly HL2RPTimedActionOwnership<ConnectionId, ActiveRestraintAction> _activeRestraintActions = new();
 	private readonly HL2RPTimedActionOwnership<ConnectionId, ActivePistolRaiseAction> _activePistolActions = new();
-	private readonly HashSet<CharacterId> _respawningCharacters = new();
 	private readonly HL2RPIncrementalLiveInventoryView _liveInventory = new();
 	private readonly HL2RPIncrementalChatConnectionDirectory _chatPositions = new();
 	private readonly HL2RPIncrementalChatAuthorityDirectory _chatAuthorities = new();
@@ -208,7 +207,6 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 		actionHandlers.Add( new EquipCombatItemActionHandler( combatGate ) );
 		actionHandlers.Add( new UnequipCombatItemActionHandler( combatGate ) );
 		actionHandlers.Add( new ReloadPistolItemActionHandler( combatGate ) );
-		actionHandlers.Add( new ReplenishPistolAmmunitionItemActionHandler( combatGate ) );
 		var itemActionEvents = new PostCommitEventBus<ItemActionCommittedEvent>( new[]
 		{
 			new EventHandlerRegistration<ItemActionCommittedEvent>(
@@ -255,6 +253,8 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 	public async ValueTask<OperationResult> InitializeAsync( CancellationToken cancellationToken = default )
 	{
 		if ( _disposed ) return OperationResult.Failure( ErrorCode.Conflict, "HL2RP host is disposed." );
+		// Engine-neutral feature code reports handled decode failures through this sink.
+		Features.HL2RPFeaturePersistence.Diagnostic = static message => Log.Warning( message );
 		var sceneIdentitySystem = _context.Scene.GetSystem<PersistentSceneIdentityIndexSystem>();
 		if ( sceneIdentitySystem is null )
 			return OperationResult.Failure(
@@ -310,7 +310,8 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 				VerificationConnectionId, VerificationAccountId, null, null );
 		}
 		var interactionWorld = new HL2RPServerInteractionWorld(
-			_context.Scene, ResolveInteractionActorState, FindPlayer, _features, _restraintState );
+			_context.Scene, ResolveInteractionActorState, FindPlayer, _features, _restraintState,
+			( connectionId, scannerId ) => _scanner?.IsPiloting( connectionId, scannerId ) == true );
 		_interactions = new InteractionAuthorityService(
 			interactionWorld,
 			directory,
@@ -371,7 +372,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 			_repositories, _context.Schema, _access, sessionResolver, _ids, _layout,
 			new HL2RPItemFactory(), _clock, _featurePolicy, audit: _audit );
 		_documents = new DocumentService(
-			_repositories, _access, _ids, _layout, _clock, _featurePolicy, audit: _audit );
+			_repositories, _access, _clock, _featurePolicy, audit: _audit );
 		_permitPurchases = new PermitPurchaseService(
 			_repositories, _access, _ids, _layout, _clock, _featurePolicy, audit: _audit );
 		_restraints = new RestraintService( _repositories, _access, _layout, _interactions, _clock );
@@ -538,12 +539,6 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 		var projectionDelta = new CommandProjectionDelta();
 		var characterBefore = binding!.CharacterId;
 		var mainBefore = characterBefore is CharacterId activeBefore ? MainInventory( activeBefore )?.Id : null;
-		var restraintTieBefore = command is RunSchemaCommandCommand { CommandId: HL2RPIds.Commands.RestraintSet } &&
-			mainBefore is InventoryId restraintInventory
-			? _repositories.Inventories.Find( DomainKeys.Inventory( restraintInventory ) )?.Value.Placements
-				.Select( placement => _repositories.Items.Find( DomainKeys.Item( placement.ItemId ) )?.Value )
-				.FirstOrDefault( item => item?.Definition.Value == HL2RPIds.Items.ZipTie )?.Id
-			: null;
 
 		OperationResult result = await HL2RPClientCommandSink.RouteAsync<RpcActor>(
 			this, actor, command, projectionDelta, cancellationToken );
@@ -557,7 +552,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 			durableMutation,
 			characterBefore != characterAfter );
 		var changes = EnrichChanges(
-			connectionId, command, outcome.Changes, projectionDelta, mainBefore, restraintTieBefore );
+			connectionId, command, outcome.Changes, projectionDelta, mainBefore );
 		PublishChanges( changes, projectionDelta.Receipts );
 		return outcome.Result;
 	}
@@ -888,8 +883,12 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 		{
 			var character = FindActiveCharacter( pair.Key );
 			if ( character is null ) continue;
+			// Only Civil Protection and Overwatch can restrain or search, so nobody else has a
+			// restraint target to find; this runs for every client four times a second.
+			var canRestrain = character.Faction.Value is
+				HL2RPIds.Factions.CivilProtection or HL2RPIds.Factions.Overwatch;
 			_presentationInvalidation.ObserveRestraintTarget(
-				pair.Key, NearestCharacterTarget( character.Id )?.Id );
+				pair.Key, canRestrain ? NearestCharacterTarget( character.Id )?.Id : null );
 		}
 	}
 
@@ -1086,6 +1085,11 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 				ErrorCode.Conflict,
 				"Character lifecycle work is already in progress for this connection or character." );
 		using var reservedLifecycle = lifecycleOperation!;
+		// Ownership first: answering "active on another connection" for a character the caller
+		// does not own would tell any player whether an arbitrary character id is online.
+		var owned = _repositories.Characters.Find( DomainKeys.Character( characterId ) );
+		if ( owned is null || owned.Value.AccountId != actor.AccountId )
+			return OperationResult.Failure( ErrorCode.NotFound, "Character was not found." );
 		var admission = HL2RPCharacterLoadAdmission.Validate(
 			connectionId,
 			characterId,
@@ -1396,8 +1400,9 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 		InventoryActor actor, HL2RPCommandArguments arguments, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken ) =>
 		_execution!.DoorOwnershipAsync( actor, arguments, projectionDelta, cancellationToken );
 
-	OperationResult IHL2RPSchemaCommandRoutes<RpcActor>.PublishAdministrationAudit( InventoryActor actor ) =>
-		_execution!.PublishAdministrationAudit( actor );
+	OperationResult IHL2RPSchemaCommandRoutes<RpcActor>.PublishAdministrationAudit(
+		InventoryActor actor, HL2RPCommandArguments arguments ) =>
+		_execution!.PublishAdministrationAudit( actor, arguments );
 
 	ValueTask<OperationResult> IHL2RPSchemaCommandRoutes<RpcActor>.BuyAsync(
 		InventoryActor actor, HL2RPCommandArguments arguments, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken ) =>
@@ -1529,62 +1534,52 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 		var modelPath = _characterModels.ResolvePath( character.Model );
 		if ( modelPath.Failed || !_worldModels.IsValidModel( modelPath.Value ) )
 			return OperationResult.Failure( ErrorCode.ConfigurationInvalid, "Character model does not resolve." );
-		if ( !_respawningCharacters.Add( actor.CharacterId ) )
-			return OperationResult.Failure( ErrorCode.Conflict, "Character respawn is already in progress." );
+		// Body and grant are prepared while the death state denies commands. This method never awaits, so no
+		// second respawn can interleave. Clearing death is the final authority flip.
+		var body = binding.Player.HostEmbody( candidate =>
+		{
+			ConfigureAuthoritativePlayerBody( candidate, character );
+			var bodyObject = candidate.Children.FirstOrDefault( child => child.Name == "Body" )
+				?? new GameObject( candidate, true, "Body" );
+			var renderer = bodyObject.GetOrAddComponent<SkinnedModelRenderer>();
+			renderer.Model = Model.Load( modelPath.Value );
+			renderer.Enabled = true;
+		} );
+		if ( body.Failed ) return Failure( body.Error! );
 
+		_access.RevokeCharacter( actor.ConnectionId, actor.CharacterId );
 		try
 		{
-			// Body and grant are prepared while both the death state and the respawn
-			// phase guard deny commands. Clearing death is the final authority flip.
-			var body = binding.Player.HostEmbody( candidate =>
+			_access.Grant( new InventoryGrant
 			{
-				ConfigureAuthoritativePlayerBody( candidate, character );
-				var bodyObject = candidate.Children.FirstOrDefault( child => child.Name == "Body" )
-					?? new GameObject( candidate, true, "Body" );
-				var renderer = bodyObject.GetOrAddComponent<SkinnedModelRenderer>();
-				renderer.Model = Model.Load( modelPath.Value );
-				renderer.Enabled = true;
+				ConnectionId = actor.ConnectionId,
+				CharacterId = actor.CharacterId,
+				InventoryId = main.Id,
+				Capabilities = CharacterCapabilities,
+				Kind = InventoryGrantKind.Character
 			} );
-			if ( body.Failed ) return Failure( body.Error! );
-
-			_access.RevokeCharacter( actor.ConnectionId, actor.CharacterId );
-			try
-			{
-				_access.Grant( new InventoryGrant
-				{
-					ConnectionId = actor.ConnectionId,
-					CharacterId = actor.CharacterId,
-					InventoryId = main.Id,
-					Capabilities = CharacterCapabilities,
-					Kind = InventoryGrantKind.Character
-				} );
-			}
-			catch ( Exception exception )
-			{
-				_ = binding.Player.HostDisembody();
-				Log.Error( exception, "Failed to restore the active-character inventory grant." );
-				return OperationResult.Failure( ErrorCode.InternalError, "Respawn authority could not be restored." );
-			}
-
-			var respawned = _combatIntent!.Respawn( actor );
-			if ( respawned.Failed )
-			{
-				_access.RevokeCharacter( actor.ConnectionId, actor.CharacterId );
-				_ = binding.Player.HostDisembody();
-				PublishConnections( new[] { actor.ConnectionId }, invalidateRuntime: true );
-				return Failure( respawned.Error! );
-			}
-
-			if ( _combatHealth.Require( actor.CharacterId ).Failed )
-				_combatHealth.Publish( actor.CharacterId, 100, 100 );
-			_presentationInvalidation.ClearDeathDeadline( actor.CharacterId );
-			RefreshLiveConnection( actor.ConnectionId );
-			return OperationResult.Success();
 		}
-		finally
+		catch ( Exception exception )
 		{
-			_respawningCharacters.Remove( actor.CharacterId );
+			_ = binding.Player.HostDisembody();
+			Log.Error( exception, "Failed to restore the active-character inventory grant." );
+			return OperationResult.Failure( ErrorCode.InternalError, "Respawn authority could not be restored." );
 		}
+
+		var respawned = _combatIntent!.Respawn( actor );
+		if ( respawned.Failed )
+		{
+			_access.RevokeCharacter( actor.ConnectionId, actor.CharacterId );
+			_ = binding.Player.HostDisembody();
+			PublishConnections( new[] { actor.ConnectionId }, invalidateRuntime: true );
+			return Failure( respawned.Error! );
+		}
+
+		if ( _combatHealth.Require( actor.CharacterId ).Failed )
+			_combatHealth.Publish( actor.CharacterId, 100, 100 );
+		_presentationInvalidation.ClearDeathDeadline( actor.CharacterId );
+		RefreshLiveConnection( actor.ConnectionId );
+		return OperationResult.Success();
 	}
 
 	private OperationResult<InventoryActor> RequireInventoryActor( RpcActor actor, bool allowDead = false )
@@ -1594,8 +1589,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 		if ( character is null || character.AccountId != actor.AccountId )
 			return OperationResult<InventoryActor>.Failure(
 				ErrorCode.Unauthorized, "An active canonical character is required." );
-		if ( !allowDead && (_combatLifecycle?.GetState( character.Id ) is not null ||
-			_respawningCharacters.Contains( character.Id )) )
+		if ( !allowDead && _combatLifecycle?.GetState( character.Id ) is not null )
 			return OperationResult<InventoryActor>.Failure(
 				ErrorCode.PolicyDenied, "Dead characters cannot perform commands." );
 		return OperationResult<InventoryActor>.Success(
@@ -1697,9 +1691,6 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 	private static OperationResult Failure( OperationError error ) =>
 		OperationResult.Failure( error.Code, error.Message );
 
-	private static OperationResult Untyped<T>( OperationResult<T> result ) =>
-		result.Succeeded ? OperationResult.Success() : Failure( result.Error! );
-
 	private static WorldTransformRecord DropTransform( GameObject gameObject )
 	{
 		var forward = gameObject.Components.Get<PlayerController>()?.EyeAngles.ToRotation().Forward ??
@@ -1734,6 +1725,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 			_clock,
 			RequirePolicy( new PolicyHandler<ChatSendContext>(
 				"hl2rp.runtime.request_device_only", new HL2RPChatRuntimePolicy() ) ),
+			new HL2RPChatLiveness( this ),
 			globalRateLimit: _globalChatRateLimit,
 			admission: _chatAdmission );
 	}
@@ -1838,8 +1830,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 		ClientCommand command,
 		HL2RPPresentationChangeSet changes,
 		CommandProjectionDelta projectionDelta,
-		InventoryId? mainBefore,
-		ItemId? restraintTieBefore )
+		InventoryId? mainBefore )
 	{
 		if ( changes.IsEmpty && !projectionDelta.HasPersistentChanges ) return changes;
 		var inventories = new HashSet<InventoryId>( changes.Inventories );
@@ -1856,8 +1847,6 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 		documents.UnionWith( projectionDelta.Documents );
 		if ( command is RunSchemaCommandCommand && changes.RebuildLiveInventory && mainBefore is InventoryId main )
 			inventories.Add( main );
-		if ( command is RunSchemaCommandCommand { CommandId: HL2RPIds.Commands.RestraintSet } &&
-			restraintTieBefore is ItemId tie ) items.Add( tie );
 		_projectionIndex.InvalidateVisibility( connectionId );
 		return changes with
 		{
@@ -2033,8 +2022,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 
 	private static void LogScannerBoundaryError( OperationError? error )
 	{
-		if ( error is not null )
-			Log.Warning( $"HL2RP_SCANNER_BOUNDARY_DEGRADED code={error.Code} message={error.Message}" );
+		if ( HL2RPDegradedBoundaryMessages.ScannerBoundary( error ) is { } message ) Log.Warning( message );
 	}
 
 	void IHL2RPCommandExecutionHost.PublishConnection( ConnectionId connectionId ) =>
@@ -2245,11 +2233,7 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 		WorldItemReconciliationReceipt receipt,
 		string stage )
 	{
-		if ( receipt.Disposition != WorldItemReconciliationDisposition.Applied )
-			Log.Warning(
-				$"HL2RP_WORLD_ITEM_DEGRADED item={receipt.ItemId.Value:D} stage={stage} " +
-				$"disposition={receipt.Disposition} attempt={receipt.Attempt} " +
-				$"code={receipt.Error?.Code} message={receipt.Error?.Message}" );
+		if ( HL2RPDegradedBoundaryMessages.WorldItem( receipt, stage ) is { } message ) Log.Warning( message );
 	}
 
 	private async ValueTask RunVerificationProbeAsync()
@@ -2455,12 +2439,6 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 		if ( body.Tags.Contains( "combine" ) ) controller.BodyCollisionTags.Add( "combine" );
 	}
 
-	internal void ClearCombatSessions( InventoryActor actor )
-	{
-		_interactions?.CharacterChanged( actor.ConnectionId, actor.CharacterId );
-		_combatIntent?.ClearCharacter( actor.CharacterId );
-	}
-
 	private sealed class HL2RPEncounterAuthorizer : ICharacterEncounterAuthorizer
 	{
 		private readonly HL2RPHostApplication _owner;
@@ -2505,6 +2483,15 @@ public sealed class HL2RPHostApplication : IHexHostApplication, IWorldItemReconc
 		private readonly HL2RPHostApplication _owner;
 		public HL2RPItemActionPresentationHandler( HL2RPHostApplication owner ) => _owner = owner;
 		public void Handle( ItemActionCommittedEvent committed ) => _owner.PresentItemAction( committed );
+	}
+
+	/// <summary>A character is dead exactly while the combat lifecycle holds a death state for it.</summary>
+	private sealed class HL2RPChatLiveness : IChatLivenessSource
+	{
+		private readonly HL2RPHostApplication _owner;
+		public HL2RPChatLiveness( HL2RPHostApplication owner ) => _owner = owner;
+		public bool IsAlive( ConnectionId connectionId, CharacterId characterId ) =>
+			_owner._combatLifecycle?.GetState( characterId ) is null;
 	}
 
 	private sealed class HL2RPCommittedChatSink : ICommittedChatDeliverySink

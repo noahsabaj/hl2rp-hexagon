@@ -54,12 +54,12 @@ public sealed class AccountEntitlementIntegrationTests
 			"BuildCreationAvailabilityView( pair.Key, pair.Value.AccountId",
 			"HL2RPOperatorAccounts.Resolve()",
 			"_entitlements.ValidateAll()"
-		} ) StringAssert.Contains( host, marker );
+		} ) SourcePin.Contains( host, marker );
 		// The entitlement route body moved to the engine-neutral command execution
 		// core; the administrator identity construction is pinned there.
 		var execution = HL2RPTestSource.WithoutComments(
 			Path.Combine( root, "Code", "Runtime", "HL2RPCommandExecution.cs" ) );
-		StringAssert.Contains( execution, "new HL2RPEntitlementAdministrator( accountId, characterId )" );
+		SourcePin.Contains( execution, "new HL2RPEntitlementAdministrator( accountId, characterId )" );
 	}
 
 	[TestMethod]
@@ -78,12 +78,12 @@ public sealed class AccountEntitlementIntegrationTests
 			"civil_protection",
 			"overwatch",
 			"city_administration"
-		} ) StringAssert.Contains( panel, marker );
+		} ) SourcePin.Contains( panel, marker );
 		Assert.IsFalse( panel.Contains( "AccountId( ", StringComparison.Ordinal ) );
 		var rootPanel = HL2RPTestSource.WithoutComments( Path.Combine( root, "Code", "UI", "HL2RPShowcaseRoot.razor" ) );
-		StringAssert.Contains( rootPanel, "ShowcaseWorkspace.Entitlements" );
+		SourcePin.Contains( rootPanel, "ShowcaseWorkspace.Entitlements" );
 		var characterMenu = HL2RPTestSource.WithoutComments( Path.Combine( root, "Code", "UI", "CharacterMenuPanel.razor" ) );
-		StringAssert.Contains( characterMenu, "EntitlementAdministrationPanel" );
+		SourcePin.Contains( characterMenu, "EntitlementAdministrationPanel" );
 	}
 
 	private static string FindRoot()

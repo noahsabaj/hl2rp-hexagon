@@ -58,21 +58,11 @@ public sealed class RadioTuningService
 		var normalized = NormalizeFrequency( frequency );
 		if ( normalized.Failed )
 			return OperationResult<RadioTunedReceipt>.Failure( normalized.Error!.Code, normalized.Error.Message );
-		var character = _repositories.Characters.Find( DomainKeys.Character( actor.CharacterId ) );
-		var inventory = _repositories.Inventories.Find( DomainKeys.Inventory( inventoryId ) );
-		var item = _repositories.Items.Find( DomainKeys.Item( radioItemId ) );
-		if ( character is null || inventory is null || item is null )
-			return OperationResult<RadioTunedReceipt>.Failure( ErrorCode.NotFound, "Character, inventory or radio was not found." );
-		if ( character.Value.AccountId != actor.AccountId || inventory.Value.Find( radioItemId ) is null ||
-			item.Value.Definition.Value != HL2RPIds.Items.Radio )
-			return OperationResult<RadioTunedReceipt>.Failure( ErrorCode.Unauthorized, "Radio ownership proof failed." );
-		var access = _access.Prove(
-			actor.ConnectionId,
-			actor.CharacterId,
-			inventoryId,
-			InventoryCapability.View | InventoryCapability.Use );
-		if ( access is null )
-			return OperationResult<RadioTunedReceipt>.Failure( ErrorCode.Unauthorized, "Radio use capability is missing." );
+		var proof = ItemProof.Require( _repositories, _access, actor, inventoryId, radioItemId,
+			HL2RPIds.Items.Radio, InventoryCapability.View | InventoryCapability.Use );
+		if ( proof.Failed )
+			return OperationResult<RadioTunedReceipt>.Failure( proof.Error!.Code, proof.Error.Message );
+		var (character, inventory, item, access) = proof.Value;
 		if ( !item.Value.Traits.TryGetValue( "radio", out var payload ) )
 			return OperationResult<RadioTunedReceipt>.Failure( ErrorCode.PersistedTypeInvalid, "Radio state is missing." );
 		var decoded = HL2RPFeaturePersistence.Decode( payload, HL2RPPersistence.Radio );

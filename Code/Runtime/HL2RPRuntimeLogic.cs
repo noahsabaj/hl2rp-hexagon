@@ -30,6 +30,7 @@ public sealed class HL2RPPresentationInvalidation
 	private readonly Dictionary<ConnectionId, CharacterId?> _restraintTargets = new();
 	private readonly Dictionary<CharacterId, DateTimeOffset> _deathDeadlines = new();
 	private readonly Dictionary<string, DateTimeOffset> _refreshDeadlines = new( StringComparer.Ordinal );
+	private readonly Dictionary<(ConnectionId Connection, string Key), DateTimeOffset> _connectionRefreshDeadlines = new();
 	private readonly Dictionary<ConnectionId, long> _connectionGenerations = new();
 	private long _generation;
 	private long _acknowledgedGeneration;
@@ -61,6 +62,17 @@ public sealed class HL2RPPresentationInvalidation
 		lock ( _sync ) _refreshDeadlines[key] = refreshAtUtc;
 	}
 
+	/// <summary>
+	/// A deadline whose expiry changes only what one connection sees, such as a pistol cooldown or
+	/// a permit expiring in that player's inventory. When due it invalidates that connection alone;
+	/// routing these through the global deadlines re-snapshotted every client after every shot.
+	/// </summary>
+	public void TrackRefreshDeadline( ConnectionId connectionId, string key, DateTimeOffset refreshAtUtc )
+	{
+		ArgumentException.ThrowIfNullOrWhiteSpace( key );
+		lock ( _sync ) _connectionRefreshDeadlines[(connectionId, key)] = refreshAtUtc;
+	}
+
 	public void RememberRestraintTarget( ConnectionId connectionId, CharacterId? characterId )
 	{
 		lock ( _sync ) _restraintTargets[connectionId] = characterId;
@@ -88,6 +100,8 @@ public sealed class HL2RPPresentationInvalidation
 		{
 			_restraintTargets.Remove( connectionId );
 			_connectionGenerations.Remove( connectionId );
+			foreach ( var key in _connectionRefreshDeadlines.Keys.Where( key => key.Connection == connectionId ).ToArray() )
+				_connectionRefreshDeadlines.Remove( key );
 		}
 	}
 
@@ -95,12 +109,22 @@ public sealed class HL2RPPresentationInvalidation
 	{
 		lock ( _sync ) return _generation != _acknowledgedGeneration || _connectionGenerations.Count > 0 ||
 			_deathDeadlines.Values.Any( deadline => deadline <= nowUtc ) ||
-			_refreshDeadlines.Values.Any( deadline => deadline <= nowUtc );
+			_refreshDeadlines.Values.Any( deadline => deadline <= nowUtc ) ||
+			_connectionRefreshDeadlines.Values.Any( deadline => deadline <= nowUtc );
 	}
 
 	public HL2RPPresentationPublication BeginPublication( DateTimeOffset nowUtc )
 	{
-		lock ( _sync ) return new HL2RPPresentationPublication(
+		lock ( _sync )
+		{
+			// A due connection-scoped deadline becomes an ordinary connection invalidation, which
+			// already survives a failed publication until it is acknowledged.
+			foreach ( var due in _connectionRefreshDeadlines.Where( pair => pair.Value <= nowUtc ).ToArray() )
+			{
+				_connectionRefreshDeadlines.Remove( due.Key );
+				_connectionGenerations[due.Key.Connection] = ++_connectionGeneration;
+			}
+			return new HL2RPPresentationPublication(
 			_generation,
 			_generation != _acknowledgedGeneration,
 			new Dictionary<ConnectionId, long>( _connectionGenerations ),
@@ -110,6 +134,7 @@ public sealed class HL2RPPresentationInvalidation
 			_refreshDeadlines
 				.Where( pair => pair.Value <= nowUtc )
 				.ToDictionary( pair => pair.Key, pair => pair.Value, StringComparer.Ordinal ) );
+		}
 	}
 
 	/// <summary>
@@ -472,15 +497,34 @@ public sealed class HL2RPCharacterModelCatalog : ICharacterModelCatalog
 public sealed class HL2RPFeatureRuntimePolicy : IPolicy<Features.HL2RPFeaturePolicyContext>, IPermissionAuthorizer
 {
 	private readonly DomainRepositories _repositories;
+	private readonly Showcase.Restraint.RestraintStateReader _restraints;
 
-	public HL2RPFeatureRuntimePolicy( DomainRepositories repositories ) =>
+	public HL2RPFeatureRuntimePolicy( DomainRepositories repositories )
+	{
 		_repositories = repositories ?? throw new ArgumentNullException( nameof(repositories) );
+		_restraints = new Showcase.Restraint.RestraintStateReader( repositories );
+	}
+
+	/// <summary>
+	/// Operations a bound character can still perform: speech and the desk-side civic
+	/// administration that never touches an item or the world. Everything else needs free hands.
+	/// </summary>
+	private static bool AllowedWhileRestrained( Features.HL2RPFeatureOperation operation ) => operation is
+		Features.HL2RPFeatureOperation.Introduce or
+		Features.HL2RPFeatureOperation.AddInfraction or
+		Features.HL2RPFeatureOperation.SetPriority or
+		Features.HL2RPFeatureOperation.UpdateRecord or
+		Features.HL2RPFeatureOperation.SetCityObjectives;
 
 	public PolicyDecision Evaluate( Features.HL2RPFeaturePolicyContext context )
 	{
 		var document = _repositories.Characters.Find( DomainKeys.Character( context.Actor.CharacterId ) );
 		if ( document is null || document.Value.AccountId != context.Actor.AccountId )
 			return PolicyDecision.Deny( "Feature actor binding is not canonical.", ErrorCode.Unauthorized );
+		// The item-action pipeline has its own restraint policy; these direct routes had none, so a
+		// zip-tied character could still tune radios, write notes, open bags and trade.
+		if ( !AllowedWhileRestrained( context.Operation ) && _restraints.IsRestrained( context.Actor.CharacterId ) )
+			return PolicyDecision.Deny( "Restrained characters cannot do that." );
 		if ( context.Operation is Features.HL2RPFeatureOperation.InstallCombineLock or
 			Features.HL2RPFeatureOperation.ToggleForcefield )
 			return document.Value.Faction.Value is HL2RPIds.Factions.CivilProtection or HL2RPIds.Factions.Overwatch
@@ -489,10 +533,10 @@ public sealed class HL2RPFeatureRuntimePolicy : IPolicy<Features.HL2RPFeaturePol
 
 		var permission = context.Operation switch
 		{
-			Features.HL2RPFeatureOperation.AddInfraction or Features.HL2RPFeatureOperation.SetPriority =>
+			Features.HL2RPFeatureOperation.AddInfraction or Features.HL2RPFeatureOperation.SetPriority or
+			Features.HL2RPFeatureOperation.UpdateRecord =>
 				HL2RPIds.Permissions.Priority,
 			Features.HL2RPFeatureOperation.SetCityObjectives => HL2RPIds.Permissions.CityObjectives,
-			Features.HL2RPFeatureOperation.IssuePermit => HL2RPIds.Permissions.CommerceManagement,
 			Features.HL2RPFeatureOperation.ToggleDoor or
 			Features.HL2RPFeatureOperation.ClaimDoor or Features.HL2RPFeatureOperation.ReleaseDoor => null,
 			Features.HL2RPFeatureOperation.Introduce or
@@ -760,7 +804,7 @@ public static class HL2RPRuntimeProjection
 			if ( reference is not null )
 			{
 				try { return HL2RPPersistence.Recognition.Deserialize( reference.State.Data, reference.State.TypeVersion ).IntroducedName; }
-				catch ( Exception ) { }
+				catch ( Exception exception ) { Features.HL2RPFeaturePersistence.Warn( $"Recognition of '{subject.Id}' is unreadable: {exception.Message}" ); }
 			}
 		}
 		return subject.Faction.Value == HL2RPIds.Factions.Citizen ? "Unknown citizen" : "Unknown official";

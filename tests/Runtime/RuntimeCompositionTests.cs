@@ -95,6 +95,29 @@ public sealed class RuntimeCompositionTests
 		Assert.IsTrue( policy.HasPermission( cp.AccountId, cp.CharacterId, HL2RPIds.Permissions.CivicData ) );
 		Assert.IsTrue( policy.HasPermission( cp.AccountId, cp.CharacterId, HL2RPIds.Permissions.Priority ) );
 		Assert.IsFalse( policy.Evaluate( Context( citizen with { AccountId = new AccountId( 999 ) }, HL2RPFeatureOperation.OpenBag ) ).Allowed );
+
+		// Direct feature routes never pass through the item-action restraint policy, so the
+		// feature policy has to bind a restrained character itself.
+		Assert.IsTrue( policy.Evaluate( Context( citizen, HL2RPFeatureOperation.TuneRadio ) ).Allowed );
+		await environment.SeedAsync( unit => unit.Create(
+			environment.Repositories.CharacterReferences,
+			HL2RP.V2.Showcase.Restraint.RestraintService.DocumentKey( citizen.CharacterId ),
+			new CharacterReferenceRecord
+			{
+				Category = HL2RP.V2.Showcase.Restraint.RestraintService.ReferenceCategory,
+				CharacterId = citizen.CharacterId,
+				RelatedCharacterId = cp.CharacterId,
+				State = HL2RPPersistence.Payload( HL2RPPersistence.Restraint,
+					new RestraintReferenceState { RestrainedAtUtc = environment.Clock.UtcNow, Active = true } )
+			} ) );
+		foreach ( var operation in new[]
+		{
+			HL2RPFeatureOperation.TuneRadio, HL2RPFeatureOperation.EditNote, HL2RPFeatureOperation.OpenBag,
+			HL2RPFeatureOperation.SplitTokens, HL2RPFeatureOperation.CombineTokens,
+			HL2RPFeatureOperation.SendRequest, HL2RPFeatureOperation.VendorBuy, HL2RPFeatureOperation.ToggleDoor
+		} )
+			Assert.IsFalse( policy.Evaluate( Context( citizen, operation ) ).Allowed, operation.ToString() );
+		Assert.IsTrue( policy.Evaluate( Context( citizen, HL2RPFeatureOperation.Introduce ) ).Allowed );
 	}
 
 	[TestMethod]
@@ -175,7 +198,7 @@ public sealed class RuntimeCompositionTests
 			"IHL2RPSchemaCommandRoutes<RpcActor>.DoorOwnershipAsync(",
 			"_context.Configuration.Snapshot()",
 			"HL2RPPersistenceInvariants.Profile"
-		} ) StringAssert.Contains( host, route );
+		} ) SourcePin.Contains( host, route );
 		// The snapshot/view builders moved to the engine-neutral presentation composer;
 		// their projection contracts are pinned against that source and exercised
 		// directly by HL2RPPresentationComposerTests.
@@ -185,7 +208,7 @@ public sealed class RuntimeCompositionTests
 			"death.respawn_available_at_ms", "HL2RPInventoryItemState.Project",
 			"HL2RPItemDropAvailability.Project", "HL2RPItemActionAvailability.Project", "VendorSellAvailabilityFor",
 			"_host.NearestCharacterTarget", "_host.IsOwnableDoor"
-		} ) StringAssert.Contains( composer, route );
+		} ) SourcePin.Contains( composer, route );
 		// The command route bodies moved to the engine-neutral command execution core;
 		// their service wiring is pinned against that source and the admission seams
 		// stay pinned on the host above.
@@ -197,10 +220,10 @@ public sealed class RuntimeCompositionTests
 			"ExecutableItemActionRoute.HealthVialConsume", "ApplyScannerInputAsync",
 			"_services.Search!.Open", "UpdateRecordAsync", "ConfigureAsync",
 			"_services.SceneBehavior!.ToggleDoorAsync"
-		} ) StringAssert.Contains( execution, route );
+		} ) SourcePin.Contains( execution, route );
 		var world = HL2RPTestSource.WithoutComments( Path.Combine( root, "Code", "Runtime", "HL2RPSceneRuntime.cs" ) );
-		StringAssert.Contains( world, "IsRestrained = _restraints.IsRestrained( characterId )" );
-		StringAssert.Contains( world, "new CharacterRestraintInteractable" );
+		SourcePin.Contains( world, "IsRestrained = _restraints.IsRestrained( characterId )" );
+		SourcePin.Contains( world, "new CharacterRestraintInteractable" );
 		var sandbox = HL2RPTestSource.WithoutComments( Path.Combine( root, "Code", "Runtime", "HL2RPSandboxBoundaries.cs" ) );
 		foreach ( var route in new[]
 		{
@@ -208,18 +231,18 @@ public sealed class RuntimeCompositionTests
 			"GetOrAddComponent<HL2RPScannerMotionController>", "command.MaximumAcceleration",
 			"_maximumAcceleration * delta", "Time.Delta"
 		} )
-			StringAssert.Contains( sandbox, route );
-		StringAssert.Contains( world, "ValidatePersistedScannerTopology" );
-		StringAssert.Contains( world, "scanner.LinkedEntityId != expected.LinkedEntityId" );
+			SourcePin.Contains( sandbox, route );
+		SourcePin.Contains( world, "ValidatePersistedScannerTopology" );
+		SourcePin.Contains( world, "scanner.LinkedEntityId != expected.LinkedEntityId" );
 		var operations = HL2RPTestSource.WithoutComments( Path.Combine( root, "Code", "UI", "OperationsPanel.razor" ) );
 		foreach ( var route in new[]
 		{
 			"SelectedRequestDevice", "SendRequestAsync", "HL2RPIds.Actions.Request", "OnItemWorkspace",
 			"ItemActionArgumentBuilder.TrySplit( _splitAmount, item.Quantity"
 		} )
-			StringAssert.Contains( operations, route );
-		StringAssert.Contains( operations, "ClaimDoorAsync" );
-		StringAssert.Contains( operations, "HL2RPIds.Commands.DoorOwnership" );
+			SourcePin.Contains( operations, route );
+		SourcePin.Contains( operations, "ClaimDoorAsync" );
+		SourcePin.Contains( operations, "HL2RPIds.Commands.DoorOwnership" );
 		Assert.IsTrue( File.Exists( Path.Combine(
 			root, "Code", "UI", "HL2RPClientPresenter.razor.scss" ) ) );
 	}
@@ -243,7 +266,7 @@ public sealed class RuntimeCompositionTests
 		var sandbox = HL2RPTestSource.WithoutComments(
 			Path.Combine( FindRoot(), "Code", "Runtime", "HL2RPSandboxBoundaries.cs" ) );
 
-		StringAssert.Contains( sandbox, "controller.CurrentHeight - controller.EyeDistanceFromTop",
+		SourcePin.Contains( sandbox, "controller.CurrentHeight - controller.EyeDistanceFromTop",
 			"The shot origin must use the engine's own eye arithmetic." );
 		Assert.IsFalse( Regex.IsMatch( sandbox, @"Vector3\.Up \* \d" ),
 			"The shot origin must not multiply Vector3.Up by a literal — that is the hardcoded eye " +
@@ -268,7 +291,7 @@ public sealed class RuntimeCompositionTests
 			"admission: _chatAdmission",
 			"_context.Configuration.Snapshot()"
 		} )
-			StringAssert.Contains( host, required );
+			SourcePin.Contains( host, required );
 		Assert.HasCount(
 			2,
 			Regex.Matches( host, @"RecoveryDigest\(\s*_repositories, _context\.Configuration\.Snapshot\(\) \)",
@@ -457,6 +480,18 @@ public sealed class RuntimeCompositionTests
 		Assert.IsTrue( state.IsRefreshDue( now.AddSeconds( 20 ) ) );
 		state.AcknowledgePublished( state.BeginPublication( now.AddSeconds( 20 ) ) );
 		Assert.IsFalse( state.IsRefreshDue( now.AddSeconds( 21 ) ) );
+
+		// An item cooldown changes one player's inventory view, so it must republish that
+		// connection only and never become a server-wide broadcast.
+		var shooter = ConnectionId.New();
+		state.TrackRefreshDeadline( shooter, "item:pistol", now.AddSeconds( 30 ) );
+		Assert.IsFalse( state.IsRefreshDue( now.AddSeconds( 29 ) ) );
+		Assert.IsTrue( state.IsRefreshDue( now.AddSeconds( 30 ) ) );
+		var scoped = state.BeginPublication( now.AddSeconds( 30 ) );
+		Assert.IsFalse( scoped.RequiresBroadcast );
+		CollectionAssert.AreEquivalent( new[] { shooter }, scoped.ConnectionGenerations.Keys.ToArray() );
+		state.AcknowledgePublished( scoped );
+		Assert.IsFalse( state.IsRefreshDue( now.AddSeconds( 31 ) ) );
 	}
 
 	[TestMethod]
@@ -1125,9 +1160,9 @@ public sealed class RuntimeCompositionTests
 	public void VendorPresentationAndPermitParsingFailClosedLikeCommerce()
 	{
 		Assert.IsTrue( HL2RPPresentationContracts.VendorOffer( true, 1, 25, 25 ).CanBuy );
-		StringAssert.Contains( HL2RPPresentationContracts.VendorOffer( false, 1, 25, 25 ).DisabledReason, "permit" );
-		StringAssert.Contains( HL2RPPresentationContracts.VendorOffer( true, 0, 25, 25 ).DisabledReason, "stock" );
-		StringAssert.Contains( HL2RPPresentationContracts.VendorOffer( true, 1, 25, 24 ).DisabledReason, "funds" );
+		SourcePin.Contains( HL2RPPresentationContracts.VendorOffer( false, 1, 25, 25 ).DisabledReason, "permit" );
+		SourcePin.Contains( HL2RPPresentationContracts.VendorOffer( true, 0, 25, 25 ).DisabledReason, "stock" );
+		SourcePin.Contains( HL2RPPresentationContracts.VendorOffer( true, 1, 25, 24 ).DisabledReason, "funds" );
 		Assert.AreEqual( BusinessPermitKind.Food,
 			HL2RPPresentationContracts.ParsePermitKind( "permit_food" ).Value );
 		Assert.AreEqual( BusinessPermitKind.General,
@@ -1147,29 +1182,29 @@ public sealed class RuntimeCompositionTests
 			"_sessions.SessionRevoked += OnInteractionSessionRevoked",
 			"_sessions.SessionRevoked -= OnInteractionSessionRevoked",
 			"hl2rp.runtime.item_presentation"
-		} ) StringAssert.Contains( host, required );
+		} ) SourcePin.Contains( host, required );
 		// The optional civic-subject argument is parsed by the neutral command
 		// execution core, which owns the CivicData route body.
-		StringAssert.Contains(
+		SourcePin.Contains(
 			HL2RPTestSource.WithoutComments( Path.Combine(
 				root, "Code", "Runtime", "HL2RPCommandExecution.cs" ) ),
 			"arguments.OptionalGuid( \"character\" )" );
 
 		var presenter = HL2RPTestSource.WithoutComments( Path.Combine( root, "Code", "UI", "HL2RPClientPresenter.razor" ) );
-		StringAssert.Contains( presenter, "private void Introduce( CharacterId characterId )" );
-		StringAssert.Contains( presenter, "private async Task InspectCivicAsync( CharacterId characterId )" );
-		StringAssert.Contains( presenter, "_characterPresentation.Workspace = ShowcaseWorkspace.CivicData" );
-		StringAssert.Contains( presenter, "request.PermitKindId" );
+		SourcePin.Contains( presenter, "private void Introduce( CharacterId characterId )" );
+		SourcePin.Contains( presenter, "private async Task InspectCivicAsync( CharacterId characterId )" );
+		SourcePin.Contains( presenter, "_characterPresentation.Workspace = ShowcaseWorkspace.CivicData" );
+		SourcePin.Contains( presenter, "request.PermitKindId" );
 		var scoreboard = HL2RPTestSource.WithoutComments( Path.Combine( root, "Code", "UI", "ScoreboardPanel.razor" ) );
-		StringAssert.Contains( scoreboard, "OnIntroduce?.Invoke( characterId )" );
+		SourcePin.Contains( scoreboard, "OnIntroduce?.Invoke( characterId )" );
 		var combine = File.ReadAllText( Path.Combine( root, "Code", "UI", "CombineSuitePanel.razor" ) );
 		Assert.IsFalse( combine.Contains( "NoteTitle", StringComparison.Ordinal ) );
 		var rootPanel = HL2RPTestSource.WithoutComments( Path.Combine( root, "Code", "UI", "HL2RPShowcaseRoot.razor" ) );
-		StringAssert.Contains( rootPanel, "item-presentation-backdrop" );
-		StringAssert.Contains( rootPanel, "private void CloseCombineWorkspace()" );
-		StringAssert.Contains( rootPanel, "ScannerIntent.Exit" );
+		SourcePin.Contains( rootPanel, "item-presentation-backdrop" );
+		SourcePin.Contains( rootPanel, "private void CloseCombineWorkspace()" );
+		SourcePin.Contains( rootPanel, "ScannerIntent.Exit" );
 		var operations = HL2RPTestSource.WithoutComments( Path.Combine( root, "Code", "UI", "OperationsPanel.razor" ) );
-		StringAssert.Contains( operations, "×@candidate.Quantity" );
+		SourcePin.Contains( operations, "×@candidate.Quantity" );
 	}
 
 	[TestMethod]

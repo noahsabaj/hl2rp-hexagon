@@ -83,7 +83,6 @@ public static class HL2RPIds
 		public const string Unequip = "unequip";
 		public const string Reload = "reload";
 		public const string Fire = "fire";
-		public const string Replenish = "replenish";
 		public const string Install = "install";
 		public const string Split = "split";
 		public const string Combine = "combine";

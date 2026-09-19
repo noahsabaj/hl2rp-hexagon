@@ -85,7 +85,6 @@ public sealed record CharacterMenuViewModel(
 	CharacterCreationViewModel Creation,
 	EntitlementAdministrationViewModel? Entitlements,
 	int MaximumSlots,
-	bool IsBusy,
 	string StatusText);
 
 public sealed record HudViewModel(
@@ -259,7 +258,6 @@ public sealed record WorkspaceTransitionRequest(ShowcaseWorkspace Destination);
 public sealed record ScannerContactViewModel(string Label, float Distance, bool Priority);
 
 public sealed record ScannerViewModel(
-	bool IsPiloting,
 	string UnitName,
 	bool SpotlightEnabled,
 	DateTimeOffset? NextPhotoAtUtc,
@@ -276,23 +274,13 @@ public sealed record ScannerIntentRequest(
 	int Yaw = 0,
 	int Pitch = 0);
 
-public sealed record CombineAlertViewModel(
-	Guid Id,
-	string Code,
-	string Message,
-	NotificationTone Tone,
-	DateTimeOffset IssuedAtUtc);
-
 public sealed record CombineOverlayViewModel(
-	bool Visible,
 	string Rank,
 	string Division,
 	string Callsign,
-	string Directive,
-	ImmutableArray<CombineAlertViewModel> Alerts);
+	string Directive);
 
 public sealed record DeathViewModel(
-	bool Visible,
 	string Cause,
 	DateTimeOffset? RespawnAtUtc,
 	bool CanRespawn);

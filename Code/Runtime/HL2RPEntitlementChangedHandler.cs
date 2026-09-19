@@ -5,10 +5,7 @@ using HL2RP.V2.Features;
 
 namespace HL2RP.V2.Runtime;
 
-// The bootstrap-operator scene component used to live here. Operator authority is a per-deployment
-// fact, so it moved to the hl2rp-operator-accounts ConVar in HL2RPOperatorAccounts; keeping it in a
-// scene meant an operator's platform account id was serialized into committed map content.
-
+/// <summary>Adapts the entitlement-changed event to a host callback.</summary>
 internal sealed class HL2RPEntitlementChangedHandler : IEventHandler<HL2RPAccountEntitlementChanged>
 {
 	private readonly Action<HL2RPAccountEntitlementChanged> _changed;

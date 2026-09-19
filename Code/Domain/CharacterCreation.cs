@@ -374,8 +374,8 @@ public sealed class HL2RPLoadoutInitializer : ICharacterInitializer
 			HL2RPPersistence.ProtectiveVest,
 			new ProtectiveVestItemState
 			{
-				Durability = 100,
-				DamageReductionPermille = 300,
+				Durability = ProtectiveVestItemState.DefaultDurability,
+				DamageReductionPermille = ProtectiveVestItemState.DefaultDamageReductionPermille,
 				Equipped = false
 			} ) )
 	};

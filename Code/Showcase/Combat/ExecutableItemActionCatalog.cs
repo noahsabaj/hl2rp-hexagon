@@ -111,7 +111,6 @@ public sealed class HL2RPExecutableItemActionCatalog
 		Route(HL2RPIds.Items.Pistol, HL2RPIds.Actions.Unequip, ExecutableItemActionRoute.AtomicPlanner),
 		Route(HL2RPIds.Items.Pistol, HL2RPIds.Actions.Reload, ExecutableItemActionRoute.AtomicPlanner),
 		Route(HL2RPIds.Items.Pistol, HL2RPIds.Actions.Fire, ExecutableItemActionRoute.CombatFireIntent),
-		Route(HL2RPIds.Items.PistolAmmunition, HL2RPIds.Actions.Replenish, ExecutableItemActionRoute.AtomicPlanner),
 		Route(HL2RPIds.Items.ProtectiveVest, HL2RPIds.Actions.Equip, ExecutableItemActionRoute.AtomicPlanner),
 		Route(HL2RPIds.Items.ProtectiveVest, HL2RPIds.Actions.Unequip, ExecutableItemActionRoute.AtomicPlanner),
 		Route(HL2RPIds.Items.CombineLockKit, HL2RPIds.Actions.Install, ExecutableItemActionRoute.CombineLockInstall),

@@ -334,4 +334,24 @@ public sealed class SlashCommandTests
 		Assert.IsFalse( parsed.Value.Tokens.ContainsKey( "detail" ) );
 		Assert.AreEqual( "Secure sector seven", parsed.Value.Tokens["title"] );
 	}
+
+	[TestMethod]
+	public void ScannerIntentsOtherThanMoveParseWithoutMotionAxes()
+	{
+		var parsed = SlashCommandParser.Parse( $"/scanner {Target:D} exit" );
+
+		Assert.IsTrue( parsed.Succeeded, parsed.Error?.Message );
+		Assert.AreEqual( "exit", parsed.Value.Tokens["intent"] );
+		Assert.IsFalse( parsed.Value.Tokens.ContainsKey( "forward" ) );
+	}
+
+	[TestMethod]
+	public void TheCatalogueAsksOnlyForArgumentsItsHandlersRead()
+	{
+		var sell = SlashCommandCatalog.All.Single( value => value.CommandId == HL2RPIds.Commands.CommerceSell );
+		var query = SlashCommandCatalog.All.Single( value => value.CommandId == HL2RPIds.Commands.EntitlementQuery );
+
+		CollectionAssert.AreEqual( new[] { "session", "inventory", "item" }, sell.Parameters.Select( value => value.Key ).ToArray() );
+		CollectionAssert.AreEqual( new[] { "account" }, query.Parameters.Select( value => value.Key ).ToArray() );
+	}
 }

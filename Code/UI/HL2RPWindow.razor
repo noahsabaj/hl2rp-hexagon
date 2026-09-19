@@ -50,5 +50,6 @@
 			throw new InvalidOperationException( $"{nameof(HL2RPWindow)} requires {nameof(Body)}." );
 	}
 
-	protected override int BuildHash() => HashCode.Combine( Eyebrow, Title, Subtitle, Variant );
+	// The fragments are included so new body content from the parent always redraws the window.
+	protected override int BuildHash() => HashCode.Combine( Eyebrow, Title, Subtitle, Variant, Body, HeaderActions, Footer );
 }

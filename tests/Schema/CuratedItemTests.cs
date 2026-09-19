@@ -77,7 +77,7 @@ public sealed class CuratedItemTests
 			},
 			pistol.ActionIds );
 		HL2RPSchemaTests.AssertSetEquals(
-			new[] { HL2RPIds.Actions.Replenish },
+			Array.Empty<string>(),
 			ammunition.ActionIds );
 		HL2RPSchemaTests.AssertSetEquals(
 			new[] { HL2RPIds.Actions.Equip, HL2RPIds.Actions.Unequip },

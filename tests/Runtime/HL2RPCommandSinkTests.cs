@@ -379,7 +379,7 @@ public sealed class HL2RPCommandSinkTests
 		public ValueTask<OperationResult> DoorOwnershipAsync(
 			InventoryActor actor, HL2RPCommandArguments arguments, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken ) =>
 			RouteAsync( "door_ownership" );
-		public OperationResult PublishAdministrationAudit( InventoryActor actor ) =>
+		public OperationResult PublishAdministrationAudit( InventoryActor actor, HL2RPCommandArguments arguments ) =>
 			Route( "administration_audit" );
 		public ValueTask<OperationResult> BuyAsync(
 			InventoryActor actor, HL2RPCommandArguments arguments, CommandProjectionDelta projectionDelta, CancellationToken cancellationToken ) =>

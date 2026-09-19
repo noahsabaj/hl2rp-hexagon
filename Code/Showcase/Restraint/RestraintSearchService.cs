@@ -86,9 +86,13 @@ public sealed class CharacterRestraintInteractable : IHexInteractable
 		if (context.CharacterId == _characterId)
 			return OperationResult<InteractionOffer>.Failure(ErrorCode.PolicyDenied,
 				"A character cannot search themselves.");
+		// This interactable also fronts the timed restrain action, whose target is by
+		// definition not restrained yet. An unrestrained target therefore authorizes
+		// proximity and role only: no session and no inventory grant. Search itself
+		// re-proves restraint in RestraintSearchService, and unrestraining invalidates
+		// every session on the target.
 		if (!_restraints.IsRestrained(_characterId))
-			return OperationResult<InteractionOffer>.Failure(ErrorCode.PolicyDenied,
-				"Search requires an actively restrained target.");
+			return OperationResult<InteractionOffer>.Success(new InteractionOffer());
 		var ownerIndex = _repositories.OwnerInventories.Find( DomainKeys.OwnerInventory(
 			InventoryOwner.Character( _characterId ), InventoryRoles.Main ) );
 		var inventory = ownerIndex is null ? null : _repositories.Inventories.Find(

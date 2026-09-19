@@ -368,7 +368,6 @@ public sealed class CombatModule : IHexModule
 		builder.RegisterAction( new ActionDefinition( HL2RPIds.Actions.Unequip ) );
 		builder.RegisterAction( new ActionDefinition( HL2RPIds.Actions.Reload ) );
 		builder.RegisterAction( new ActionDefinition( HL2RPIds.Actions.Fire ) );
-		builder.RegisterAction( new ActionDefinition( HL2RPIds.Actions.Replenish ) );
 		builder.RegisterItem( CivicIdentityModule.Item(
 			HL2RPIds.Items.Pistol, "Pistol", "A standard 9mm service pistol.", "Weapons",
 			true, "models/dev/box.vmdl", 2, 1,
@@ -378,7 +377,7 @@ public sealed class CombatModule : IHexModule
 			HL2RPIds.Actions.Fire ) );
 		builder.RegisterItem( CivicIdentityModule.Item(
 			HL2RPIds.Items.PistolAmmunition, "Pistol Ammunition", "A box of 9mm pistol cartridges.", "Ammunition",
-			true, "models/dev/box.vmdl", 1, 1, HL2RPIds.Actions.Replenish ) );
+			true, "models/dev/box.vmdl", 1, 1 ) );
 		builder.RegisterItem( CivicIdentityModule.Item(
 			HL2RPIds.Items.ProtectiveVest, "Protective Vest", "A reinforced vest that reduces incoming damage.", "Armor",
 			false, null, 2, 2, HL2RPIds.Actions.Equip, HL2RPIds.Actions.Unequip ) );

@@ -43,61 +43,10 @@ if ($LASTEXITCODE -ne 0 -or $actualHL2RPHead -cnotmatch '^[a-f0-9]{40}$') {
 }
 
 . (Join-Path $HexagonRoot 'tools/worktree-gate.ps1')
+. (Join-Path $HexagonRoot 'tools/verify-common.ps1')
 $attributed = Assert-CleanWorktree -Repositories @(
     [pscustomobject]@{ Label = 'hexagon'; Root = $HexagonRoot },
     [pscustomobject]@{ Label = 'hl2rp-hexagon'; Root = $root }) -AllowDirty:$AllowDirty
-
-function Invoke-CheckedCommand {
-    param(
-        [Parameter(Mandatory)][string] $Description,
-        [Parameter(Mandatory)][string] $FilePath,
-        [Parameter(Mandatory)][string[]] $Arguments
-    )
-
-    Write-Host "==> $Description" -ForegroundColor Cyan
-    $global:LASTEXITCODE = 0
-    & $FilePath @Arguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "$Description failed with exit code $LASTEXITCODE."
-    }
-}
-
-function Get-MemberValues {
-    param([Parameter(Mandatory)][object] $Object, [Parameter(Mandatory)][string] $Name)
-    $property = $Object.PSObject.Properties[$Name]
-    if ($null -eq $property -or $null -eq $property.Value) { return @() }
-    return @($property.Value)
-}
-
-function Assert-NoVulnerablePackages {
-    param(
-        [Parameter(Mandatory)][string] $Project,
-        [Parameter(Mandatory)][AllowEmptyCollection()][string[]] $AuditJson
-    )
-
-    # Parses the pinned schema instead of grepping for '"severity"'; data availability
-    # is enforced separately by NuGet.config <auditSources> raising NU1905 under
-    # -warnaserror (2026-07-16 audit, DEPE-01).
-    $audit = ($AuditJson -join "`n") | ConvertFrom-Json
-    if ([int]$audit.version -ne 1) {
-        throw "NuGet vulnerability report for '$Project' is not the pinned schema version 1."
-    }
-    $vulnerable = [System.Collections.Generic.List[string]]::new()
-    foreach ($projectEntry in Get-MemberValues -Object $audit -Name 'projects') {
-        foreach ($framework in Get-MemberValues -Object $projectEntry -Name 'frameworks') {
-            $packages = @(Get-MemberValues -Object $framework -Name 'topLevelPackages') +
-                @(Get-MemberValues -Object $framework -Name 'transitivePackages')
-            foreach ($package in $packages) {
-                if (@(Get-MemberValues -Object $package -Name 'vulnerabilities').Count -gt 0) {
-                    $vulnerable.Add([string]$package.id)
-                }
-            }
-        }
-    }
-    if ($vulnerable.Count -gt 0) {
-        throw "NuGet reported vulnerable dependencies for '$Project': $(($vulnerable | Sort-Object -Unique) -join ', ')."
-    }
-}
 
 $projects = @(
     (Join-Path $HexagonRoot 'tests/Hexagon.V2.Tests.csproj'),

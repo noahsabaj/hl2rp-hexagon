@@ -9,11 +9,11 @@ public enum HL2RPFeatureOperation
 {
 	AddInfraction,
 	SetPriority,
+	UpdateRecord,
 	Introduce,
 	SetCityObjectives,
 	TuneRadio,
 	EditNote,
-	IssuePermit,
 	PurchasePermit,
 	OpenBag,
 	SplitTokens,
@@ -177,8 +177,8 @@ public sealed class HL2RPItemFactory : IHL2RPItemFactory
 					HL2RPPersistence.ProtectiveVest,
 					new ProtectiveVestItemState
 					{
-						Durability = 100,
-						DamageReductionPermille = 300,
+						Durability = ProtectiveVestItemState.DefaultDurability,
+						DamageReductionPermille = ProtectiveVestItemState.DefaultDamageReductionPermille,
 						Equipped = false
 					} );
 				break;
@@ -212,8 +212,46 @@ public sealed class HL2RPItemFactory : IHL2RPItemFactory
 	}
 }
 
+/// <summary>
+/// The one membership preamble every item-bound feature shares: the actor's canonical
+/// character, the claimed inventory, the item inside it with the expected definition, and a
+/// live capability proof for that inventory.
+/// </summary>
+internal sealed record ItemProof(
+	DocumentSnapshot<CharacterRecord> Character,
+	DocumentSnapshot<InventoryRecord> Inventory,
+	DocumentSnapshot<ItemRecord> Item,
+	InventoryAccessProof Access )
+{
+	public static OperationResult<ItemProof> Require(
+		DomainRepositories repositories,
+		InventoryAccessService access,
+		InventoryActor actor,
+		InventoryId inventoryId,
+		ItemId itemId,
+		string definitionId,
+		InventoryCapability capability )
+	{
+		var character = repositories.Characters.Find( DomainKeys.Character( actor.CharacterId ) );
+		var inventory = repositories.Inventories.Find( DomainKeys.Inventory( inventoryId ) );
+		var item = repositories.Items.Find( DomainKeys.Item( itemId ) );
+		if ( character is null || inventory is null || item is null )
+			return OperationResult<ItemProof>.Failure( ErrorCode.NotFound, "Character, inventory or item was not found." );
+		if ( character.Value.AccountId != actor.AccountId || inventory.Value.Find( itemId ) is null ||
+			item.Value.Definition.Value != definitionId )
+			return OperationResult<ItemProof>.Failure( ErrorCode.Unauthorized, "Item membership proof failed." );
+		var proof = access.Prove( actor.ConnectionId, actor.CharacterId, inventoryId, capability );
+		return proof is null
+			? OperationResult<ItemProof>.Failure( ErrorCode.Unauthorized, "Inventory capability is missing." )
+			: OperationResult<ItemProof>.Success( new ItemProof( character, inventory, item, proof ) );
+	}
+}
+
 internal static class HL2RPFeaturePersistence
 {
+	/// <summary>Shared bound for free-form civic record text and note bodies.</summary>
+	public const int MaximumDocumentTextLength = 4_096;
+
 	public static OperationResult<T> Decode<T>( TypedPayload payload, IPersistedTypeCodec<T> codec ) where T : class
 	{
 		if ( payload.TypeId.Value != codec.Key.Value || payload.TypeVersion != codec.CurrentVersion )
@@ -222,10 +260,34 @@ internal static class HL2RPFeaturePersistence
 		{
 			return OperationResult<T>.Success( codec.Deserialize( payload.Data, payload.TypeVersion ) );
 		}
-		catch ( Exception )
+		catch ( Exception exception )
 		{
+			Warn( $"Payload '{codec.Key}' v{payload.TypeVersion} failed to decode: {exception.Message}" );
 			return OperationResult<T>.Failure( ErrorCode.PersistedTypeInvalid, $"Payload '{codec.Key}' is malformed." );
 		}
+	}
+
+	/// <summary>
+	/// Host-wired warning sink. Feature code is engine-neutral, so the runtime assigns the
+	/// engine logger here; a throwing sink must never turn a handled decode failure into a fault.
+	/// </summary>
+	public static Action<string>? Diagnostic { get; set; }
+
+	private static readonly HashSet<string> Reported = new( StringComparer.Ordinal );
+
+	/// <summary>
+	/// Each distinct message is reported once: these failures are raised from snapshot
+	/// composition, which would otherwise repeat one corrupt item many times a second.
+	/// </summary>
+	public static void Warn( string message )
+	{
+		lock ( Reported )
+		{
+			if ( Reported.Count >= 512 ) Reported.Clear();
+			if ( !Reported.Add( message ) ) return;
+		}
+		try { Diagnostic?.Invoke( message ); }
+		catch ( Exception ) { }
 	}
 
 	public static OperationResult Failure( PersistenceError error ) =>
@@ -234,16 +296,8 @@ internal static class HL2RPFeaturePersistence
 	public static OperationResult<T> Failure<T>( PersistenceError error ) =>
 		OperationResult<T>.Failure( Map( error.Code ), error.Message );
 
-	private static ErrorCode Map( PersistenceErrorCode code ) => code switch
-	{
-		PersistenceErrorCode.NotFound => ErrorCode.NotFound,
-		PersistenceErrorCode.AlreadyExists => ErrorCode.Conflict,
-		PersistenceErrorCode.RevisionConflict => ErrorCode.Conflict,
-		PersistenceErrorCode.TypeNotRegistered => ErrorCode.PersistedTypeInvalid,
-		PersistenceErrorCode.CollectionTypeMismatch => ErrorCode.PersistedTypeInvalid,
-		PersistenceErrorCode.InvalidOperation => ErrorCode.InvalidArgument,
-		_ => ErrorCode.InternalError
-	};
+	/// <summary>The framework owns the one persistence-to-operation error mapping.</summary>
+	public static ErrorCode Map( PersistenceErrorCode code ) => PersistenceResultMapping.MapCode( code );
 
 	public static void PublishAudit(
 		PostCommitEventBus<AdminAuditFact> audit,

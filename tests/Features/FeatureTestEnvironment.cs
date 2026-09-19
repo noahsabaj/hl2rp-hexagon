@@ -192,6 +192,11 @@ internal sealed class FeatureTestEnvironment : IAsyncDisposable
 	}
 }
 
+internal sealed class AlwaysAliveChat : IChatLivenessSource
+{
+	public bool IsAlive( ConnectionId connectionId, CharacterId characterId ) => true;
+}
+
 internal sealed class MutableClock : IHexClock
 {
 	public DateTimeOffset UtcNow { get; private set; } =

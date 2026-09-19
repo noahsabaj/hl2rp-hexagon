@@ -69,9 +69,9 @@ public sealed record SlashCommandDescriptor(
 /// cost class but shipped no way to invoke one except a purpose-built panel, so a command without
 /// a panel was unreachable - which is why nothing could kill a character.
 /// <para>
-/// Parameter keys and kinds mirror what each handler actually reads; a completeness test asserts
-/// this catalogue and the compiled command registry describe the same set, so a command cannot be
-/// registered without deciding how it is typed.
+/// Parameter keys and kinds mirror what each handler actually reads.
+/// <c>SlashCommandTests</c> asserts this catalogue and the compiled command registry
+/// describe the same set, so a command cannot be registered without deciding how it is typed.
 /// </para>
 /// </summary>
 public static class SlashCommandCatalog
@@ -82,8 +82,8 @@ public static class SlashCommandCatalog
 	private static SlashCommandParameter Rest( string key, bool required = true ) =>
 		new( key, SlashParameterKind.RestOfLine, required );
 
-	private static SlashCommandParameter Number( string key ) =>
-		new( key, SlashParameterKind.Integer );
+	private static SlashCommandParameter Number( string key, bool required = true ) =>
+		new( key, SlashParameterKind.Integer, required );
 
 	private static SlashCommandParameter Flag( string key ) =>
 		new( key, SlashParameterKind.Boolean );
@@ -121,8 +121,8 @@ public static class SlashCommandCatalog
 			"Publish or amend a city objective. Quote the title if it contains spaces.",
 			new[] { Text( "objective" ), Flag( "completed" ), Text( "title" ), Rest( "detail", false ) } ),
 		new SlashCommandDescriptor( "audit", HL2RPIds.Commands.AdministrationAudit,
-			"Publish the administration audit.",
-			Array.Empty<SlashCommandParameter>() ),
+			"Write a marker into the administration audit trail, with an optional note.",
+			new[] { Rest( "note", false ) } ),
 		new SlashCommandDescriptor( "door", HL2RPIds.Commands.DoorOwnership,
 			"Claim or release the door you are currently interacting with.",
 			new[] { Choice( "intent" ) } ),
@@ -140,7 +140,7 @@ public static class SlashCommandCatalog
 			new[] { Id( "item" ), Rest( "body" ) } ),
 		new SlashCommandDescriptor( "entitlements", HL2RPIds.Commands.EntitlementQuery,
 			"Query the entitlements held by a platform account.",
-			new[] { Text( "account" ), Number( "revision" ) } ),
+			new[] { Text( "account" ) } ),
 		new SlashCommandDescriptor( "grant", HL2RPIds.Commands.EntitlementGrant,
 			"Grant an entitlement flag to a platform account.",
 			new[] { Text( "account" ), Choice( "flag" ), Number( "revision" ) } ),
@@ -152,13 +152,17 @@ public static class SlashCommandCatalog
 			new[] { Id( "session" ), Choice( "definition" ), Number( "quantity" ) } ),
 		new SlashCommandDescriptor( "sell", HL2RPIds.Commands.CommerceSell,
 			"Sell to an open vendor session. The ids come from the vendor panel.",
-			new[] { Id( "session" ), Id( "inventory" ), Id( "item" ), Number( "quantity" ) } ),
+			new[] { Id( "session" ), Id( "inventory" ), Id( "item" ) } ),
 		new SlashCommandDescriptor( "scanner", HL2RPIds.Commands.ScannerIntent,
 			"Issue a scanner intent. Driven by the scanner UI in practice.",
 			new[]
 			{
-				Id( "session" ), Choice( "intent" ), Number( "sequence" ), Number( "forward" ),
-				Number( "right" ), Number( "up" ), Number( "yaw" ), Number( "pitch" )
+				// Only "move" reads the sequence and axes; enter, exit, spotlight, flash and photo
+				// must parse without them.
+				Id( "session" ), Choice( "intent" ), Number( "sequence", required: false ),
+				Number( "forward", required: false ), Number( "right", required: false ),
+				Number( "up", required: false ), Number( "yaw", required: false ),
+				Number( "pitch", required: false )
 			} )
 	} );
 

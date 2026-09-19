@@ -206,14 +206,7 @@ public sealed class HL2RPAccountEntitlementService : IHL2RPWhitelistService
 		return OperationResult.Success();
 	}
 
-	private static ErrorCode Map( PersistenceErrorCode code ) => code switch
-	{
-		PersistenceErrorCode.NotFound => ErrorCode.NotFound,
-		PersistenceErrorCode.AlreadyExists or PersistenceErrorCode.RevisionConflict => ErrorCode.Conflict,
-		PersistenceErrorCode.TypeNotRegistered or PersistenceErrorCode.CollectionTypeMismatch => ErrorCode.PersistedTypeInvalid,
-		PersistenceErrorCode.InvalidOperation => ErrorCode.InvalidArgument,
-		_ => ErrorCode.InternalError
-	};
+	private static ErrorCode Map( PersistenceErrorCode code ) => HL2RPFeaturePersistence.Map( code );
 
 	private static OperationResult<HL2RPAccountEntitlementMutationReceipt> Failure( ErrorCode code, string message ) =>
 		OperationResult<HL2RPAccountEntitlementMutationReceipt>.Failure( code, message );

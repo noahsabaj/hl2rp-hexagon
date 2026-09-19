@@ -334,8 +334,14 @@ public sealed class PlayerCombatDamageBoundary : IPlayerCombatDamageOutcomeBound
 			var item = _repositories.Items.Find(DomainKeys.Item(placement.ItemId));
 			if (item?.Value.Definition.Value != HL2RPIds.Items.ProtectiveVest) continue;
 			var state = CombatPersistence.DecodeTrait(item.Value, CombatTraitNames.Vest, HL2RPPersistence.ProtectiveVest);
+			// A vest whose state cannot be read protects nobody. Failing the shot instead made its
+			// holder immune to all damage for as long as the item sat in their inventory.
 			if (state.Failed)
-				return OperationResult<PreparedCombatDamage>.Failure(state.Error!.Code, state.Error.Message);
+			{
+				HL2RP.V2.Features.HL2RPFeaturePersistence.Warn(
+					$"Protective vest '{item.Value.Id}' is unreadable and was ignored: {state.Error!.Message}");
+				continue;
+			}
 			if (!state.Value.Equipped) continue;
 			if (vestDocument is not null)
 				return OperationResult<PreparedCombatDamage>.Failure(
@@ -747,6 +753,9 @@ public sealed class HealthVialConsumeService
 		if (character is null || inventory is null || vial is null)
 			return OperationResult<HealthVialConsumedReceipt>.Failure(
 				ErrorCode.NotFound, "Character, inventory, or health vial was not found.");
+		if (new Restraint.RestraintStateReader(_repositories).IsRestrained(actor.CharacterId))
+			return OperationResult<HealthVialConsumedReceipt>.Failure(
+				ErrorCode.PolicyDenied, "Restrained characters cannot use items.");
 		if (character.Value.AccountId != actor.AccountId ||
 			inventory.Value.Owner != InventoryOwner.Character(actor.CharacterId) ||
 			inventory.Value.Find(vialItemId) is null ||

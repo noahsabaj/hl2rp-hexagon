@@ -110,7 +110,8 @@ public sealed class RestraintService
 	private readonly InventoryLayoutService _layout;
 	private readonly InteractionAuthorityService _authority;
 	private readonly IHexClock _clock;
-	private readonly Dictionary<InteractionSessionId, RestraintTicket> _tickets = new();
+	// Concurrent because a timed restrain awaits between issuing and completing its ticket.
+	private readonly System.Collections.Concurrent.ConcurrentDictionary<InteractionSessionId, RestraintTicket> _tickets = new();
 
 	public RestraintService(
 		DomainRepositories repositories,
@@ -169,10 +170,10 @@ public sealed class RestraintService
 			actor.AccountId, actor.CharacterId);
 		if (completed.Failed)
 		{
-			if (completed.Error!.Code != ErrorCode.Conflict) _tickets.Remove(ticketId);
+			if (completed.Error!.Code != ErrorCode.Conflict) _tickets.TryRemove(ticketId, out _);
 			return Failure<RestraintReceipt>(completed.Error);
 		}
-		_tickets.Remove(ticketId);
+		_tickets.TryRemove(ticketId, out _);
 		if (completed.Value.Target != InteractionTarget.Character(ticket.TargetCharacterId))
 			return OperationResult<RestraintReceipt>.Failure(ErrorCode.Unauthorized,
 				"Restraint target changed during the timed action.");
@@ -226,7 +227,7 @@ public sealed class RestraintService
 		if ( !_tickets.TryGetValue( ticketId, out var ticket ) || ticket.Actor != actor )
 			return OperationResult.Failure( ErrorCode.Unauthorized,
 				"Restraint ticket is stale or belongs to another actor." );
-		_tickets.Remove( ticketId );
+		_tickets.TryRemove( ticketId, out _ );
 		return _authority.CancelTimedAction( ticketId, actor.ConnectionId, actor.CharacterId )
 			? OperationResult.Success()
 			: OperationResult.Failure( ErrorCode.Unauthorized, "Restraint action is no longer active." );
@@ -272,6 +273,31 @@ public sealed class RestraintService
 		return OperationResult<UnrestrainReceipt>.Success(new UnrestrainReceipt(
 			actor.CharacterId, targetCharacterId,
 			committed.Value!.Sequence, committed.Value));
+	}
+
+	/// <summary>
+	/// Releases a restraint without an actor: death, respawn and operator override. Restraint is
+	/// otherwise removable only by a CP/OW character in range, which would leave a character
+	/// bound forever once the last such player logs off. Returns false when nothing was held.
+	/// </summary>
+	public async ValueTask<OperationResult<bool>> ReleaseAsync(
+		CharacterId targetCharacterId,
+		CancellationToken cancellationToken = default)
+	{
+		var document = _repositories.CharacterReferences.Find(DocumentKey(targetCharacterId));
+		if (document is null || document.Value.Category != ReferenceCategory)
+			return OperationResult<bool>.Success(false);
+		var unitOfWork = _repositories.Provider.BeginUnitOfWork();
+		var staged = _references.StageDelete(unitOfWork, DocumentKey(targetCharacterId));
+		if (staged.Failed)
+		{
+			await HL2RPUnitOfWork.DisposeAsync(unitOfWork);
+			return OperationResult<bool>.Failure(staged.Error!.Code, staged.Error.Message);
+		}
+		var committed = await HL2RPUnitOfWork.CommitAndDisposeAsync(unitOfWork, cancellationToken);
+		if (!committed.Succeeded) return RestraintPersistence.Failure<bool>(committed.Error!);
+		_authority.TargetInvalidated(InteractionTarget.Character(targetCharacterId), "restraint_released");
+		return OperationResult<bool>.Success(true);
 	}
 
 	public bool IsRestrained(CharacterId characterId) => new RestraintStateReader(_repositories).IsRestrained(characterId);
@@ -321,29 +347,12 @@ public sealed class RestraintService
 
 internal static class RestraintPersistence
 {
-	public static OperationResult<T> Decode<T>(TypedPayload payload, IPersistedTypeCodec<T> codec) where T : class
-	{
-		if (payload.TypeId.Value != codec.Key.Value || payload.TypeVersion != codec.CurrentVersion)
-			return OperationResult<T>.Failure(ErrorCode.PersistedTypeInvalid,
-				$"Expected '{codec.Key}' v{codec.CurrentVersion}.");
-		try
-		{
-			return OperationResult<T>.Success(codec.Deserialize(payload.Data, payload.TypeVersion));
-		}
-		catch (Exception)
-		{
-			return OperationResult<T>.Failure(ErrorCode.PersistedTypeInvalid,
-				$"Payload '{codec.Key}' is malformed.");
-		}
-	}
+	public static OperationResult<T> Decode<T>(TypedPayload payload, IPersistedTypeCodec<T> codec) where T : class =>
+		HL2RP.V2.Features.HL2RPFeaturePersistence.Decode(payload, codec);
+
+	public static OperationResult Failure(PersistenceError error) =>
+		HL2RP.V2.Features.HL2RPFeaturePersistence.Failure(error);
 
 	public static OperationResult<T> Failure<T>(PersistenceError error) =>
-		OperationResult<T>.Failure(error.Code switch
-		{
-			PersistenceErrorCode.NotFound => ErrorCode.NotFound,
-			PersistenceErrorCode.AlreadyExists or PersistenceErrorCode.RevisionConflict => ErrorCode.Conflict,
-			PersistenceErrorCode.TypeNotRegistered or PersistenceErrorCode.CollectionTypeMismatch => ErrorCode.PersistedTypeInvalid,
-			PersistenceErrorCode.InvalidOperation => ErrorCode.InvalidArgument,
-			_ => ErrorCode.InternalError
-		}, error.Message);
+		HL2RP.V2.Features.HL2RPFeaturePersistence.Failure<T>(error);
 }

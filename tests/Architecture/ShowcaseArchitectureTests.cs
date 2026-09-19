@@ -45,21 +45,21 @@ public sealed class ShowcaseArchitectureTests
 			!value.StartsWith( "Hexagon.V2.", StringComparison.Ordinal ) ),
 			"The scene retains a legacy Hexagon component." );
 		var sceneText = File.ReadAllText( scenePath );
-		StringAssert.Contains( sceneText, "\"DronePersistentId\": \"08000000-0000-4000-8000-000000000001\"" );
-		StringAssert.Contains( sceneText, "\"CooldownSeconds\": 30" );
-		StringAssert.Contains( sceneText, "\"CooldownSeconds\": 2" );
+		SourcePin.Contains( sceneText, "\"DronePersistentId\": \"08000000-0000-4000-8000-000000000001\"" );
+		SourcePin.Contains( sceneText, "\"CooldownSeconds\": 30" );
+		SourcePin.Contains( sceneText, "\"CooldownSeconds\": 2" );
 	}
 
 	[TestMethod]
 	public void ForcefieldCollisionRulesProvideACombineOnlyPhysicalBypass()
 	{
 		var collision = File.ReadAllText( Path.Combine( FindRoot(), "ProjectSettings", "Collision.config" ) );
-		StringAssert.Contains( collision, "\"a\": \"forcefield\"" );
-		StringAssert.Contains( collision, "\"b\": \"combine\"" );
-		StringAssert.Contains( collision, "\"r\": \"Ignore\"" );
+		SourcePin.Contains( collision, "\"a\": \"forcefield\"" );
+		SourcePin.Contains( collision, "\"b\": \"combine\"" );
+		SourcePin.Contains( collision, "\"r\": \"Ignore\"" );
 		var world = HL2RPTestSource.WithoutComments( Path.Combine( FindRoot(), "Code", "World", "ShowcaseComponents.cs" ) );
-		StringAssert.Contains( world, "ForcefieldEntityRules.IsVisible( state )" );
-		StringAssert.Contains( world, "ForcefieldEntityRules.IsSolid( state )" );
+		SourcePin.Contains( world, "ForcefieldEntityRules.IsVisible( state )" );
+		SourcePin.Contains( world, "ForcefieldEntityRules.IsSolid( state )" );
 	}
 
 	[TestMethod]
@@ -68,8 +68,8 @@ public sealed class ShowcaseArchitectureTests
 	{
 		var root = FindRoot();
 		var platform = File.ReadAllText( Path.Combine( root, "ProjectSettings", "Platform.config" ) );
-		StringAssert.Contains( platform, "\"ChatEnabled\": false" );
-		StringAssert.Contains( platform, "\"ChatShowUI\": false" );
+		SourcePin.Contains( platform, "\"ChatEnabled\": false" );
+		SourcePin.Contains( platform, "\"ChatShowUI\": false" );
 		var networking = File.ReadAllText( Path.Combine( root, "ProjectSettings", "Networking.config" ) );
 		foreach ( var permission in new[]
 		{
@@ -80,11 +80,11 @@ public sealed class ShowcaseArchitectureTests
 			// no domain services, and no persistence lease; both flags must stay closed.
 			"\"DestroyLobbyWhenHostLeaves\": true",
 			"\"AutoSwitchToBestHost\": false"
-		} ) StringAssert.Contains( networking, permission );
-		StringAssert.Contains( networking, "\"UpdateRate\": 30" );
+		} ) SourcePin.Contains( networking, permission );
+		SourcePin.Contains( networking, "\"UpdateRate\": 30" );
 		var source = HL2RPTestSource.WithoutComments(
 			Path.Combine( root, "Code", "Runtime", "HL2RPSchemaSourceSystem.cs" ) );
-		StringAssert.Contains( source, "Component, IChatEvent" );
+		SourcePin.Contains( source, "Component, IChatEvent" );
 		Assert.IsTrue( Regex.IsMatch( source,
 			@"void\s+IChatEvent\.OnChatMessage\(\s*ChatMessageEvent\s+message\s*\)\s*=>\s*message\.Suppress\s*=\s*true\s*;" ),
 			"The platform chat suppressor must remain an unconditional expression-bodied Suppress assignment." );
@@ -102,22 +102,22 @@ public sealed class ShowcaseArchitectureTests
 			Path.Combine( root, "Code", "Runtime", "HL2RPSceneRuntime.cs" )
 		};
 		var source = string.Join( "\n", authorityFiles.Select( HL2RPTestSource.WithoutComments ) );
-		StringAssert.Contains( source, "AuthoritativeBody" );
+		SourcePin.Contains( source, "AuthoritativeBody" );
 		Assert.IsFalse( source.Contains( "PlayableBody", StringComparison.Ordinal ) );
 		Assert.IsFalse( source.Contains( "Player.GameObject", StringComparison.Ordinal ) );
-		StringAssert.Contains( source, "controller.EyeAngles.ToRotation().Forward" );
-		StringAssert.Contains( source, "ConfigureAuthoritativePlayerBody" );
-		StringAssert.Contains( source, "controller.BodyCollisionTags = new TagSet()" );
-		StringAssert.Contains( source, "TryGetUsableAuthoritativeBody" );
-		StringAssert.Contains( source, "WithoutTags( \"prediction\" )" );
-		StringAssert.Contains( source, "HL2RPObjectHierarchy.Contains" );
-		StringAssert.Contains( source, "HL2RPCharacterLifecycleGate" );
-		StringAssert.Contains( source, "_access.OpenConnection( connectionId )" );
-		StringAssert.Contains( source, "HL2RPSceneFeatureAdmission.Evaluate" );
+		SourcePin.Contains( source, "controller.EyeAngles.ToRotation().Forward" );
+		SourcePin.Contains( source, "ConfigureAuthoritativePlayerBody" );
+		SourcePin.Contains( source, "controller.BodyCollisionTags = new TagSet()" );
+		SourcePin.Contains( source, "TryGetUsableAuthoritativeBody" );
+		SourcePin.Contains( source, "WithoutTags( \"prediction\" )" );
+		SourcePin.Contains( source, "HL2RPObjectHierarchy.Contains" );
+		SourcePin.Contains( source, "HL2RPCharacterLifecycleGate" );
+		SourcePin.Contains( source, "_access.OpenConnection( connectionId )" );
+		SourcePin.Contains( source, "HL2RPSceneFeatureAdmission.Evaluate" );
 		var showcase = HL2RPTestSource.WithoutComments( Path.Combine( root, "Code", "World", "ShowcaseComponents.cs" ) );
 		var worldItems = HL2RPTestSource.WithoutComments( Path.Combine( root, "Code", "Runtime", "HL2RPWorldItemPressable.cs" ) );
-		StringAssert.Contains( showcase, "HexPlayerBody.IsLocalPredictionSource( e.Source )" );
-		StringAssert.Contains( worldItems, "HexPlayerBody.IsLocalPredictionSource( e.Source )" );
+		SourcePin.Contains( showcase, "HexPlayerBody.IsLocalPredictionSource( e.Source )" );
+		SourcePin.Contains( worldItems, "HexPlayerBody.IsLocalPredictionSource( e.Source )" );
 	}
 
 	[TestMethod]
@@ -126,13 +126,13 @@ public sealed class ShowcaseArchitectureTests
 	{
 		var source = HL2RPTestSource.WithoutComments(
 			Path.Combine( FindRoot(), "Code", "Runtime", "HL2RPHostApplication.cs" ) );
-		StringAssert.Contains( source, "IHexHostApplication, IWorldItemReconciliationBoundary" );
-		StringAssert.Contains( source, "AsyncOperationRegistry _lifecycleOperations" );
-		StringAssert.Contains( source, "_worldReconciler.ReconcileStartupAsync" );
-		StringAssert.Contains( source, "_worldReconciler.ReconcileCommittedAsync" );
+		SourcePin.Contains( source, "IHexHostApplication, IWorldItemReconciliationBoundary" );
+		SourcePin.Contains( source, "AsyncOperationRegistry _lifecycleOperations" );
+		SourcePin.Contains( source, "_worldReconciler.ReconcileStartupAsync" );
+		SourcePin.Contains( source, "_worldReconciler.ReconcileCommittedAsync" );
 		// The committed-but-pending disposition is surfaced by the neutral command
 		// execution core, which owns the drop/pickup reconciliation epilogue.
-		StringAssert.Contains(
+		SourcePin.Contains(
 			HL2RPTestSource.WithoutComments( Path.Combine(
 				FindRoot(), "Code", "Runtime", "HL2RPCommandExecution.cs" ) ),
 			"ErrorCode.ReconciliationPending" );
@@ -162,10 +162,10 @@ public sealed class ShowcaseArchitectureTests
 		Assert.IsLessThan( worldDrain, pistolDrain, "Pistol reconciliation must precede world drain." );
 		Assert.IsLessThan( recoveryMarker, worldDrain, "Recovery evidence must follow world drain." );
 
-		StringAssert.Contains( source, "if ( !gameObject.NetworkSpawn( new NetworkSpawnOptions" );
-		StringAssert.Contains( source, "StartEnabled = false" );
-		StringAssert.Contains( source, "OwnerTransfer = OwnerTransfer.Fixed" );
-		StringAssert.Contains( source, "_worldObjects[itemId] = gameObject" );
+		SourcePin.Contains( source, "if ( !gameObject.NetworkSpawn( new NetworkSpawnOptions" );
+		SourcePin.Contains( source, "StartEnabled = false" );
+		SourcePin.Contains( source, "OwnerTransfer = OwnerTransfer.Fixed" );
+		SourcePin.Contains( source, "_worldObjects[itemId] = gameObject" );
 	}
 
 	[TestMethod]
@@ -313,8 +313,8 @@ public sealed class ShowcaseArchitectureTests
 	{
 		var path = Path.Combine( FindRoot(), "Code", "World", "ShowcaseComponents.cs" );
 		var source = HL2RPTestSource.WithoutComments( path );
-		StringAssert.Contains( source, "Component.IPressable" );
-		StringAssert.Contains( source, "BeginInteractionAsync" );
+		SourcePin.Contains( source, "Component.IPressable" );
+		SourcePin.Contains( source, "BeginInteractionAsync" );
 		foreach ( var forbidden in new[]
 		{
 			"DomainRepositories",

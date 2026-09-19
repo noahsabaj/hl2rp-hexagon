@@ -8,6 +8,14 @@ namespace HL2RP.UI;
 /// </summary>
 public static class HL2RPPresentationFields
 {
+	/// <summary>
+	/// Private-player field carrying the id of the actor's live session of that kind. The host
+	/// composer and the client projection both derive the name here; when each spelled it
+	/// themselves, the host wrote <c>charactersearch</c> while the client read <c>search</c>.
+	/// </summary>
+	public static string InteractionSession( Hexagon.V2.Application.InteractionSessionKind kind ) =>
+		$"interaction.{kind.ToString().ToLowerInvariant()}_session";
+
 	public static class CharacterCreation
 	{
 		public const string AccountId = "account.id";

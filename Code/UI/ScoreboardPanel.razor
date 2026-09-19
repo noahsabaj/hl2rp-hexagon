@@ -6,7 +6,7 @@
 
 <root class="scoreboard-panel">
 	<HL2RPWindow Eyebrow="CITY NETWORK / LIVE" Title="@ViewModel.ServerName"
-		Subtitle="@($"{ViewModel.SchemaName} · {ViewModel.MapName} · {ViewModel.Players.Length} connected")"
+		Subtitle="@(string.IsNullOrEmpty( ViewModel.MapName ) ? $"{ViewModel.SchemaName} · {ViewModel.Players.Length} connected" : $"{ViewModel.SchemaName} · {ViewModel.MapName} · {ViewModel.Players.Length} connected")"
 		Variant="scoreboard-window" OnClose="@OnClose">
 		<Body>
 			<div class="scoreboard-columns"><span>IDENTITY</span><span>ASSIGNMENT</span><span>STATUS</span></div>
@@ -51,5 +51,16 @@
 		if ( ViewModel is null )
 			throw new InvalidOperationException( $"{nameof(ScoreboardPanel)} requires {nameof(ViewModel)}." );
 	}
-	protected override int BuildHash() => HashCode.Combine( ViewModel?.ServerName, ViewModel?.Players.Length ?? 0 );
+	// Every entry contributes: a death or faction change keeps the player count the same, and a
+	// hash of name and count alone left the row stale.
+	protected override int BuildHash()
+	{
+		var hash = new HashCode();
+		hash.Add( ViewModel?.ServerName );
+		hash.Add( ViewModel?.MapName );
+		hash.Add( ViewModel?.CanInspectCivicData );
+		if ( ViewModel is not null )
+			foreach ( var player in ViewModel.Players ) hash.Add( player );
+		return hash.ToHashCode();
+	}
 }

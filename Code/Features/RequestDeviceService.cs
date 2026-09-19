@@ -83,7 +83,7 @@ public sealed class RequestDeviceService
 {
 	public static readonly TimeSpan RequestCooldown = TimeSpan.FromSeconds( 10 );
 	public static ChatRateLimit RequestChannelRateLimit { get; } =
-		new( 1, TimeSpan.FromSeconds( 10 ) );
+		new( 1, RequestCooldown );
 
 	private readonly DomainRepositories _repositories;
 	private readonly InventoryAccessService _access;
@@ -129,21 +129,11 @@ public sealed class RequestDeviceService
 		var normalized = ChatService.Normalize( text );
 		if ( normalized.Failed )
 			return OperationResult<RequestFact>.Failure( normalized.Error!.Code, normalized.Error.Message );
-		var character = _repositories.Characters.Find( DomainKeys.Character( actor.CharacterId ) );
-		var inventory = _repositories.Inventories.Find( DomainKeys.Inventory( inventoryId ) );
-		var item = _repositories.Items.Find( DomainKeys.Item( requestDeviceItemId ) );
-		if ( character is null || inventory is null || item is null )
-			return OperationResult<RequestFact>.Failure( ErrorCode.NotFound, "Character, inventory or request device was not found." );
-		if ( character.Value.AccountId != actor.AccountId || inventory.Value.Find( requestDeviceItemId ) is null ||
-			item.Value.Definition.Value != HL2RPIds.Items.RequestDevice )
-			return OperationResult<RequestFact>.Failure( ErrorCode.Unauthorized, "Request device membership proof failed." );
-		var access = _access.Prove(
-			actor.ConnectionId,
-			actor.CharacterId,
-			inventoryId,
-			InventoryCapability.View | InventoryCapability.Use );
-		if ( access is null )
-			return OperationResult<RequestFact>.Failure( ErrorCode.Unauthorized, "Request device capability is missing." );
+		var proof = ItemProof.Require( _repositories, _access, actor, inventoryId, requestDeviceItemId,
+			HL2RPIds.Items.RequestDevice, InventoryCapability.View | InventoryCapability.Use );
+		if ( proof.Failed )
+			return OperationResult<RequestFact>.Failure( proof.Error!.Code, proof.Error.Message );
+		var (character, inventory, item, access) = proof.Value;
 		if ( !item.Value.Traits.TryGetValue( "request_device", out var payload ) )
 			return OperationResult<RequestFact>.Failure( ErrorCode.PersistedTypeInvalid, "Request device state is missing." );
 		var state = HL2RPFeaturePersistence.Decode( payload, HL2RPPersistence.RequestDevice );
@@ -171,11 +161,13 @@ public sealed class RequestDeviceService
 		if ( reserved.Failed )
 			return OperationResult<RequestFact>.Failure( reserved.Error!.Code, reserved.Error.Message );
 		using var admission = reserved.Value;
+		// One instant for the persisted cooldown, the rate-limit commit and the published fact.
+		var requestedAt = _clock.UtcNow;
 		var traits = new Dictionary<string, TypedPayload>( item.Value.Traits, StringComparer.Ordinal )
 		{
 			["request_device"] = HL2RPPersistence.Payload(
 				HL2RPPersistence.RequestDevice,
-				state.Value with { LastRequestAtUtc = _clock.UtcNow } )
+				state.Value with { LastRequestAtUtc = requestedAt } )
 		};
 		var unitOfWork = _repositories.Provider.BeginUnitOfWork();
 		unitOfWork.Require( access );
@@ -192,14 +184,14 @@ public sealed class RequestDeviceService
 		var committed = await HL2RPUnitOfWork.CommitAndDisposeAsync( unitOfWork, cancellationToken );
 		if ( !committed.Succeeded )
 			return HL2RPFeaturePersistence.Failure<RequestFact>( committed.Error! );
-		admission.Commit( _clock.UtcNow );
+		admission.Commit( requestedAt );
 		var fact = new RequestFact
 		{
 			Actor = actor,
 			Character = character.Value.DeepCopy(),
 			ChannelId = HL2RPIds.Channels.Request,
 			Text = normalized.Value,
-			RequestedAtUtc = _clock.UtcNow,
+			RequestedAtUtc = requestedAt,
 			CommitSequence = committed.Value!.Sequence,
 			Commit = committed.Value
 		};

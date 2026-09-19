@@ -216,7 +216,10 @@
 		var sequence = pending.Value;
 		_characterPresentation.Workspace = ShowcaseWorkspace.Search;
 		Rebuild();
-		var result = await controller.RunSchemaCommandAsync(
+		// Guarded so a throwing transport still reaches CompleteSearchCommand; otherwise the
+		// pending search is never cleared and every later search fails as "already pending".
+		var result = await RunGuardedAsync(
+			controller,
 			HL2RPIds.Commands.RestraintSet,
 			new Dictionary<string, SnapshotValue>
 			{
@@ -409,8 +412,28 @@
 	{
 		var controller = Controller;
 		if ( controller is null ) return;
-		var result = await controller.RunSchemaCommandAsync( commandId, arguments );
+		var result = await RunGuardedAsync( controller, commandId, arguments );
+		// Scanner flight sends many intents a second; a toast per accepted input buries the HUD.
+		if ( result.Succeeded && commandId == HL2RPIds.Commands.ScannerIntent ) return;
 		AddResultNotification( result );
+	}
+
+	/// <summary>
+	/// Every caller discards this task, so an exception here would vanish. A throwing transport
+	/// becomes an ordinary failed result that the player is told about.
+	/// </summary>
+	private static async Task<OperationResult> RunGuardedAsync(
+		IHexClientController controller, string commandId, IReadOnlyDictionary<string, SnapshotValue>? arguments )
+	{
+		try
+		{
+			return await controller.RunSchemaCommandAsync( commandId, arguments );
+		}
+		catch ( Exception exception )
+		{
+			Log.Warning( $"HL2RP client command '{commandId}' threw: {exception.Message}" );
+			return OperationResult.Failure( ErrorCode.InternalError, "The request could not be sent." );
+		}
 	}
 
 	private void AddResultNotification( OperationResult result )

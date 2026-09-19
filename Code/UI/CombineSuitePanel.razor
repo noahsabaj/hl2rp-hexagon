@@ -191,9 +191,13 @@
 	[Parameter] public Action<ScannerIntentRequest>? OnScannerIntent { get; set; }
 	[Parameter] public Action? OnClose { get; set; }
 
-	private CivicRecordViewModel? _boundCivic;
-	private NoteEditorViewModel? _boundNote;
-	private RadioViewModel? _boundRadio;
+	// What the host last confirmed for each editor. View models are rebuilt on every store
+	// change (any chat line, health tick or notification), so rebinding on a new instance wiped
+	// whatever the player was typing. A draft is reset only when its subject or its
+	// host-confirmed value actually changes.
+	private (CharacterId Id, CivicPriority Priority, string Text)? _boundCivic;
+	private (ItemId Id, string Body)? _boundNote;
+	private (ItemId? Id, string Frequency, bool Enabled)? _boundRadio;
 	private CivicPriority SelectedPriority { get; set; }
 	private string RecordText { get; set; } = string.Empty;
 	private string SelectedObjectiveId { get; set; } = string.Empty;
@@ -233,17 +237,20 @@
 
 	protected override void OnParametersSet()
 	{
-		if ( CivicRecord is not null && !ReferenceEquals( CivicRecord, _boundCivic ) )
+		if ( CivicRecord is not null &&
+			_boundCivic != (CivicRecord.CharacterId, CivicRecord.Priority, CivicRecord.RecordText) )
 		{
-			_boundCivic = CivicRecord; SelectedPriority = CivicRecord.Priority; RecordText = CivicRecord.RecordText;
+			_boundCivic = (CivicRecord.CharacterId, CivicRecord.Priority, CivicRecord.RecordText);
+			SelectedPriority = CivicRecord.Priority; RecordText = CivicRecord.RecordText;
 		}
-		if ( Note is not null && !ReferenceEquals( Note, _boundNote ) )
+		if ( Note is not null && _boundNote != (Note.ItemId, Note.Body) )
 		{
-			_boundNote = Note; NoteBody = Note.Body;
+			_boundNote = (Note.ItemId, Note.Body); NoteBody = Note.Body;
 		}
-		if ( Radio is not null && !ReferenceEquals( Radio, _boundRadio ) )
+		if ( Radio is not null && _boundRadio != (Radio.RadioItemId, Radio.Frequency, Radio.Enabled) )
 		{
-			_boundRadio = Radio; Frequency = Radio.Frequency; RadioEnabled = Radio.Enabled;
+			_boundRadio = (Radio.RadioItemId, Radio.Frequency, Radio.Enabled);
+			Frequency = Radio.Frequency; RadioEnabled = Radio.Enabled;
 		}
 	}
 
