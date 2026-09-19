@@ -259,7 +259,8 @@
           "__enabled": true,
           "OpenRotation": "0,90,0",
           "SwingSpeed": 6,
-          "StartsLocked": true
+          "StartsLocked": true,
+          "Price": 50
         },
         {
           "__type": "Sandbox.ModelRenderer",
@@ -353,6 +354,58 @@
         {
           "__type": "Sandbox.BoxCollider",
           "__guid": "c4a7e000-0000-4000-8000-000000000004",
+          "__enabled": true,
+          "Center": "0,0,0",
+          "Scale": "50,50,50",
+          "Static": true,
+          "IsTrigger": false
+        }
+      ],
+      "Children": []
+    },
+    {
+      "__guid": "fe4d0000-0000-4000-8000-000000000001",
+      "__version": 2,
+      "Flags": 0,
+      "Name": "Ration Vendor",
+      "Position": "330,-60,20",
+      "Rotation": "0,0,0,1",
+      "Scale": "0.8,0.8,0.8",
+      "Tags": "vendor",
+      "Enabled": true,
+      "NetworkMode": 1,
+      "NetworkFlags": 0,
+      "NetworkOrphaned": 0,
+      "NetworkTransmit": true,
+      "OwnerTransfer": 1,
+      "Components": [
+        {
+          "__type": "Hexagon.Vendor",
+          "__guid": "fe4d0000-0000-4000-8000-000000000002",
+          "__enabled": true,
+          "Title": "Ration Vendor",
+          "Stock": [
+            "items/ration.item",
+            "items/water.item",
+            "items/bandage.item"
+          ],
+          "StockLimit": 3,
+          "RestockSeconds": 600,
+          "Float": 200,
+          "SellFactor": 1,
+          "BuyFactor": 0.5,
+          "Requires": ""
+        },
+        {
+          "__type": "Sandbox.ModelRenderer",
+          "__guid": "fe4d0000-0000-4000-8000-000000000003",
+          "__enabled": true,
+          "Model": "models/dev/box.vmdl",
+          "Tint": "0.2,0.45,0.3,1"
+        },
+        {
+          "__type": "Sandbox.BoxCollider",
+          "__guid": "fe4d0000-0000-4000-8000-000000000004",
           "__enabled": true,
           "Center": "0,0,0",
           "Scale": "50,50,50",

@@ -9,5 +9,6 @@
   "UseEmote": "binds a wound",
   "Heals": 30,
   "__references": [],
-  "__version": 0
+  "__version": 0,
+  "Value": 15
 }

@@ -12,5 +12,6 @@
     "items/ration.item"
   ],
   "__references": [],
-  "__version": 0
+  "__version": 0,
+  "Wage": 20
 }

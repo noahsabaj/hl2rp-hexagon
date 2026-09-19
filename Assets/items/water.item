@@ -8,5 +8,6 @@
   "__version": 0,
   "Consumable": true,
   "UseTitle": "Drink",
-  "UseEmote": "drinks from a can of water"
+  "UseEmote": "drinks from a can of water",
+  "Value": 5
 }

@@ -8,5 +8,6 @@
     "door.lock"
   ],
   "__references": [],
-  "__version": 0
+  "__version": 0,
+  "Value": 0
 }

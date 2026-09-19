@@ -9,5 +9,6 @@
   "Cooldown": 0.5,
   "Ammo": "items/pistol_round.item",
   "__references": [],
-  "__version": 0
+  "__version": 0,
+  "Value": 400
 }

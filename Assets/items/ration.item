@@ -8,5 +8,6 @@
   "__version": 0,
   "Consumable": true,
   "UseTitle": "Eat",
-  "UseEmote": "eats a ration"
+  "UseEmote": "eats a ration",
+  "Value": 10
 }
