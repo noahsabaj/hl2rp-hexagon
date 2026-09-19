@@ -1,0 +1,13 @@
+{
+  "Title": "Civil Protection",
+  "Description": "The city's police force.",
+  "Tint": "0.3,0.5,0.8,1",
+  "RequiresWhitelist": true,
+  "CanLockDoors": true,
+  "StartingItems": [
+    "items/radio.item",
+    "items/ration.item"
+  ],
+  "__references": [],
+  "__version": 0
+}

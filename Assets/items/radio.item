@@ -1,0 +1,9 @@
+{
+  "Title": "Radio",
+  "Description": "A handheld radio.",
+  "Width": 2,
+  "Height": 1,
+  "Tint": "0.5,0.5,0.5,1",
+  "__references": [],
+  "__version": 0
+}

@@ -1,0 +1,13 @@
+{
+  "Title": "Citizen",
+  "Description": "A resident of the city.",
+  "Tint": "0.7,0.8,0.9,1",
+  "RequiresWhitelist": false,
+  "CanLockDoors": false,
+  "StartingItems": [
+    "items/ration.item",
+    "items/water.item"
+  ],
+  "__references": [],
+  "__version": 0
+}

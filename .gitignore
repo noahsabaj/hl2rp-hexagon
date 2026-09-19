@@ -33,3 +33,7 @@
 /Libraries/
 
 /nul
+
+# Logic test outputs
+/Tests/obj/
+/Tests/bin/

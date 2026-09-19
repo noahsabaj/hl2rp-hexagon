@@ -1,0 +1,9 @@
+{
+  "Title": "Ration",
+  "Description": "A sealed civil ration unit.",
+  "Width": 1,
+  "Height": 1,
+  "Tint": "0.8,0.75,0.5,1",
+  "__references": [],
+  "__version": 0
+}

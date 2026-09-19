@@ -1,0 +1,215 @@
+@using System
+@using System.Linq
+@using HL2RP.Logic
+@using Sandbox
+@using Sandbox.UI
+@namespace HL2RP.UI
+@inherits PanelComponent
+
+<root>
+	@if ( Player.Local is not { } player )
+	{
+		<div class="center"><div class="card"><h1>Connecting…</h1></div></div>
+	}
+	else if ( !player.HasCharacter )
+	{
+		<div class="center">
+			<div class="card">
+				<h1>@(Creating ? "New character" : "Your characters")</h1>
+				@if ( !Creating )
+				{
+					@foreach ( var character in player.Characters )
+					{
+						<div class="row">
+							<div class="grow">
+								<div class="name">@character.Name</div>
+								<div class="muted">@character.Faction</div>
+							</div>
+							<button class="primary" onclick=@(() => player.RequestEnterCity( character.Id ))>Enter</button>
+							<button onclick=@(() => player.RequestDeleteCharacter( character.Id ))>Delete</button>
+						</div>
+					}
+					@if ( player.Characters.Count == 0 )
+					{
+						<div class="muted">You have no characters yet.</div>
+					}
+					<div class="actions">
+						<button class="primary" onclick=@(() => Creating = true)>Create a character</button>
+					</div>
+				}
+				else
+				{
+					<label>Name</label>
+					<TextEntry Value:bind="@NewName" MaxLength="@NameRules.MaximumNameLength" />
+					<label>Description (at least @NameRules.MinimumDescriptionLength characters)</label>
+					<TextEntry Value:bind="@NewDescription" MaxLength="@NameRules.MaximumDescriptionLength" />
+					<label>Faction</label>
+					<div class="row wrap">
+						@foreach ( var faction in FactionDefinition.All.OrderBy( value => value.Title ) )
+						{
+							<button class="@(faction.ResourcePath == NewFaction ? "primary" : "")"
+								onclick=@(() => NewFaction = faction.ResourcePath)>
+								@faction.Title@(faction.RequiresWhitelist ? " (whitelist)" : "")
+							</button>
+						}
+					</div>
+					<div class="actions">
+						<button class="primary" onclick=@SubmitCharacter>Create</button>
+						<button onclick=@(() => Creating = false)>Back</button>
+					</div>
+				}
+				@foreach ( var notice in Chat.Lines.Where( value => value.IsNotice && value.Age < 8f ).TakeLast( 2 ) )
+				{
+					<div class="line notice">@notice.Text</div>
+				}
+			</div>
+		</div>
+	}
+	else
+	{
+		<div class="identity">
+			<div class="name">@player.CharacterName</div>
+			<div class="muted">@(player.Faction?.Title ?? "Unaffiliated")</div>
+			<div class="muted">@player.Tokens.ToString( "N0" ) tokens</div>
+		</div>
+
+		<div class="chat @(ChatOpen ? "open" : "")">
+			<div class="lines">
+				@foreach ( var line in Chat.Lines.TakeLast( ChatOpen ? 14 : 6 ).Where( value => ChatOpen || value.Age < 12f ) )
+				{
+					<div class="line @(line.IsNotice ? "notice" : line.Channel.ToString().ToLowerInvariant())">@line.Text</div>
+				}
+			</div>
+			@if ( ChatOpen )
+			{
+				<TextEntry @ref="ChatEntry" Value:bind="@ChatDraft" MaxLength="@ChatRules.MaximumScalars" onsubmit=@SubmitChat />
+			}
+		</div>
+
+		@if ( InventoryOpen && player.Inventory is { } inventory )
+		{
+			<div class="center">
+				<div class="card">
+					<h1>Inventory</h1>
+					<div class="grid" style="width: @(inventory.Width * 68)px; height: @(inventory.Height * 68)px;">
+						@for ( var y = 0; y < inventory.Height; y++ )
+						{
+							@for ( var x = 0; x < inventory.Width; x++ )
+							{
+								var cellX = x;
+								var cellY = y;
+								<div class="cell" style="left: @(cellX * 68)px; top: @(cellY * 68)px;"
+									onclick=@(() => ClickCell( cellX, cellY ))></div>
+							}
+						}
+						@foreach ( var item in inventory.Items )
+						{
+							var definition = ItemDefinition.Find( item.Definition );
+							<div class="item @(item.Id == Selected ? "selected" : "")"
+								style="left: @(item.X * 68)px; top: @(item.Y * 68)px; width: @(item.Width * 68 - 4)px; height: @(item.Height * 68 - 4)px;"
+								onclick=@(() => Selected = Selected == item.Id ? null : item.Id)>
+								@(definition?.Title ?? "Unknown item")
+							</div>
+						}
+					</div>
+					<div class="actions">
+						<button disabled=@(Selected is null) onclick=@DiscardSelected>Discard</button>
+						<button onclick=@(() => player.RequestLeaveCity())>Leave the city</button>
+					</div>
+					<div class="muted">Select an item, then click an empty cell to move it.</div>
+				</div>
+			</div>
+		}
+	}
+</root>
+
+@code
+{
+	private bool Creating { get; set; }
+	private string NewName { get; set; } = string.Empty;
+	private string NewDescription { get; set; } = string.Empty;
+	private string NewFaction { get; set; } = string.Empty;
+
+	private bool ChatOpen { get; set; }
+	private string ChatDraft { get; set; } = string.Empty;
+	// A property, because the Razor @ref generator only assigns properties.
+	private TextEntry? ChatEntry { get; set; }
+	private bool _focusChat;
+
+	private bool InventoryOpen { get; set; }
+	private Guid? Selected { get; set; }
+
+	protected override void OnUpdate()
+	{
+		if ( Player.Local is not { HasCharacter: true } )
+		{
+			ChatOpen = false;
+			InventoryOpen = false;
+			return;
+		}
+
+		if ( !ChatOpen && Input.Pressed( "Chat" ) )
+		{
+			ChatOpen = true;
+			_focusChat = true;
+			Input.Clear( "Chat" );
+		}
+		else if ( ChatOpen && Input.EscapePressed )
+		{
+			Input.EscapePressed = false;
+			CloseChat();
+		}
+
+		// Focused programmatically: the player is embodied and has no cursor to click with.
+		if ( _focusChat && ChatEntry is not null )
+		{
+			ChatEntry.Focus();
+			_focusChat = false;
+		}
+
+		if ( !ChatOpen && Input.Pressed( "Menu" ) ) InventoryOpen = !InventoryOpen;
+	}
+
+	private void SubmitChat()
+	{
+		var text = ChatDraft;
+		CloseChat();
+		if ( !string.IsNullOrWhiteSpace( text ) ) Player.Local?.RequestSay( text );
+	}
+
+	private void CloseChat()
+	{
+		ChatEntry?.Blur();
+		ChatDraft = string.Empty;
+		ChatOpen = false;
+	}
+
+	private void SubmitCharacter()
+	{
+		Player.Local?.RequestCreateCharacter( NewName, NewDescription, NewFaction );
+		Creating = false;
+		NewName = string.Empty;
+		NewDescription = string.Empty;
+	}
+
+	private void ClickCell( int x, int y )
+	{
+		if ( Selected is not { } item ) return;
+		Player.Local?.RequestMoveItem( item, x, y );
+		Selected = null;
+	}
+
+	private void DiscardSelected()
+	{
+		if ( Selected is not { } item ) return;
+		Player.Local?.RequestDiscardItem( item );
+		Selected = null;
+	}
+
+	// Rebuild whenever anything the panel shows has changed.
+	protected override int BuildHash() => HashCode.Combine(
+		HashCode.Combine( Player.Local, Player.Local?.HasCharacter, Player.Local?.PrivateVersion, Player.Local?.CharacterName ),
+		HashCode.Combine( Chat.Version, ChatOpen, InventoryOpen, Selected, Creating, NewFaction ),
+		// Lines and notices fade, so the panel must rebuild as time passes.
+		(int)RealTime.Now );
+}

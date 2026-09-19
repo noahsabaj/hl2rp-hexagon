@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>HL2RP.Tests</RootNamespace>
+    <LangVersion>14</LangVersion>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <IsPackable>false</IsPackable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="MSTest" Version="4.0.2" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- The engine-free logic is compiled straight from the game's sources: there is one copy. -->
+    <Compile Include="../Code/Logic/**/*.cs" Link="Logic/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="*.cs" />
+  </ItemGroup>
+</Project>
