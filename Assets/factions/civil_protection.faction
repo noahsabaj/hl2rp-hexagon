@@ -8,8 +8,26 @@
   ],
   "StartingTokens": 100,
   "StartingItems": [
-    "items/radio.item",
-    "items/ration.item"
+    {
+      "Item": "items/radio.item",
+      "Count": 1
+    },
+    {
+      "Item": "items/ration.item",
+      "Count": 1
+    },
+    {
+      "Item": "items/pistol.item",
+      "Count": 1
+    },
+    {
+      "Item": "items/pistol_round.item",
+      "Count": 30
+    },
+    {
+      "Item": "items/zip_tie.item",
+      "Count": 2
+    }
   ],
   "__references": [],
   "__version": 0,

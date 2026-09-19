@@ -9,5 +9,6 @@
   "Consumable": true,
   "UseTitle": "Drink",
   "UseEmote": "drinks from a can of water",
-  "Value": 5
+  "Value": 5,
+  "MaxStack": 4
 }

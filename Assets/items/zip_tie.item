@@ -9,5 +9,6 @@
   ],
   "__references": [],
   "__version": 0,
-  "Value": 12
+  "Value": 12,
+  "MaxStack": 4
 }

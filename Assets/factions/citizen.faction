@@ -4,8 +4,14 @@
   "Tint": "0.7,0.8,0.9,1",
   "RequiresWhitelist": false,
   "StartingItems": [
-    "items/ration.item",
-    "items/water.item"
+    {
+      "Item": "items/ration.item",
+      "Count": 1
+    },
+    {
+      "Item": "items/water.item",
+      "Count": 1
+    }
   ],
   "__references": [],
   "__version": 0

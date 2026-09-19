@@ -10,5 +10,6 @@
   "Heals": 30,
   "__references": [],
   "__version": 0,
-  "Value": 15
+  "Value": 15,
+  "MaxStack": 4
 }

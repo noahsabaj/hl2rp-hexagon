@@ -9,5 +9,6 @@
   "Consumable": true,
   "UseTitle": "Eat",
   "UseEmote": "eats a ration",
-  "Value": 10
+  "Value": 10,
+  "MaxStack": 4
 }
