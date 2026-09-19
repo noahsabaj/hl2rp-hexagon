@@ -3,7 +3,7 @@
   "Description": "A 9mm service pistol.",
   "Width": 2,
   "Height": 1,
-  "Tint": "0.2,0.2,0.22,1",
+  "Tint": "0.08,0.08,0.09,1",
   "Damage": 40,
   "Range": 2000,
   "Cooldown": 0.5,
