@@ -7,5 +7,6 @@
   "__references": [],
   "__version": 0,
   "Value": 60,
-  "IsRadio": true
+  "IsRadio": true,
+  "HoldType": "HoldItem"
 }

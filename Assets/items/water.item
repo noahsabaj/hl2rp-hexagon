@@ -10,5 +10,7 @@
   "UseTitle": "Drink",
   "UseEmote": "drinks from a can of water",
   "Value": 5,
-  "MaxStack": 4
+  "MaxStack": 4,
+  "WorldModel": "models/citizen_props/sodacan01.vmdl",
+  "HoldType": "HoldItem"
 }

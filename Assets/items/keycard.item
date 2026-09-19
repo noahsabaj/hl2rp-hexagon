@@ -9,5 +9,6 @@
   ],
   "__references": [],
   "__version": 0,
-  "Value": 0
+  "Value": 0,
+  "HoldType": "HoldItem"
 }

@@ -14,5 +14,9 @@
     }
   ],
   "__references": [],
-  "__version": 0
+  "__version": 0,
+  "Outfit": [
+    "models/citizen_clothes/shirt/Jumpsuit/blue_jumpsuit.clothing",
+    "models/citizen_clothes/shoes/Boots/black_boots.clothing"
+  ]
 }

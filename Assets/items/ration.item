@@ -10,5 +10,7 @@
   "UseTitle": "Eat",
   "UseEmote": "eats a ration",
   "Value": 10,
-  "MaxStack": 4
+  "MaxStack": 4,
+  "WorldModel": "models/citizen_props/chippacket01.vmdl",
+  "HoldType": "HoldItem"
 }

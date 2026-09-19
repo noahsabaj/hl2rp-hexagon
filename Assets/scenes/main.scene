@@ -324,9 +324,9 @@
       "__version": 2,
       "Flags": 0,
       "Name": "Crate",
-      "Position": "330,-150,20",
+      "Position": "330,-150,0",
       "Rotation": "0,0,0,1",
-      "Scale": "0.8,0.8,0.8",
+      "Scale": "1,1,1",
       "Tags": "container",
       "Enabled": true,
       "NetworkMode": 1,
@@ -348,15 +348,15 @@
           "__type": "Sandbox.ModelRenderer",
           "__guid": "c4a7e000-0000-4000-8000-000000000003",
           "__enabled": true,
-          "Model": "models/dev/box.vmdl",
-          "Tint": "0.45,0.33,0.2,1"
+          "Model": "models/citizen_props/crate01.vmdl",
+          "Tint": "1,1,1,1"
         },
         {
           "__type": "Sandbox.BoxCollider",
           "__guid": "c4a7e000-0000-4000-8000-000000000004",
           "__enabled": true,
-          "Center": "0,0,0",
-          "Scale": "50,50,50",
+          "Center": "0,0,20",
+          "Scale": "40,40,40",
           "Static": true,
           "IsTrigger": false
         }
@@ -368,9 +368,9 @@
       "__version": 2,
       "Flags": 0,
       "Name": "Ration Vendor",
-      "Position": "330,-60,20",
-      "Rotation": "0,0,0,1",
-      "Scale": "0.8,0.8,0.8",
+      "Position": "330,-60,0",
+      "Rotation": "0,0,1,0",
+      "Scale": "1,1,1",
       "Tags": "vendor",
       "Enabled": true,
       "NetworkMode": 1,
@@ -394,21 +394,26 @@
           "Float": 200,
           "SellFactor": 1,
           "BuyFactor": 0.5,
-          "Requires": ""
+          "Requires": "",
+          "Outfit": [
+            "models/citizen_clothes/jacket/Labcoat/labcoat.clothing",
+            "models/citizen_clothes/trousers/SmartTrousers/trousers.smart.clothing",
+            "models/citizen_clothes/shoes/Boots/black_boots.clothing"
+          ]
         },
         {
-          "__type": "Sandbox.ModelRenderer",
+          "__type": "Sandbox.SkinnedModelRenderer",
           "__guid": "fe4d0000-0000-4000-8000-000000000003",
           "__enabled": true,
-          "Model": "models/dev/box.vmdl",
-          "Tint": "0.2,0.45,0.3,1"
+          "Model": "models/citizen/citizen.vmdl",
+          "Tint": "1,1,1,1"
         },
         {
           "__type": "Sandbox.BoxCollider",
           "__guid": "fe4d0000-0000-4000-8000-000000000004",
           "__enabled": true,
-          "Center": "0,0,0",
-          "Scale": "50,50,50",
+          "Center": "0,0,36",
+          "Scale": "32,32,72",
           "Static": true,
           "IsTrigger": false
         }
