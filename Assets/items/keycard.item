@@ -1,0 +1,12 @@
+{
+  "Title": "Keycard",
+  "Description": "Opens and seals the city's doors. Whoever holds it can.",
+  "Width": 1,
+  "Height": 1,
+  "Tint": "0.3,0.5,0.8,1",
+  "Grants": [
+    "door.lock"
+  ],
+  "__references": [],
+  "__version": 0
+}

@@ -8,8 +8,8 @@ runs is Hexagon, and HL2RP supplies assets.
 
 | What | Where |
 | --- | --- |
-| Factions: Citizen, and Civil Protection, which needs an operator whitelist and may lock doors | `Assets/factions` |
-| Items: ration, water, radio | `Assets/items` |
+| Factions: Citizen, and Civil Protection, which needs an operator whitelist and has `door.lock` | `Assets/factions` |
+| Items: ration, water, radio, and a keycard that grants `door.lock` to whoever holds it | `Assets/items` |
 | The city: spawn, doors, game manager, HUD | `Assets/scenes/main.scene` |
 
 Code belongs here only when it is about this setting, such as the Combine. Anything another
@@ -41,4 +41,4 @@ pwsh ../hexagon/tools/playtest.ps1
 ```
 
 The play test boots the real editor and plays this game: characters, the Civil Protection
-whitelist, chat, inventory, doors, and a restart.
+whitelist, chat, inventory, doors, the keycard, a restart, and what the journal remembered.
