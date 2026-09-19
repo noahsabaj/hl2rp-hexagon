@@ -125,7 +125,7 @@
       "OwnerTransfer": 1,
       "Components": [
         {
-          "__type": "HL2RP.GameManager",
+          "__type": "Hexagon.GameManager",
           "__guid": "c7100000-0000-4000-8000-000000000002",
           "__enabled": true,
           "AutosaveSeconds": 60
@@ -161,7 +161,7 @@
           "ZIndex": 100
         },
         {
-          "__type": "HL2RP.UI.Hud",
+          "__type": "Hexagon.UI.Hud",
           "__guid": "b7200000-0000-4000-8000-000000000003",
           "__enabled": true
         }
@@ -211,7 +211,7 @@
       "OwnerTransfer": 1,
       "Components": [
         {
-          "__type": "HL2RP.Door",
+          "__type": "Hexagon.Door",
           "__guid": "d1000000-0000-4000-8000-000000000002",
           "__enabled": true,
           "OpenRotation": "0,90,0",
@@ -254,7 +254,7 @@
       "OwnerTransfer": 1,
       "Components": [
         {
-          "__type": "HL2RP.Door",
+          "__type": "Hexagon.Door",
           "__guid": "d2000000-0000-4000-8000-000000000002",
           "__enabled": true,
           "OpenRotation": "0,90,0",

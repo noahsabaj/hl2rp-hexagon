@@ -1,61 +1,44 @@
 # HL2RP
 
-A Half-Life 2 roleplay gamemode for s&box. This branch is a from-scratch rewrite. It is one
-project, written against the engine's own features, and built game-first: a small loop that
-plays, then more on top of it.
+A Half-Life 2 roleplay gamemode for s&box, built on the
+[Hexagon](https://github.com/noahsabaj/hexagon) roleplay framework.
 
-## What plays today
+This project is the setting and nothing else. It currently contains no code: everything that
+runs is Hexagon, and HL2RP supplies assets.
 
-- Connect, and the host gives you a pawn driven by the engine's `PlayerController`.
-- Create characters. Names are checked for look-alikes, mixed scripts and invisible characters.
-- Factions are assets. Civil Protection needs an operator whitelist; Citizen does not.
-- Enter the city where your character last stood, with the starting items its faction grants.
-- Talk: say, `/w` whisper, `/y` yell, `/me`, and `//` out-of-character. Only players in range hear
-  in-character speech, and nobody out of range learns a message existed.
-- A grid inventory: move and discard items.
-- Doors: anyone in reach opens them, a locked door refuses, and only factions allowed to may lock.
-- Everything survives a restart.
-
-## How it is built
-
-| Part | Where | How it is checked |
-| --- | --- | --- |
-| Rules with no engine in them: names, inventory grid, chat parsing, rate limit, storage | `Code/Logic` | Unit tests in `Tests`, compiled from the same files |
-| Components: game manager, player, door, chat, operator commands | `Code` | Compiled against the installed engine, warnings as errors |
-| HUD | `Code/UI` | Same compile, then looked at in the play test |
-| The game as a whole | the scene and assets | `tools/playtest.ps1` plays it in the real editor |
-
-State reaches clients the engine's way. Public state is `[Sync( SyncFlags.FromHost )]` on
-components. Private state goes to its owner by `[Rpc.Owner]`. A client changes nothing directly:
-it calls a `[Rpc.Host]` request, and the host re-derives who is asking from the connection,
-measures distances itself, and saves before it replies.
-
-## Commands
-
-Run both from this folder with the s&box editor closed.
-
-```bash
-pwsh tools/verify.ps1
-```
-
-Runs the logic tests, has s&box generate the project, and compiles it against the engine.
-
-```bash
-pwsh tools/playtest.ps1
-```
-
-Boots the editor, enters play mode, and plays the scenario above through the real RPC path,
-including a restart, in a throwaway data folder.
-
-## Operator commands
-
-Typed in the host's console.
-
-| Command | Effect |
+| What | Where |
 | --- | --- |
-| `hl2rp_whitelist <steamid64> <faction>` | Allow an account to create characters in a whitelisted faction |
-| `hl2rp_unwhitelist <steamid64> <faction>` | Remove that permission |
-| `hl2rp_give "<character name>" <item>` | Give an item to a character who is in the city |
+| Factions: Citizen, and Civil Protection, which needs an operator whitelist and may lock doors | `Assets/factions` |
+| Items: ration, water, radio | `Assets/items` |
+| The city: spawn, doors, game manager, HUD | `Assets/scenes/main.scene` |
 
-See [docs/decisions.md](docs/decisions.md) for why it is shaped this way and what is deliberately
-not here yet.
+Code belongs here only when it is about this setting, such as the Combine. Anything another
+roleplay game would also want belongs in Hexagon.
+
+## Setup
+
+Hexagon is compiled into the game from a sibling checkout.
+
+1. Clone `hexagon` next to this folder.
+2. Link it in, from this folder:
+
+```bash
+pwsh -Command "New-Item -ItemType Junction -Path Libraries/hexagon -Target ../hexagon"
+```
+
+3. Open `hl2rp.sbproj` in the s&box editor.
+
+## Checking it
+
+The tools live in Hexagon and default to this game.
+
+```bash
+pwsh ../hexagon/tools/verify.ps1
+```
+
+```bash
+pwsh ../hexagon/tools/playtest.ps1
+```
+
+The play test boots the real editor and plays this game: characters, the Civil Protection
+whitelist, chat, inventory, doors, and a restart.
