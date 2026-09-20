@@ -1,0 +1,11 @@
+{
+  "Title": "Pistol round",
+  "Description": "One 9mm round.",
+  "Width": 1,
+  "Height": 1,
+  "Tint": "0.75,0.6,0.25,1",
+  "__references": [],
+  "__version": 0,
+  "Value": 8,
+  "MaxStack": 30
+}

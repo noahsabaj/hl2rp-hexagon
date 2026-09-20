@@ -1,0 +1,41 @@
+{
+  "Title": "Civil Protection",
+  "Description": "The city's police force.",
+  "Tint": "0.3,0.5,0.8,1",
+  "RequiresWhitelist": true,
+  "Capabilities": [
+    "door.lock"
+  ],
+  "StartingTokens": 100,
+  "StartingItems": [
+    {
+      "Item": "items/radio.item",
+      "Count": 1
+    },
+    {
+      "Item": "items/ration.item",
+      "Count": 1
+    },
+    {
+      "Item": "items/pistol.item",
+      "Count": 1
+    },
+    {
+      "Item": "items/pistol_round.item",
+      "Count": 30
+    },
+    {
+      "Item": "items/zip_tie.item",
+      "Count": 2
+    }
+  ],
+  "__references": [],
+  "__version": 0,
+  "Wage": 20,
+  "Outfit": [
+    "models/citizen_clothes/hat/Gasmask/gasmask.clothing",
+    "models/citizen_clothes/jacket/Brown_Leather_Jacket/black_leather_jacket.clothing",
+    "models/citizen_clothes/trousers/Jeans/jeans_black.clothing",
+    "models/citizen_clothes/shoes/Boots/black_boots.clothing"
+  ]
+}

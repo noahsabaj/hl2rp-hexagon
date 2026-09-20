@@ -1,0 +1,16 @@
+{
+  "Title": "Ration",
+  "Description": "A sealed civil ration unit.",
+  "Width": 1,
+  "Height": 1,
+  "Tint": "0.8,0.75,0.5,1",
+  "__references": [],
+  "__version": 0,
+  "Consumable": true,
+  "UseTitle": "Eat",
+  "UseEmote": "eats a ration",
+  "Value": 10,
+  "MaxStack": 4,
+  "WorldModel": "models/citizen_props/chippacket01.vmdl",
+  "HoldType": "HoldItem"
+}

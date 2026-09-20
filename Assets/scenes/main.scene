@@ -1,13 +1,36 @@
 {
   "__guid": "37b80738-f7db-4cc7-8008-4bb4e245d5ca",
+  "SceneProperties": {
+    "NetworkInterpolation": true,
+    "TimeScale": 1,
+    "WantsSystemScene": true,
+    "Metadata": {},
+    "NavMesh": {
+      "Enabled": false,
+      "IncludeStaticBodies": true,
+      "IncludeKeyframedBodies": true,
+      "EditorAutoUpdate": false,
+      "AgentHeight": 64,
+      "AgentRadius": 16,
+      "AgentStepSize": 18,
+      "AgentMaxSlope": 40,
+      "ExcludedBodies": "",
+      "IncludedBodies": ""
+    }
+  },
+  "ResourceVersion": 3,
+  "Title": "City",
+  "Description": "HL2RP",
+  "__references": [],
+  "__version": 3,
   "GameObjects": [
     {
       "__guid": "c93096fb-e9a8-4c0f-983b-94fed7c53a99",
       "__version": 2,
       "Flags": 0,
       "Name": "Main Camera",
-      "Position": "-300,0,100",
-      "Rotation": "0,0,0,1",
+      "Position": "110,-222,160",
+      "Rotation": "-0.064746,0.237486,0.254938,0.935102",
       "Scale": "1,1,1",
       "Tags": "",
       "Enabled": true,
@@ -86,11 +109,11 @@
       "Children": []
     },
     {
-      "__guid": "6313c977-11c2-4c1d-be2e-d9a5f642cb3f",
+      "__guid": "c7100000-0000-4000-8000-000000000001",
       "__version": 2,
       "Flags": 0,
-      "Name": "HexagonConfig",
-      "Position": "0,0,100",
+      "Name": "Game Manager",
+      "Position": "0,0,0",
       "Rotation": "0,0,0,1",
       "Scale": "1,1,1",
       "Tags": "",
@@ -102,18 +125,158 @@
       "OwnerTransfer": 1,
       "Components": [
         {
-          "__type": "Hexagon.Core.HexagonConfigComponent",
-          "__guid": "e0da22c4-444d-44b9-a987-59451c869314",
+          "__type": "Hexagon.GameManager",
+          "__guid": "c7100000-0000-4000-8000-000000000002",
+          "__enabled": true,
+          "AutosaveSeconds": 60
+        }
+      ],
+      "Children": []
+    },
+    {
+      "__guid": "b7200000-0000-4000-8000-000000000001",
+      "__version": 2,
+      "Flags": 0,
+      "Name": "HUD",
+      "Position": "0,0,0",
+      "Rotation": "0,0,0,1",
+      "Scale": "1,1,1",
+      "Tags": "",
+      "Enabled": true,
+      "NetworkMode": 2,
+      "NetworkFlags": 0,
+      "NetworkOrphaned": 0,
+      "NetworkTransmit": true,
+      "OwnerTransfer": 1,
+      "Components": [
+        {
+          "__type": "Sandbox.ScreenPanel",
+          "__guid": "b7200000-0000-4000-8000-000000000002",
+          "__enabled": true,
+          "AutoScreenScale": true,
+          "Opacity": 1,
+          "Scale": 1,
+          "ScaleStrategy": "ConsistentHeight",
+          "TargetCanvas": null,
+          "ZIndex": 100
+        },
+        {
+          "__type": "Hexagon.UI.Hud",
+          "__guid": "b7200000-0000-4000-8000-000000000003",
+          "__enabled": true
+        }
+      ],
+      "Children": []
+    },
+    {
+      "__guid": "b7100000-0000-4000-8000-000000000001",
+      "__version": 2,
+      "Flags": 0,
+      "Name": "Player Spawn",
+      "Position": "1200,0,8",
+      "Rotation": "0,0,0,1",
+      "Scale": "1,1,1",
+      "Tags": "spawn,hexagon_spawn",
+      "Enabled": true,
+      "NetworkMode": 2,
+      "NetworkFlags": 0,
+      "NetworkOrphaned": 0,
+      "NetworkTransmit": true,
+      "OwnerTransfer": 1,
+      "Components": [
+        {
+          "__type": "Sandbox.SpawnPoint",
+          "__guid": "b7100000-0000-4000-8000-000000000002",
           "__enabled": true,
           "Flags": 0,
-          "OnComponentDestroy": null,
-          "OnComponentDisabled": null,
-          "OnComponentEnabled": null,
-          "OnComponentFixedUpdate": null,
-          "OnComponentStart": null,
-          "OnComponentUpdate": null,
-          "PlayerPrefab": null,
-          "SpawnPosition": "0,0,100"
+          "Color": "0.15,0.65,0.95,1"
+        }
+      ],
+      "Children": []
+    },
+    {
+      "__guid": "d1000000-0000-4000-8000-000000000001",
+      "__version": 2,
+      "Flags": 0,
+      "Name": "Door 1",
+      "Position": "240,-180,54",
+      "Rotation": "0,0,0,1",
+      "Scale": "0.8,0.08,2.16",
+      "Tags": "door",
+      "Enabled": true,
+      "NetworkMode": 1,
+      "NetworkFlags": 0,
+      "NetworkOrphaned": 0,
+      "NetworkTransmit": true,
+      "OwnerTransfer": 1,
+      "Components": [
+        {
+          "__type": "Hexagon.Door",
+          "__guid": "d1000000-0000-4000-8000-000000000002",
+          "__enabled": true,
+          "OpenRotation": "0,90,0",
+          "SwingSpeed": 6,
+          "StartsLocked": false
+        },
+        {
+          "__type": "Sandbox.ModelRenderer",
+          "__guid": "d1000000-0000-4000-8000-000000000003",
+          "__enabled": true,
+          "Model": "models/dev/box.vmdl",
+          "Tint": "0.12,0.28,0.38,1"
+        },
+        {
+          "__type": "Sandbox.BoxCollider",
+          "__guid": "d1000000-0000-4000-8000-000000000004",
+          "__enabled": true,
+          "Center": "0,0,0",
+          "Scale": "50,50,50",
+          "Static": false,
+          "IsTrigger": false
+        }
+      ],
+      "Children": []
+    },
+    {
+      "__guid": "d2000000-0000-4000-8000-000000000001",
+      "__version": 2,
+      "Flags": 0,
+      "Name": "Door 2",
+      "Position": "240,-60,54",
+      "Rotation": "0,0,0,1",
+      "Scale": "0.8,0.08,2.16",
+      "Tags": "door",
+      "Enabled": true,
+      "NetworkMode": 1,
+      "NetworkFlags": 0,
+      "NetworkOrphaned": 0,
+      "NetworkTransmit": true,
+      "OwnerTransfer": 1,
+      "Components": [
+        {
+          "__type": "Hexagon.Door",
+          "__guid": "d2000000-0000-4000-8000-000000000002",
+          "__enabled": true,
+          "OpenRotation": "0,90,0",
+          "SwingSpeed": 6,
+          "StartsLocked": true,
+          "Price": 50
+        },
+        {
+          "__type": "Sandbox.ModelRenderer",
+          "__guid": "d2000000-0000-4000-8000-000000000003",
+          "__enabled": true,
+          "Model": "models/dev/box.vmdl",
+          "Tint": "0.12,0.28,0.38,1"
+        },
+        {
+          "__type": "Sandbox.BoxCollider",
+          "__guid": "d2000000-0000-4000-8000-000000000004",
+          "__enabled": true,
+          "Center": "0,0,0",
+          "Scale": "50,50,50",
+          "Static": false,
+          "IsTrigger": false
         }
       ],
       "Children": []
@@ -155,29 +318,107 @@
         }
       ],
       "Children": []
+    },
+    {
+      "__guid": "c4a7e000-0000-4000-8000-000000000001",
+      "__version": 2,
+      "Flags": 0,
+      "Name": "Crate",
+      "Position": "330,-150,0",
+      "Rotation": "0,0,0,1",
+      "Scale": "1,1,1",
+      "Tags": "container",
+      "Enabled": true,
+      "NetworkMode": 1,
+      "NetworkFlags": 0,
+      "NetworkOrphaned": 0,
+      "NetworkTransmit": true,
+      "OwnerTransfer": 1,
+      "Components": [
+        {
+          "__type": "Hexagon.Container",
+          "__guid": "c4a7e000-0000-4000-8000-000000000002",
+          "__enabled": true,
+          "Title": "Crate",
+          "Width": 4,
+          "Height": 4,
+          "Requires": ""
+        },
+        {
+          "__type": "Sandbox.ModelRenderer",
+          "__guid": "c4a7e000-0000-4000-8000-000000000003",
+          "__enabled": true,
+          "Model": "models/citizen_props/crate01.vmdl",
+          "Tint": "1,1,1,1"
+        },
+        {
+          "__type": "Sandbox.BoxCollider",
+          "__guid": "c4a7e000-0000-4000-8000-000000000004",
+          "__enabled": true,
+          "Center": "0,0,20",
+          "Scale": "40,40,40",
+          "Static": true,
+          "IsTrigger": false
+        }
+      ],
+      "Children": []
+    },
+    {
+      "__guid": "fe4d0000-0000-4000-8000-000000000001",
+      "__version": 2,
+      "Flags": 0,
+      "Name": "Ration Vendor",
+      "Position": "330,-60,0",
+      "Rotation": "0,0,1,0",
+      "Scale": "1,1,1",
+      "Tags": "vendor",
+      "Enabled": true,
+      "NetworkMode": 1,
+      "NetworkFlags": 0,
+      "NetworkOrphaned": 0,
+      "NetworkTransmit": true,
+      "OwnerTransfer": 1,
+      "Components": [
+        {
+          "__type": "Hexagon.Vendor",
+          "__guid": "fe4d0000-0000-4000-8000-000000000002",
+          "__enabled": true,
+          "Title": "Ration Vendor",
+          "Stock": [
+            "items/ration.item",
+            "items/water.item",
+            "items/bandage.item"
+          ],
+          "StockLimit": 3,
+          "RestockSeconds": 600,
+          "Float": 200,
+          "SellFactor": 1,
+          "BuyFactor": 0.5,
+          "Requires": "",
+          "Outfit": [
+            "models/citizen_clothes/jacket/Labcoat/labcoat.clothing",
+            "models/citizen_clothes/trousers/SmartTrousers/trousers.smart.clothing",
+            "models/citizen_clothes/shoes/Boots/black_boots.clothing"
+          ]
+        },
+        {
+          "__type": "Sandbox.SkinnedModelRenderer",
+          "__guid": "fe4d0000-0000-4000-8000-000000000003",
+          "__enabled": true,
+          "Model": "models/citizen/citizen.vmdl",
+          "Tint": "1,1,1,1"
+        },
+        {
+          "__type": "Sandbox.BoxCollider",
+          "__guid": "fe4d0000-0000-4000-8000-000000000004",
+          "__enabled": true,
+          "Center": "0,0,36",
+          "Scale": "32,32,72",
+          "Static": true,
+          "IsTrigger": false
+        }
+      ],
+      "Children": []
     }
-  ],
-  "SceneProperties": {
-    "NetworkInterpolation": true,
-    "TimeScale": 1,
-    "WantsSystemScene": true,
-    "Metadata": {},
-    "NavMesh": {
-      "Enabled": false,
-      "IncludeStaticBodies": true,
-      "IncludeKeyframedBodies": true,
-      "EditorAutoUpdate": false,
-      "AgentHeight": 64,
-      "AgentRadius": 16,
-      "AgentStepSize": 18,
-      "AgentMaxSlope": 40,
-      "ExcludedBodies": "",
-      "IncludedBodies": ""
-    }
-  },
-  "ResourceVersion": 3,
-  "Title": null,
-  "Description": null,
-  "__references": [],
-  "__version": 3
+  ]
 }

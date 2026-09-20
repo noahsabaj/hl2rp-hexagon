@@ -1,0 +1,22 @@
+{
+  "Title": "Citizen",
+  "Description": "A resident of the city.",
+  "Tint": "0.7,0.8,0.9,1",
+  "RequiresWhitelist": false,
+  "StartingItems": [
+    {
+      "Item": "items/ration.item",
+      "Count": 1
+    },
+    {
+      "Item": "items/water.item",
+      "Count": 1
+    }
+  ],
+  "__references": [],
+  "__version": 0,
+  "Outfit": [
+    "models/citizen_clothes/shirt/Jumpsuit/blue_jumpsuit.clothing",
+    "models/citizen_clothes/shoes/Boots/black_boots.clothing"
+  ]
+}
