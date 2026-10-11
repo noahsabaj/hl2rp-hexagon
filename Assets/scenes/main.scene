@@ -109,31 +109,6 @@
       "Children": []
     },
     {
-      "__guid": "c7100000-0000-4000-8000-000000000001",
-      "__version": 2,
-      "Flags": 0,
-      "Name": "Game Manager",
-      "Position": "0,0,0",
-      "Rotation": "0,0,0,1",
-      "Scale": "1,1,1",
-      "Tags": "",
-      "Enabled": true,
-      "NetworkMode": 2,
-      "NetworkFlags": 0,
-      "NetworkOrphaned": 0,
-      "NetworkTransmit": true,
-      "OwnerTransfer": 1,
-      "Components": [
-        {
-          "__type": "Hexagon.GameManager",
-          "__guid": "c7100000-0000-4000-8000-000000000002",
-          "__enabled": true,
-          "AutosaveSeconds": 60
-        }
-      ],
-      "Children": []
-    },
-    {
       "__guid": "b7200000-0000-4000-8000-000000000001",
       "__version": 2,
       "Flags": 0,
