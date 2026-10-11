@@ -216,7 +216,8 @@
           "__enabled": true,
           "OpenRotation": "0,90,0",
           "SwingSpeed": 6,
-          "StartsLocked": false
+          "StartsLocked": false,
+          "LockRequires": "door.lock.city"
         },
         {
           "__type": "Sandbox.ModelRenderer",
@@ -260,7 +261,8 @@
           "OpenRotation": "0,90,0",
           "SwingSpeed": 6,
           "StartsLocked": true,
-          "Price": 50
+          "Price": 50,
+          "LockRequires": ""
         },
         {
           "__type": "Sandbox.ModelRenderer",
