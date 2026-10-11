@@ -1,0 +1,11 @@
+{
+  "Title": "Fedora",
+  "Description": "A felt hat, brushed until it shines.",
+  "Width": 1,
+  "Height": 1,
+  "Tint": "0.4,0.3,0.2,1",
+  "Wearable": "models/citizen_clothes/hat/fedora/fedora_brown.clothing",
+  "Wardrobe": true,
+  "__references": [],
+  "__version": 0
+}

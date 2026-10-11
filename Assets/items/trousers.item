@@ -1,0 +1,11 @@
+{
+  "Title": "Trousers",
+  "Description": "Pressed trousers.",
+  "Width": 1,
+  "Height": 2,
+  "Tint": "0.3,0.3,0.32,1",
+  "Wearable": "models/citizen_clothes/trousers/smarttrousers/trousers.smart.clothing",
+  "Wardrobe": true,
+  "__references": [],
+  "__version": 0
+}

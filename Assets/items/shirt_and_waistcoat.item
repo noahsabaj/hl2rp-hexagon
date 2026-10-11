@@ -1,0 +1,11 @@
+{
+  "Title": "Shirt and waistcoat",
+  "Description": "A collared shirt under a buttoned waistcoat.",
+  "Width": 2,
+  "Height": 2,
+  "Tint": "0.5,0.45,0.4,1",
+  "Wearable": "models/citizen_clothes/shirt/waistcoat_and_shirt/waistcoat_and_shirt.clothing",
+  "Wardrobe": true,
+  "__references": [],
+  "__version": 0
+}
