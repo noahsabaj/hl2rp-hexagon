@@ -283,6 +283,41 @@
       "Children": []
     },
     {
+      "__guid": "d1000000-0000-4000-8000-000000000101",
+      "__version": 2,
+      "Flags": 0,
+      "Name": "Wall",
+      "Position": "332,-180,54",
+      "Rotation": "0,0,0,1",
+      "Scale": "2.8,0.16,2.16",
+      "Tags": "",
+      "Enabled": true,
+      "NetworkMode": 1,
+      "NetworkFlags": 0,
+      "NetworkOrphaned": 0,
+      "NetworkTransmit": true,
+      "OwnerTransfer": 1,
+      "Components": [
+        {
+          "__type": "Sandbox.ModelRenderer",
+          "__guid": "d1000000-0000-4000-8000-000000000102",
+          "__enabled": true,
+          "Model": "models/dev/box.vmdl",
+          "Tint": "0.55,0.52,0.48,1"
+        },
+        {
+          "__type": "Sandbox.BoxCollider",
+          "__guid": "d1000000-0000-4000-8000-000000000103",
+          "__enabled": true,
+          "Center": "0,0,0",
+          "Scale": "50,50,50",
+          "Static": true,
+          "IsTrigger": false
+        }
+      ],
+      "Children": []
+    },
+    {
       "__guid": "b5e541f8-ac70-408a-8211-fe8341fb080d",
       "__version": 2,
       "Flags": 0,
