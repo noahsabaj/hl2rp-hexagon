@@ -5,7 +5,7 @@
   "Height": 1,
   "Tint": "0.3,0.5,0.8,1",
   "Grants": [
-    "door.lock"
+    "door.lock.city"
   ],
   "__references": [],
   "__version": 0,
