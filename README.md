@@ -8,9 +8,9 @@ runs is Hexagon, and HL2RP supplies assets.
 
 | What | Where |
 | --- | --- |
-| Factions: Citizen, in the blue jumpsuit, paid a small wage; and Civil Protection, masked and in black, which needs an operator whitelist, has `door.lock.city`, is paid more and is issued a radio, a pistol, thirty rounds and two ties | `Assets/factions` |
-| Items: ration, water and bandage to use up; radio; a keycard that grants `door.lock.city`; a zip tie that grants `person.restrain`; a pistol and its rounds, which stack | `Assets/items` |
-| The city: spawn; two doors, the city's own, which `door.lock.city` locks, and one for sale, which only whoever buys it can lock; a crate, a ration vendor, game manager, HUD | `Assets/scenes/main.scene` |
+| Factions: Citizen, in the blue jumpsuit; and Civil Protection, masked and in black, which needs an operator whitelist. A faction is people and a look: it grants nothing, and its members arrive with only their clothes | `Assets/factions` |
+| Items: ration, water and bandage to use up; a radio; a keycard and a key, each cut to a lock when it is made; tokens, which pile up to a hundred and are money only because people take them; a zip tie that grants `person.restrain`; a pistol and its rounds, which stack | `Assets/items` |
+| The city: spawn; Door 1, whose lock is cut to the city's pattern, `city`, and Door 2, a flat with its own, `flat2`, which starts locked; a crate stocked with rations, water, bandages and forty tokens; a locker whose lock is cut to `city`, holding a pistol, thirty rounds, two ties, a radio, a city keycard and the flat's key; game manager, HUD | `Assets/scenes/main.scene` |
 
 Code belongs here only when it is about this setting, such as the Combine. Anything another
 roleplay game would also want belongs in Hexagon.
@@ -40,5 +40,6 @@ pwsh ../hexagon/tools/verify.ps1
 pwsh ../hexagon/tools/playtest.ps1
 ```
 
-The play test boots the real editor and plays this game: characters, the Civil Protection
-whitelist, chat, inventory, doors, the keycard, a restart, and what the journal remembered.
+The play test boots the real editor and plays this game: characters and the one-life rule, the
+Civil Protection whitelist, chat, inventory, keys and locks, the crate and the locker, a restart, a
+death, a retirement and a restore, and what the journal remembered.

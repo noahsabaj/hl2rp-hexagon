@@ -10,6 +10,5 @@
   "Ammo": "items/pistol_round.item",
   "__references": [],
   "__version": 0,
-  "Value": 400,
   "HoldType": "Pistol"
 }

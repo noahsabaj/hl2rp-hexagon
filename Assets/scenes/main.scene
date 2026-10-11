@@ -217,7 +217,7 @@
           "OpenRotation": "0,90,0",
           "SwingSpeed": 6,
           "StartsLocked": false,
-          "LockRequires": "door.lock.city"
+          "LockPattern": "city"
         },
         {
           "__type": "Sandbox.ModelRenderer",
@@ -261,8 +261,7 @@
           "OpenRotation": "0,90,0",
           "SwingSpeed": 6,
           "StartsLocked": true,
-          "Price": 50,
-          "LockRequires": ""
+          "LockPattern": "flat2"
         },
         {
           "__type": "Sandbox.ModelRenderer",
@@ -344,7 +343,29 @@
           "Title": "Crate",
           "Width": 4,
           "Height": 4,
-          "Requires": ""
+          "LockPattern": "",
+          "Stock": [
+            {
+              "Item": "items/ration.item",
+              "Count": 4,
+              "Pattern": ""
+            },
+            {
+              "Item": "items/water.item",
+              "Count": 2,
+              "Pattern": ""
+            },
+            {
+              "Item": "items/bandage.item",
+              "Count": 2,
+              "Pattern": ""
+            },
+            {
+              "Item": "items/token.item",
+              "Count": 40,
+              "Pattern": ""
+            }
+          ]
         },
         {
           "__type": "Sandbox.ModelRenderer",
@@ -366,14 +387,14 @@
       "Children": []
     },
     {
-      "__guid": "fe4d0000-0000-4000-8000-000000000001",
+      "__guid": "10c4e700-0000-4000-8000-000000000001",
       "__version": 2,
       "Flags": 0,
-      "Name": "Ration Vendor",
+      "Name": "Locker",
       "Position": "330,-60,0",
-      "Rotation": "0,0,1,0",
+      "Rotation": "0,0,0,1",
       "Scale": "1,1,1",
-      "Tags": "vendor",
+      "Tags": "container",
       "Enabled": true,
       "NetworkMode": 1,
       "NetworkFlags": 0,
@@ -382,40 +403,59 @@
       "OwnerTransfer": 1,
       "Components": [
         {
-          "__type": "Hexagon.Vendor",
-          "__guid": "fe4d0000-0000-4000-8000-000000000002",
+          "__type": "Hexagon.Container",
+          "__guid": "10c4e700-0000-4000-8000-000000000002",
           "__enabled": true,
-          "Title": "Ration Vendor",
+          "Title": "Locker",
+          "Width": 4,
+          "Height": 4,
+          "LockPattern": "city",
           "Stock": [
-            "items/ration.item",
-            "items/water.item",
-            "items/bandage.item"
-          ],
-          "StockLimit": 3,
-          "RestockSeconds": 600,
-          "Float": 200,
-          "SellFactor": 1,
-          "BuyFactor": 0.5,
-          "Requires": "",
-          "Outfit": [
-            "models/citizen_clothes/jacket/Labcoat/labcoat.clothing",
-            "models/citizen_clothes/trousers/SmartTrousers/trousers.smart.clothing",
-            "models/citizen_clothes/shoes/Boots/black_boots.clothing"
+            {
+              "Item": "items/pistol.item",
+              "Count": 1,
+              "Pattern": ""
+            },
+            {
+              "Item": "items/pistol_round.item",
+              "Count": 30,
+              "Pattern": ""
+            },
+            {
+              "Item": "items/zip_tie.item",
+              "Count": 2,
+              "Pattern": ""
+            },
+            {
+              "Item": "items/radio.item",
+              "Count": 1,
+              "Pattern": ""
+            },
+            {
+              "Item": "items/keycard.item",
+              "Count": 1,
+              "Pattern": "city"
+            },
+            {
+              "Item": "items/key.item",
+              "Count": 1,
+              "Pattern": "flat2"
+            }
           ]
         },
         {
-          "__type": "Sandbox.SkinnedModelRenderer",
-          "__guid": "fe4d0000-0000-4000-8000-000000000003",
+          "__type": "Sandbox.ModelRenderer",
+          "__guid": "10c4e700-0000-4000-8000-000000000003",
           "__enabled": true,
-          "Model": "models/citizen/citizen.vmdl",
-          "Tint": "1,1,1,1"
+          "Model": "models/citizen_props/crate01.vmdl",
+          "Tint": "0.22,0.24,0.27,1"
         },
         {
           "__type": "Sandbox.BoxCollider",
-          "__guid": "fe4d0000-0000-4000-8000-000000000004",
+          "__guid": "10c4e700-0000-4000-8000-000000000004",
           "__enabled": true,
-          "Center": "0,0,36",
-          "Scale": "32,32,72",
+          "Center": "0,0,20",
+          "Scale": "40,40,40",
           "Static": true,
           "IsTrigger": false
         }
