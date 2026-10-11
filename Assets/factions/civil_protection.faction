@@ -2,13 +2,6 @@
   "Title": "Civil Protection",
   "Description": "The city's police force.",
   "Tint": "0.3,0.5,0.8,1",
-  "RequiresWhitelist": true,
   "__references": [],
-  "__version": 0,
-  "Outfit": [
-    "models/citizen_clothes/hat/Gasmask/gasmask.clothing",
-    "models/citizen_clothes/jacket/Brown_Leather_Jacket/black_leather_jacket.clothing",
-    "models/citizen_clothes/trousers/Jeans/jeans_black.clothing",
-    "models/citizen_clothes/shoes/Boots/black_boots.clothing"
-  ]
+  "__version": 0
 }

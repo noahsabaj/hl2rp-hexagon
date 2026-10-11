@@ -1,0 +1,11 @@
+{
+  "Title": "Civil Protection trousers",
+  "Description": "Black trousers of the city's police.",
+  "Width": 1,
+  "Height": 2,
+  "Tint": "0.1,0.1,0.12,1",
+  "Wearable": "models/citizen_clothes/trousers/jeans/jeans_black.clothing",
+  "Wardrobe": false,
+  "__references": [],
+  "__version": 0
+}

@@ -1,0 +1,11 @@
+{
+  "Title": "Blue jumpsuit",
+  "Description": "The city issues them to whoever has nothing else.",
+  "Width": 2,
+  "Height": 2,
+  "Tint": "0.3,0.4,0.6,1",
+  "Wearable": "models/citizen_clothes/shirt/jumpsuit/blue_jumpsuit.clothing",
+  "Wardrobe": true,
+  "__references": [],
+  "__version": 0
+}

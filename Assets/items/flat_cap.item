@@ -1,0 +1,11 @@
+{
+  "Title": "Flat cap",
+  "Description": "A cloth cap with a short brim.",
+  "Width": 1,
+  "Height": 1,
+  "Tint": "0.45,0.4,0.35,1",
+  "Wearable": "models/citizen_clothes/hat/flatcap/flatcap.clothing",
+  "Wardrobe": true,
+  "__references": [],
+  "__version": 0
+}

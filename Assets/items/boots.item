@@ -1,0 +1,11 @@
+{
+  "Title": "Black boots",
+  "Description": "Laced leather boots.",
+  "Width": 1,
+  "Height": 1,
+  "Tint": "0.1,0.1,0.1,1",
+  "Wearable": "models/citizen_clothes/shoes/boots/black_boots.clothing",
+  "Wardrobe": true,
+  "__references": [],
+  "__version": 0
+}

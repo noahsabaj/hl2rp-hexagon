@@ -1,0 +1,11 @@
+{
+  "Title": "Civil Protection mask",
+  "Description": "A gas mask that hides the face of whoever wears it.",
+  "Width": 1,
+  "Height": 1,
+  "Tint": "0.15,0.15,0.17,1",
+  "Wearable": "models/citizen_clothes/hat/gasmask/gasmask.clothing",
+  "Wardrobe": false,
+  "__references": [],
+  "__version": 0
+}

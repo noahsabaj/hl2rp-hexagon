@@ -8,9 +8,11 @@ runs is Hexagon, and HL2RP supplies assets.
 
 | What | Where |
 | --- | --- |
-| Factions: Citizen, in the blue jumpsuit; and Civil Protection, masked and in black, which needs an operator whitelist. A faction is people and a look: it grants nothing, and its members arrive with only their clothes | `Assets/factions` |
+| Faction: Civil Protection. A faction is people: it grants nothing and changes nothing about its members, who are appointed and handed a uniform. A citizen is anyone who belongs to none, which is everyone as they arrive | `Assets/factions` |
+| Clothes: a wardrobe to arrive in (flat cap, fedora, shirt and waistcoat, flannel shirt, cardigan, the blue jumpsuit, trousers, jeans and black boots), and a Civil Protection uniform of mask, jacket and trousers, which nobody arrives in | `Assets/items` |
+| Bodies and hair a new character may choose: the citizen, the engine's seven human skins, and nine hairstyles and beards | `ProjectSettings/Systems.config` |
 | Items: ration, water and bandage to use up; a radio; a keycard and a key, each cut to a lock when it is made; tokens, which pile up to a hundred and are money only because people take them; a zip tie that grants `person.restrain`; a pistol and its rounds, which stack | `Assets/items` |
-| The city: spawn; Door 1, whose lock is cut to the city's pattern, `city`, and Door 2, a flat with its own, `flat2`, which starts locked; a crate stocked with rations, water, bandages and forty tokens; a locker whose lock is cut to `city`, holding a pistol, thirty rounds, two ties, a radio, a city keycard and the flat's key; HUD | `Assets/scenes/main.scene` |
+| The city: spawn; Door 1, whose lock is cut to the city's pattern, `city`, and Door 2, a flat with its own, `flat2`, which starts locked; a crate stocked with rations, water, bandages and forty tokens; a locker whose lock is cut to `city`, holding a pistol, thirty rounds, two ties, a radio, a city keycard, the flat's key and a Civil Protection uniform with boots; HUD | `Assets/scenes/main.scene` |
 
 Code belongs here only when it is about this setting, such as the Combine. Anything another
 roleplay game would also want belongs in Hexagon.
@@ -40,6 +42,7 @@ pwsh ../hexagon/tools/verify.ps1
 pwsh ../hexagon/tools/playtest.ps1
 ```
 
-The play test boots the real editor and plays this game: characters and the one-life rule, the
-Civil Protection whitelist, chat, inventory, keys and locks, the crate and the locker, a restart, a
-death, a retirement and a restore, and what the journal remembered.
+The play test boots the real editor and plays this game: characters made with a body, hair and
+clothes, and the one-life rule; chat, inventory, clothes put on and taken off, keys and locks, the
+crate and the locker; an officer appointed by staff who puts the uniform on; a restart, a death, a
+body stripped of its mask, a retirement and a restore, and what the journal remembered.

@@ -417,7 +417,7 @@
           "__guid": "10c4e700-0000-4000-8000-000000000002",
           "__enabled": true,
           "Title": "Locker",
-          "Width": 4,
+          "Width": 6,
           "Height": 4,
           "LockPattern": "city",
           "Stock": [
@@ -450,6 +450,26 @@
               "Item": "items/key.item",
               "Count": 1,
               "Pattern": "flat2"
+            },
+            {
+              "Item": "items/cp_mask.item",
+              "Count": 1,
+              "Pattern": ""
+            },
+            {
+              "Item": "items/cp_jacket.item",
+              "Count": 1,
+              "Pattern": ""
+            },
+            {
+              "Item": "items/cp_trousers.item",
+              "Count": 1,
+              "Pattern": ""
+            },
+            {
+              "Item": "items/boots.item",
+              "Count": 1,
+              "Pattern": ""
             }
           ]
         },

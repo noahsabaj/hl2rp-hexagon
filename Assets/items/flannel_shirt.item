@@ -1,0 +1,11 @@
+{
+  "Title": "Flannel shirt",
+  "Description": "A checked shirt, worn soft.",
+  "Width": 2,
+  "Height": 2,
+  "Tint": "0.6,0.25,0.2,1",
+  "Wearable": "models/citizen_clothes/shirt/flannel_shirt/flannel_shirt.clothing",
+  "Wardrobe": true,
+  "__references": [],
+  "__version": 0
+}
