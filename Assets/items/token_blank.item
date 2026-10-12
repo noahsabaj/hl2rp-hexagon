@@ -1,0 +1,10 @@
+{
+  "Title": "Token blank",
+  "Description": "A plain metal disc, ready to be struck into a token.",
+  "Width": 1,
+  "Height": 1,
+  "Tint": "0.62,0.62,0.6,1",
+  "__references": [],
+  "__version": 0,
+  "MaxStack": 100
+}

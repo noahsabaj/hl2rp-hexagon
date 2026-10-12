@@ -495,6 +495,16 @@
               "Item": "items/cp_armband_divisional_leader.item",
               "Count": 1,
               "Pattern": ""
+            },
+            {
+              "Item": "items/token_blank.item",
+              "Count": 20,
+              "Pattern": ""
+            },
+            {
+              "Item": "items/loupe.item",
+              "Count": 1,
+              "Pattern": ""
             }
           ]
         },
@@ -779,6 +789,189 @@
         {
           "__type": "Sandbox.BoxCollider",
           "__guid": "3a9ca5e0-0000-4000-8000-000000000004",
+          "__enabled": true,
+          "Center": "0,0,20",
+          "Scale": "40,40,40",
+          "Static": true,
+          "IsTrigger": false
+        }
+      ],
+      "Children": []
+    },
+    {
+      "__guid": "70ca9e55-0000-4000-8000-000000000001",
+      "__version": 2,
+      "Flags": 0,
+      "Name": "Token press",
+      "Position": "330,-330,0",
+      "Rotation": "0,0,0,1",
+      "Scale": "1,1,1",
+      "Tags": "container",
+      "Enabled": true,
+      "NetworkMode": 1,
+      "NetworkFlags": 0,
+      "NetworkOrphaned": 0,
+      "NetworkTransmit": true,
+      "OwnerTransfer": 1,
+      "Components": [
+        {
+          "__type": "Hexagon.Machine",
+          "__guid": "70ca9e55-0000-4000-8000-000000000002",
+          "__enabled": true,
+          "Title": "Token press",
+          "Width": 3,
+          "Height": 2,
+          "LockPattern": "city",
+          "Makes": [
+            {
+              "Title": "Strike tokens",
+              "Inputs": [
+                {
+                  "Item": "items/token_blank.item",
+                  "Count": 10
+                }
+              ],
+              "Output": "items/token.item",
+              "Count": 10,
+              "Seconds": 6,
+              "Serial": false
+            }
+          ],
+          "Mark": "",
+          "SerialPrefix": "A"
+        },
+        {
+          "__type": "Sandbox.ModelRenderer",
+          "__guid": "70ca9e55-0000-4000-8000-000000000003",
+          "__enabled": true,
+          "Model": "models/citizen_props/crate01.vmdl",
+          "Tint": "0.2,0.24,0.23,1"
+        },
+        {
+          "__type": "Sandbox.BoxCollider",
+          "__guid": "70ca9e55-0000-4000-8000-000000000004",
+          "__enabled": true,
+          "Center": "0,0,20",
+          "Scale": "40,40,40",
+          "Static": true,
+          "IsTrigger": false
+        }
+      ],
+      "Children": []
+    },
+    {
+      "__guid": "c7d0e955-0000-4000-8000-000000000001",
+      "__version": 2,
+      "Flags": 0,
+      "Name": "Crude press",
+      "Position": "420,-260,0",
+      "Rotation": "0,0,0,1",
+      "Scale": "1,1,1",
+      "Tags": "container",
+      "Enabled": true,
+      "NetworkMode": 1,
+      "NetworkFlags": 0,
+      "NetworkOrphaned": 0,
+      "NetworkTransmit": true,
+      "OwnerTransfer": 1,
+      "Components": [
+        {
+          "__type": "Hexagon.Machine",
+          "__guid": "c7d0e955-0000-4000-8000-000000000002",
+          "__enabled": true,
+          "Title": "Crude press",
+          "Width": 3,
+          "Height": 2,
+          "LockPattern": "",
+          "Makes": [
+            {
+              "Title": "Strike tokens",
+              "Inputs": [
+                {
+                  "Item": "items/token_blank.item",
+                  "Count": 5
+                }
+              ],
+              "Output": "items/token.item",
+              "Count": 5,
+              "Seconds": 8,
+              "Serial": false
+            }
+          ],
+          "Mark": "",
+          "SerialPrefix": "A"
+        },
+        {
+          "__type": "Sandbox.ModelRenderer",
+          "__guid": "c7d0e955-0000-4000-8000-000000000003",
+          "__enabled": true,
+          "Model": "models/citizen_props/crate01.vmdl",
+          "Tint": "0.45,0.32,0.22,1"
+        },
+        {
+          "__type": "Sandbox.BoxCollider",
+          "__guid": "c7d0e955-0000-4000-8000-000000000004",
+          "__enabled": true,
+          "Center": "0,0,20",
+          "Scale": "40,40,40",
+          "Static": true,
+          "IsTrigger": false
+        }
+      ],
+      "Children": []
+    },
+    {
+      "__guid": "f0e9e7c2-0000-4000-8000-000000000001",
+      "__version": 2,
+      "Flags": 0,
+      "Name": "Forger's crate",
+      "Position": "480,-260,0",
+      "Rotation": "0,0,0,1",
+      "Scale": "1,1,1",
+      "Tags": "container",
+      "Enabled": true,
+      "NetworkMode": 1,
+      "NetworkFlags": 0,
+      "NetworkOrphaned": 0,
+      "NetworkTransmit": true,
+      "OwnerTransfer": 1,
+      "Components": [
+        {
+          "__type": "Hexagon.Container",
+          "__guid": "f0e9e7c2-0000-4000-8000-000000000002",
+          "__enabled": true,
+          "Title": "Forger's crate",
+          "Width": 3,
+          "Height": 2,
+          "LockPattern": "",
+          "Stock": [
+            {
+              "Item": "items/token_blank.item",
+              "Count": 10,
+              "Pattern": ""
+            },
+            {
+              "Item": "items/token_die.item",
+              "Count": 1,
+              "Pattern": ""
+            },
+            {
+              "Item": "items/loupe.item",
+              "Count": 1,
+              "Pattern": ""
+            }
+          ]
+        },
+        {
+          "__type": "Sandbox.ModelRenderer",
+          "__guid": "f0e9e7c2-0000-4000-8000-000000000003",
+          "__enabled": true,
+          "Model": "models/citizen_props/crate01.vmdl",
+          "Tint": "0.5,0.42,0.3,1"
+        },
+        {
+          "__type": "Sandbox.BoxCollider",
+          "__guid": "f0e9e7c2-0000-4000-8000-000000000004",
           "__enabled": true,
           "Center": "0,0,20",
           "Scale": "40,40,40",
