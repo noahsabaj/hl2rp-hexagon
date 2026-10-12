@@ -980,6 +980,408 @@
         }
       ],
       "Children": []
+    },
+    {
+      "__guid": "7a1a5e00-0000-4000-8000-000000000001",
+      "__version": 2,
+      "Flags": 0,
+      "Name": "Supply train",
+      "Position": "400,-1050,0",
+      "Rotation": "0,0,0,1",
+      "Scale": "1,1,1",
+      "Tags": "",
+      "Enabled": true,
+      "NetworkMode": 1,
+      "NetworkFlags": 0,
+      "NetworkOrphaned": 0,
+      "NetworkTransmit": true,
+      "OwnerTransfer": 1,
+      "Components": [
+        {
+          "__type": "Hexagon.Train",
+          "__guid": "7a1a5e00-0000-4000-8000-000000000002",
+          "__enabled": true,
+          "Title": "Supply train",
+          "Track": {
+            "Points": [
+              {
+                "Pos": "-3000,-1050,0"
+              },
+              {
+                "Pos": "400,-1050,0"
+              },
+              {
+                "Pos": "3800,-1050,0"
+              }
+            ]
+          },
+          "StationPoint": 1,
+          "Speed": 400,
+          "Times": [
+            "06:00",
+            "18:00"
+          ],
+          "WaitMinutes": 10,
+          "LockPattern": "city",
+          "Brings": [
+            {
+              "Item": "items/ration.item",
+              "Count": 16,
+              "Pattern": ""
+            },
+            {
+              "Item": "items/water.item",
+              "Count": 16,
+              "Pattern": ""
+            },
+            {
+              "Item": "items/token_blank.item",
+              "Count": 40,
+              "Pattern": ""
+            }
+          ],
+          "Manifest": "items/manifest.item",
+          "ManifestStamp": "items/logistics_stamp.item"
+        }
+      ],
+      "Children": [
+        {
+          "__guid": "7a1a5e00-0000-4000-8000-000000000010",
+          "__version": 2,
+          "Flags": 0,
+          "Name": "Locomotive",
+          "Position": "330,0,90",
+          "Rotation": "0,0,0,1",
+          "Scale": "6,2.2,3.2",
+          "Tags": "",
+          "Enabled": true,
+          "NetworkMode": 1,
+          "NetworkFlags": 0,
+          "NetworkOrphaned": 0,
+          "NetworkTransmit": true,
+          "OwnerTransfer": 1,
+          "Components": [
+            {
+              "__type": "Sandbox.ModelRenderer",
+              "__guid": "7a1a5e00-0000-4000-8000-000000000011",
+              "__enabled": true,
+              "Model": "models/dev/box.vmdl",
+              "Tint": "0.16,0.18,0.17,1"
+            },
+            {
+              "__type": "Sandbox.BoxCollider",
+              "__guid": "7a1a5e00-0000-4000-8000-000000000012",
+              "__enabled": true,
+              "Center": "0,0,0",
+              "Scale": "50,50,50",
+              "Static": false,
+              "IsTrigger": false
+            }
+          ],
+          "Children": []
+        },
+        {
+          "__guid": "7a1a5e00-0000-4000-8000-000000000020",
+          "__version": 2,
+          "Flags": 0,
+          "Name": "Supply wagon",
+          "Position": "0,0,80",
+          "Rotation": "0,0,0,1",
+          "Scale": "5,2,2.8",
+          "Tags": "",
+          "Enabled": true,
+          "NetworkMode": 1,
+          "NetworkFlags": 0,
+          "NetworkOrphaned": 0,
+          "NetworkTransmit": true,
+          "OwnerTransfer": 1,
+          "Components": [
+            {
+              "__type": "Hexagon.Wagon",
+              "__guid": "7a1a5e00-0000-4000-8000-000000000021",
+              "__enabled": true,
+              "Title": "Supply wagon",
+              "Width": 6,
+              "Height": 4,
+              "Outbound": false
+            },
+            {
+              "__type": "Sandbox.ModelRenderer",
+              "__guid": "7a1a5e00-0000-4000-8000-000000000022",
+              "__enabled": true,
+              "Model": "models/dev/box.vmdl",
+              "Tint": "0.3,0.27,0.22,1"
+            },
+            {
+              "__type": "Sandbox.BoxCollider",
+              "__guid": "7a1a5e00-0000-4000-8000-000000000023",
+              "__enabled": true,
+              "Center": "0,0,0",
+              "Scale": "50,50,50",
+              "Static": false,
+              "IsTrigger": false
+            }
+          ],
+          "Children": []
+        },
+        {
+          "__guid": "7a1a5e00-0000-4000-8000-000000000030",
+          "__version": 2,
+          "Flags": 0,
+          "Name": "Outbound wagon",
+          "Position": "-280,0,80",
+          "Rotation": "0,0,0,1",
+          "Scale": "5,2,2.8",
+          "Tags": "",
+          "Enabled": true,
+          "NetworkMode": 1,
+          "NetworkFlags": 0,
+          "NetworkOrphaned": 0,
+          "NetworkTransmit": true,
+          "OwnerTransfer": 1,
+          "Components": [
+            {
+              "__type": "Hexagon.Wagon",
+              "__guid": "7a1a5e00-0000-4000-8000-000000000031",
+              "__enabled": true,
+              "Title": "Outbound wagon",
+              "Width": 6,
+              "Height": 4,
+              "Outbound": true
+            },
+            {
+              "__type": "Sandbox.ModelRenderer",
+              "__guid": "7a1a5e00-0000-4000-8000-000000000032",
+              "__enabled": true,
+              "Model": "models/dev/box.vmdl",
+              "Tint": "0.25,0.25,0.27,1"
+            },
+            {
+              "__type": "Sandbox.BoxCollider",
+              "__guid": "7a1a5e00-0000-4000-8000-000000000033",
+              "__enabled": true,
+              "Center": "0,0,0",
+              "Scale": "50,50,50",
+              "Static": false,
+              "IsTrigger": false
+            }
+          ],
+          "Children": []
+        }
+      ]
+    },
+    {
+      "__guid": "5c4a0000-0000-4000-8000-000000000001",
+      "__version": 2,
+      "Flags": 0,
+      "Name": "Scrap yard",
+      "Position": "900,-800,0",
+      "Rotation": "0,0,0,1",
+      "Scale": "1,1,1",
+      "Tags": "",
+      "Enabled": true,
+      "NetworkMode": 1,
+      "NetworkFlags": 0,
+      "NetworkOrphaned": 0,
+      "NetworkTransmit": true,
+      "OwnerTransfer": 1,
+      "Components": [
+        {
+          "__type": "Hexagon.Site",
+          "__guid": "5c4a0000-0000-4000-8000-000000000002",
+          "__enabled": true,
+          "Title": "Scrap yard",
+          "Work": "Salvage scrap",
+          "Yields": "items/scrap_metal.item",
+          "PerWork": 5,
+          "Seconds": 4,
+          "Most": 10,
+          "PerHour": 10,
+          "Needs": "site.salvage"
+        },
+        {
+          "__type": "Sandbox.ModelRenderer",
+          "__guid": "5c4a0000-0000-4000-8000-000000000003",
+          "__enabled": true,
+          "Model": "models/citizen_props/oldoven.vmdl",
+          "Tint": "0.55,0.5,0.45,1"
+        },
+        {
+          "__type": "Sandbox.BoxCollider",
+          "__guid": "5c4a0000-0000-4000-8000-000000000004",
+          "__enabled": true,
+          "Center": "0,0,25",
+          "Scale": "120,120,50",
+          "Static": true,
+          "IsTrigger": false
+        }
+      ],
+      "Children": [
+        {
+          "__guid": "5c4a0000-0000-4000-8000-000000000010",
+          "__version": 2,
+          "Flags": 0,
+          "Name": "Wheel",
+          "Position": "40,30,0",
+          "Rotation": "0,0,0,1",
+          "Scale": "1,1,1",
+          "Tags": "",
+          "Enabled": true,
+          "NetworkMode": 1,
+          "NetworkFlags": 0,
+          "NetworkOrphaned": 0,
+          "NetworkTransmit": true,
+          "OwnerTransfer": 1,
+          "Components": [
+            {
+              "__type": "Sandbox.ModelRenderer",
+              "__guid": "5c4a0000-0000-4000-8000-000000000011",
+              "__enabled": true,
+              "Model": "models/citizen_props/wheel01.vmdl",
+              "Tint": "0.4,0.38,0.36,1"
+            }
+          ],
+          "Children": []
+        },
+        {
+          "__guid": "5c4a0000-0000-4000-8000-000000000020",
+          "__version": 2,
+          "Flags": 0,
+          "Name": "Bin",
+          "Position": "-40,-35,0",
+          "Rotation": "0,0,0,1",
+          "Scale": "1,1,1",
+          "Tags": "",
+          "Enabled": true,
+          "NetworkMode": 1,
+          "NetworkFlags": 0,
+          "NetworkOrphaned": 0,
+          "NetworkTransmit": true,
+          "OwnerTransfer": 1,
+          "Components": [
+            {
+              "__type": "Sandbox.ModelRenderer",
+              "__guid": "5c4a0000-0000-4000-8000-000000000021",
+              "__enabled": true,
+              "Model": "models/citizen_props/recyclingbin01.vmdl",
+              "Tint": "0.35,0.4,0.35,1"
+            }
+          ],
+          "Children": []
+        }
+      ]
+    },
+    {
+      "__guid": "70010b00-0000-4000-8000-000000000001",
+      "__version": 2,
+      "Flags": 0,
+      "Name": "Toolbox",
+      "Position": "900,-660,0",
+      "Rotation": "0,0,0,1",
+      "Scale": "1,1,1",
+      "Tags": "container",
+      "Enabled": true,
+      "NetworkMode": 1,
+      "NetworkFlags": 0,
+      "NetworkOrphaned": 0,
+      "NetworkTransmit": true,
+      "OwnerTransfer": 1,
+      "Components": [
+        {
+          "__type": "Hexagon.Container",
+          "__guid": "70010b00-0000-4000-8000-000000000002",
+          "__enabled": true,
+          "Title": "Toolbox",
+          "Width": 2,
+          "Height": 2,
+          "LockPattern": "",
+          "Stock": [
+            {
+              "Item": "items/crowbar.item",
+              "Count": 1,
+              "Pattern": ""
+            }
+          ]
+        },
+        {
+          "__type": "Sandbox.ModelRenderer",
+          "__guid": "70010b00-0000-4000-8000-000000000003",
+          "__enabled": true,
+          "Model": "models/citizen_props/crate01.vmdl",
+          "Tint": "0.6,0.18,0.14,1"
+        },
+        {
+          "__type": "Sandbox.BoxCollider",
+          "__guid": "70010b00-0000-4000-8000-000000000004",
+          "__enabled": true,
+          "Center": "0,0,20",
+          "Scale": "40,40,40",
+          "Static": true,
+          "IsTrigger": false
+        }
+      ],
+      "Children": []
+    },
+    {
+      "__guid": "c0770000-0000-4000-8000-000000000001",
+      "__version": 2,
+      "Flags": 0,
+      "Name": "Scrap cutter",
+      "Position": "1060,-800,0",
+      "Rotation": "0,0,0,1",
+      "Scale": "1,1,1",
+      "Tags": "container",
+      "Enabled": true,
+      "NetworkMode": 1,
+      "NetworkFlags": 0,
+      "NetworkOrphaned": 0,
+      "NetworkTransmit": true,
+      "OwnerTransfer": 1,
+      "Components": [
+        {
+          "__type": "Hexagon.Machine",
+          "__guid": "c0770000-0000-4000-8000-000000000002",
+          "__enabled": true,
+          "Title": "Scrap cutter",
+          "Width": 3,
+          "Height": 2,
+          "LockPattern": "",
+          "Makes": [
+            {
+              "Title": "Cut blanks",
+              "Inputs": [
+                {
+                  "Item": "items/scrap_metal.item",
+                  "Count": 2
+                }
+              ],
+              "Output": "items/token_blank.item",
+              "Count": 5,
+              "Seconds": 4,
+              "Serial": false
+            }
+          ],
+          "Mark": "",
+          "SerialPrefix": "A"
+        },
+        {
+          "__type": "Sandbox.ModelRenderer",
+          "__guid": "c0770000-0000-4000-8000-000000000003",
+          "__enabled": true,
+          "Model": "models/citizen_props/crate01.vmdl",
+          "Tint": "0.38,0.36,0.3,1"
+        },
+        {
+          "__type": "Sandbox.BoxCollider",
+          "__guid": "c0770000-0000-4000-8000-000000000004",
+          "__enabled": true,
+          "Center": "0,0,20",
+          "Scale": "40,40,40",
+          "Static": true,
+          "IsTrigger": false
+        }
+      ],
+      "Children": []
     }
   ]
 }

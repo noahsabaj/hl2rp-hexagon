@@ -1,0 +1,11 @@
+{
+  "Title": "Manifest",
+  "Description": "A railway manifest: what a train carried, line by line, under the railway's stamp.",
+  "Width": 1,
+  "Height": 1,
+  "Tint": "0.88,0.84,0.7,1",
+  "__references": [],
+  "__version": 0,
+  "Lines": 12,
+  "WorldModel": "models/citizen_props/newspaper01.vmdl"
+}
