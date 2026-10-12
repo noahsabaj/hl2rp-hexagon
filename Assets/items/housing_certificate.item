@@ -1,0 +1,16 @@
+{
+  "Title": "Housing certificate",
+  "Description": "The Civil Authority's word on who holds a flat. It is worth what the stamp on it is worth.",
+  "Width": 1,
+  "Height": 1,
+  "Tint": "0.86,0.84,0.74,1",
+  "Fields": [
+    "Residence",
+    "Holder",
+    "Issued"
+  ],
+  "__references": [],
+  "__version": 0,
+  "MaxStack": 10,
+  "WorldModel": "models/citizen_props/newspaper01.vmdl"
+}

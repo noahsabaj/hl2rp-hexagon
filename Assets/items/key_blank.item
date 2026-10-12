@@ -1,0 +1,11 @@
+{
+  "Title": "Key blank",
+  "Description": "An uncut brass key. At a locksmith's bench it is cut to copy another.",
+  "Width": 1,
+  "Height": 1,
+  "Tint": "0.86,0.74,0.42,1",
+  "__references": [],
+  "__version": 0,
+  "MaxStack": 10,
+  "HoldType": "HoldItem"
+}

@@ -1,0 +1,11 @@
+{
+  "Title": "Lock",
+  "Description": "A mortise lock and its cylinder. Fitted to a door or a locker, it turns only to keys cut the same; the lock it replaces comes out.",
+  "Width": 1,
+  "Height": 1,
+  "Tint": "0.62,0.55,0.4,1",
+  "__references": [],
+  "__version": 0,
+  "IsLock": true,
+  "HoldType": "HoldItem"
+}
