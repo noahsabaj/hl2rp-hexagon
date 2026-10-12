@@ -21,7 +21,10 @@
   "ResourceVersion": 3,
   "Title": "City",
   "Description": "HL2RP",
-  "__references": [],
+  "__references": [
+    "facepunch.truck_cargo_dev#139210",
+    "facepunch.truck_dev#139211"
+  ],
   "__version": 3,
   "GameObjects": [
     {
@@ -1038,6 +1041,11 @@
               "Item": "items/token_blank.item",
               "Count": 40,
               "Pattern": ""
+            },
+            {
+              "Item": "items/fuel_can.item",
+              "Count": 2,
+              "Pattern": ""
             }
           ],
           "Manifest": "items/manifest.item",
@@ -1374,6 +1382,394 @@
         {
           "__type": "Sandbox.BoxCollider",
           "__guid": "c0770000-0000-4000-8000-000000000004",
+          "__enabled": true,
+          "Center": "0,0,20",
+          "Scale": "40,40,40",
+          "Static": true,
+          "IsTrigger": false
+        }
+      ],
+      "Children": []
+    },
+    {
+      "__guid": "7c0c0000-0000-4000-8000-000000000001",
+      "__version": 2,
+      "Flags": 0,
+      "Name": "Combine truck",
+      "Position": "150,-820,0",
+      "Rotation": "0,0,0,1",
+      "Scale": "1,1,1",
+      "Tags": "vehicle",
+      "Enabled": true,
+      "NetworkMode": 1,
+      "NetworkFlags": 0,
+      "NetworkOrphaned": 0,
+      "NetworkTransmit": true,
+      "OwnerTransfer": 1,
+      "Components": [
+        {
+          "__type": "Hexagon.Vehicle",
+          "__guid": "7c0c0000-0000-4000-8000-000000000002",
+          "__enabled": true,
+          "Title": "Combine truck",
+          "LockPattern": "city",
+          "Tank": 60,
+          "StartingFuel": 20,
+          "Burns": 1,
+          "TopSpeed": 600,
+          "Pull": 300,
+          "Braking": 900,
+          "SteerAngle": 30,
+          "Travel": 10,
+          "Grip": 1.2
+        },
+        {
+          "__type": "Sandbox.Rigidbody",
+          "__guid": "7c0c0000-0000-4000-8000-000000000003",
+          "__enabled": true,
+          "AngularDamping": 0.5,
+          "Gravity": true,
+          "LinearDamping": 0,
+          "Locking": {
+            "X": false,
+            "Y": false,
+            "Z": false,
+            "Pitch": false,
+            "Yaw": false,
+            "Roll": false
+          },
+          "MassCenterOverride": "-70,0,25",
+          "MassOverride": 2500,
+          "MotionEnabled": true,
+          "OverrideMassCenter": true,
+          "RigidbodyFlags": 0,
+          "StartAsleep": false,
+          "EnableImpactDamage": false
+        },
+        {
+          "__type": "Sandbox.BoxCollider",
+          "__guid": "7c0c0000-0000-4000-8000-000000000004",
+          "__enabled": true,
+          "Center": "13,0,55",
+          "Scale": "140,80,70",
+          "Static": false,
+          "IsTrigger": false
+        }
+      ],
+      "Children": [
+        {
+          "__guid": "7c0c0000-0000-4000-8000-000000000010",
+          "__version": 2,
+          "Flags": 0,
+          "Name": "Cab",
+          "Position": "0,0,0",
+          "Rotation": "0,0,0,1",
+          "Scale": "0.6,0.6,0.6",
+          "Tags": "",
+          "Enabled": true,
+          "NetworkMode": 2,
+          "NetworkFlags": 0,
+          "NetworkOrphaned": 0,
+          "NetworkTransmit": true,
+          "OwnerTransfer": 1,
+          "Components": [
+            {
+              "__type": "Sandbox.ModelRenderer",
+              "__guid": "7c0c0000-0000-4000-8000-000000000011",
+              "__enabled": true,
+              "Model": "models/dev/vehicle/truck_dev.vmdl",
+              "MaterialOverride": "materials/dev/primary_white.vmat",
+              "Tint": "0.22,0.25,0.27,1"
+            },
+            {
+              "__type": "Hexagon.CloudModel",
+              "__guid": "7c0c0000-0000-4000-8000-000000000012",
+              "__enabled": true,
+              "Package": "facepunch.truck_dev#139211"
+            }
+          ],
+          "Children": []
+        },
+        {
+          "__guid": "7c0c0000-0000-4000-8000-000000000020",
+          "__version": 2,
+          "Flags": 0,
+          "Name": "Truck bed",
+          "Position": "-148,0,0",
+          "Rotation": "0,0,0,1",
+          "Scale": "1,1,1",
+          "Tags": "",
+          "Enabled": true,
+          "NetworkMode": 2,
+          "NetworkFlags": 0,
+          "NetworkOrphaned": 0,
+          "NetworkTransmit": true,
+          "OwnerTransfer": 1,
+          "Components": [
+            {
+              "__type": "Hexagon.Bed",
+              "__guid": "7c0c0000-0000-4000-8000-000000000021",
+              "__enabled": true,
+              "Title": "Truck bed",
+              "Width": 6,
+              "Height": 4
+            },
+            {
+              "__type": "Sandbox.BoxCollider",
+              "__guid": "7c0c0000-0000-4000-8000-000000000022",
+              "__enabled": true,
+              "Center": "0,0,57",
+              "Scale": "176,72,74",
+              "Static": false,
+              "IsTrigger": false
+            }
+          ],
+          "Children": [
+            {
+              "__guid": "7c0c0000-0000-4000-8000-000000000030",
+              "__version": 2,
+              "Flags": 0,
+              "Name": "Bed model",
+              "Position": "73,0,23.3",
+              "Rotation": "0,0,0,1",
+              "Scale": "0.35,0.6,0.6",
+              "Tags": "",
+              "Enabled": true,
+              "NetworkMode": 2,
+              "NetworkFlags": 0,
+              "NetworkOrphaned": 0,
+              "NetworkTransmit": true,
+              "OwnerTransfer": 1,
+              "Components": [
+                {
+                  "__type": "Sandbox.ModelRenderer",
+                  "__guid": "7c0c0000-0000-4000-8000-000000000031",
+                  "__enabled": true,
+                  "Model": "models/dev/vehicle/truck_cargo_dev.vmdl",
+                  "MaterialOverride": "materials/dev/primary_white.vmat",
+                  "Tint": "0.22,0.25,0.27,1"
+                },
+                {
+                  "__type": "Hexagon.CloudModel",
+                  "__guid": "7c0c0000-0000-4000-8000-000000000032",
+                  "__enabled": true,
+                  "Package": "facepunch.truck_cargo_dev#139210"
+                }
+              ],
+              "Children": []
+            }
+          ]
+        },
+        {
+          "__guid": "7c0c0000-0000-4000-8000-000000000040",
+          "__version": 2,
+          "Flags": 0,
+          "Name": "Driver seat",
+          "Position": "40,18,30",
+          "Rotation": "0,0,0,1",
+          "Scale": "1,1,1",
+          "Tags": "",
+          "Enabled": true,
+          "NetworkMode": 2,
+          "NetworkFlags": 0,
+          "NetworkOrphaned": 0,
+          "NetworkTransmit": true,
+          "OwnerTransfer": 1,
+          "Components": [
+            {
+              "__type": "Hexagon.Seat",
+              "__guid": "7c0c0000-0000-4000-8000-000000000041",
+              "__enabled": true,
+              "Driver": true,
+              "Pose": "Chair",
+              "Eyes": "4,0,30",
+              "Exit": "0,70,-30",
+              "LookAround": 120
+            }
+          ],
+          "Children": []
+        },
+        {
+          "__guid": "7c0c0000-0000-4000-8000-000000000050",
+          "__version": 2,
+          "Flags": 0,
+          "Name": "Passenger seat",
+          "Position": "40,-18,30",
+          "Rotation": "0,0,0,1",
+          "Scale": "1,1,1",
+          "Tags": "",
+          "Enabled": true,
+          "NetworkMode": 2,
+          "NetworkFlags": 0,
+          "NetworkOrphaned": 0,
+          "NetworkTransmit": true,
+          "OwnerTransfer": 1,
+          "Components": [
+            {
+              "__type": "Hexagon.Seat",
+              "__guid": "7c0c0000-0000-4000-8000-000000000051",
+              "__enabled": true,
+              "Driver": false,
+              "Pose": "Chair",
+              "Eyes": "4,0,30",
+              "Exit": "0,-70,-30",
+              "LookAround": 120
+            }
+          ],
+          "Children": []
+        },
+        {
+          "__guid": "7c0c0000-0000-4000-8000-000000000060",
+          "__version": 2,
+          "Flags": 0,
+          "Name": "Front left wheel",
+          "Position": "55,32,18",
+          "Rotation": "0,0,0,1",
+          "Scale": "1,1,1",
+          "Tags": "",
+          "Enabled": true,
+          "NetworkMode": 2,
+          "NetworkFlags": 0,
+          "NetworkOrphaned": 0,
+          "NetworkTransmit": true,
+          "OwnerTransfer": 1,
+          "Components": [
+            {
+              "__type": "Hexagon.Wheel",
+              "__guid": "7c0c0000-0000-4000-8000-000000000061",
+              "__enabled": true,
+              "Radius": 18,
+              "Steers": true,
+              "Drives": false
+            }
+          ],
+          "Children": []
+        },
+        {
+          "__guid": "7c0c0000-0000-4000-8000-000000000070",
+          "__version": 2,
+          "Flags": 0,
+          "Name": "Front right wheel",
+          "Position": "55,-32,18",
+          "Rotation": "0,0,0,1",
+          "Scale": "1,1,1",
+          "Tags": "",
+          "Enabled": true,
+          "NetworkMode": 2,
+          "NetworkFlags": 0,
+          "NetworkOrphaned": 0,
+          "NetworkTransmit": true,
+          "OwnerTransfer": 1,
+          "Components": [
+            {
+              "__type": "Hexagon.Wheel",
+              "__guid": "7c0c0000-0000-4000-8000-000000000071",
+              "__enabled": true,
+              "Radius": 18,
+              "Steers": true,
+              "Drives": false
+            }
+          ],
+          "Children": []
+        },
+        {
+          "__guid": "7c0c0000-0000-4000-8000-000000000080",
+          "__version": 2,
+          "Flags": 0,
+          "Name": "Rear left wheel",
+          "Position": "-195,32,18",
+          "Rotation": "0,0,0,1",
+          "Scale": "1,1,1",
+          "Tags": "",
+          "Enabled": true,
+          "NetworkMode": 2,
+          "NetworkFlags": 0,
+          "NetworkOrphaned": 0,
+          "NetworkTransmit": true,
+          "OwnerTransfer": 1,
+          "Components": [
+            {
+              "__type": "Hexagon.Wheel",
+              "__guid": "7c0c0000-0000-4000-8000-000000000081",
+              "__enabled": true,
+              "Radius": 18,
+              "Steers": false,
+              "Drives": true
+            }
+          ],
+          "Children": []
+        },
+        {
+          "__guid": "7c0c0000-0000-4000-8000-000000000090",
+          "__version": 2,
+          "Flags": 0,
+          "Name": "Rear right wheel",
+          "Position": "-195,-32,18",
+          "Rotation": "0,0,0,1",
+          "Scale": "1,1,1",
+          "Tags": "",
+          "Enabled": true,
+          "NetworkMode": 2,
+          "NetworkFlags": 0,
+          "NetworkOrphaned": 0,
+          "NetworkTransmit": true,
+          "OwnerTransfer": 1,
+          "Components": [
+            {
+              "__type": "Hexagon.Wheel",
+              "__guid": "7c0c0000-0000-4000-8000-000000000091",
+              "__enabled": true,
+              "Radius": 18,
+              "Steers": false,
+              "Drives": true
+            }
+          ],
+          "Children": []
+        }
+      ]
+    },
+    {
+      "__guid": "f0e10000-0000-4000-8000-000000000001",
+      "__version": 2,
+      "Flags": 0,
+      "Name": "Fuel crate",
+      "Position": "280,-700,0",
+      "Rotation": "0,0,0,1",
+      "Scale": "1,1,1",
+      "Tags": "container",
+      "Enabled": true,
+      "NetworkMode": 1,
+      "NetworkFlags": 0,
+      "NetworkOrphaned": 0,
+      "NetworkTransmit": true,
+      "OwnerTransfer": 1,
+      "Components": [
+        {
+          "__type": "Hexagon.Container",
+          "__guid": "f0e10000-0000-4000-8000-000000000002",
+          "__enabled": true,
+          "Title": "Fuel crate",
+          "Width": 2,
+          "Height": 2,
+          "LockPattern": "",
+          "Stock": [
+            {
+              "Item": "items/fuel_can.item",
+              "Count": 1,
+              "Pattern": ""
+            }
+          ]
+        },
+        {
+          "__type": "Sandbox.ModelRenderer",
+          "__guid": "f0e10000-0000-4000-8000-000000000003",
+          "__enabled": true,
+          "Model": "models/citizen_props/crate01.vmdl",
+          "Tint": "0.55,0.2,0.12,1"
+        },
+        {
+          "__type": "Sandbox.BoxCollider",
+          "__guid": "f0e10000-0000-4000-8000-000000000004",
           "__enabled": true,
           "Center": "0,0,20",
           "Scale": "40,40,40",
