@@ -1,0 +1,11 @@
+{
+  "Title": "Divisional Leader's armband",
+  "Description": "A red armband with a white bar, worn by a divisional leader of Civil Protection.",
+  "Width": 1,
+  "Height": 1,
+  "Tint": "0.75,0.2,0.18,1",
+  "Wearable": "clothing/cp_armband_divisional_leader.clothing",
+  "Wardrobe": false,
+  "__references": [],
+  "__version": 0
+}

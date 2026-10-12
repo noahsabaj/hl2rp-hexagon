@@ -475,6 +475,26 @@
               "Item": "items/ca_stamp.item",
               "Count": 1,
               "Pattern": ""
+            },
+            {
+              "Item": "items/cp_armband_recruit.item",
+              "Count": 1,
+              "Pattern": ""
+            },
+            {
+              "Item": "items/cp_armband_unit.item",
+              "Count": 1,
+              "Pattern": ""
+            },
+            {
+              "Item": "items/cp_armband_officer.item",
+              "Count": 1,
+              "Pattern": ""
+            },
+            {
+              "Item": "items/cp_armband_divisional_leader.item",
+              "Count": 1,
+              "Pattern": ""
             }
           ]
         },

@@ -1,0 +1,11 @@
+{
+  "Title": "Unit's armband",
+  "Description": "A white armband with one blue bar, worn by a unit of Civil Protection.",
+  "Width": 1,
+  "Height": 1,
+  "Tint": "0.75,0.8,0.9,1",
+  "Wearable": "clothing/cp_armband_unit.clothing",
+  "Wardrobe": false,
+  "__references": [],
+  "__version": 0
+}
