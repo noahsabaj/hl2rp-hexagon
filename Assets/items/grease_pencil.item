@@ -1,0 +1,15 @@
+{
+  "Title": "Grease pencil",
+  "Description": "A red wax pencil. It marks a map and wipes off it again, but what it writes on paper stays.",
+  "Width": 1,
+  "Height": 1,
+  "Tint": "0.7,0.12,0.09,1",
+  "Grants": [
+    "paper.write"
+  ],
+  "__references": [],
+  "__version": 0,
+  "MaxStack": 4,
+  "HoldType": "HoldItem",
+  "MapInk": "0.7,0.12,0.09,1"
+}
