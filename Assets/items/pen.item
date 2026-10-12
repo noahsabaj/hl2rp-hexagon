@@ -1,0 +1,14 @@
+{
+  "Title": "Pen",
+  "Description": "A cheap ballpoint. What it writes cannot be taken back.",
+  "Width": 1,
+  "Height": 1,
+  "Tint": "0.2,0.25,0.45,1",
+  "Grants": [
+    "paper.write"
+  ],
+  "__references": [],
+  "__version": 0,
+  "MaxStack": 4,
+  "HoldType": "HoldItem"
+}

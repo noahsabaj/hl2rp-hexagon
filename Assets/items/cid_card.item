@@ -1,0 +1,15 @@
+{
+  "Title": "Identification card",
+  "Description": "Civil identification. The city wants to see it, and so does anyone it asks to.",
+  "Width": 1,
+  "Height": 1,
+  "Tint": "0.75,0.82,0.88,1",
+  "Fields": [
+    "Name",
+    "Occupation",
+    "Residence"
+  ],
+  "BearerField": "Name",
+  "__references": [],
+  "__version": 0
+}

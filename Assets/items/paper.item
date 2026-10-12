@@ -1,0 +1,12 @@
+{
+  "Title": "Paper",
+  "Description": "A plain sheet. What is written on it in ink stays there.",
+  "Width": 1,
+  "Height": 1,
+  "Tint": "0.93,0.91,0.84,1",
+  "__references": [],
+  "__version": 0,
+  "MaxStack": 10,
+  "Lines": 16,
+  "WorldModel": "models/citizen_props/newspaper01.vmdl"
+}
