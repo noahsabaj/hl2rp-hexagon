@@ -552,6 +552,221 @@
         }
       ],
       "Children": []
+    },
+    {
+      "__guid": "7ab1e000-0000-4000-8000-000000000001",
+      "__version": 2,
+      "Flags": 0,
+      "Name": "Planning table",
+      "Position": "420,180,32",
+      "Rotation": "0,0,0,1",
+      "Scale": "1,1,1",
+      "Tags": "",
+      "Enabled": true,
+      "NetworkMode": 1,
+      "NetworkFlags": 0,
+      "NetworkOrphaned": 0,
+      "NetworkTransmit": true,
+      "OwnerTransfer": 1,
+      "Components": [
+        {
+          "__type": "Sandbox.BoxCollider",
+          "__guid": "7ab1e000-0000-4000-8000-000000000002",
+          "__enabled": true,
+          "Center": "0,0,15",
+          "Scale": "44,64,30",
+          "Static": true,
+          "IsTrigger": false
+        }
+      ],
+      "Children": [
+        {
+          "__guid": "7ab1e000-0000-4000-8000-000000000003",
+          "__version": 2,
+          "Flags": 0,
+          "Name": "Top",
+          "Position": "0,0,29",
+          "Rotation": "0,0,0,1",
+          "Scale": "0.88,1.28,0.04",
+          "Tags": "",
+          "Enabled": true,
+          "NetworkMode": 1,
+          "NetworkFlags": 0,
+          "NetworkOrphaned": 0,
+          "NetworkTransmit": true,
+          "OwnerTransfer": 1,
+          "Components": [
+            {
+              "__type": "Sandbox.ModelRenderer",
+              "__guid": "7ab1e000-0000-4000-8000-000000000004",
+              "__enabled": true,
+              "Model": "models/dev/box.vmdl",
+              "Tint": "0.42,0.3,0.19,1"
+            }
+          ],
+          "Children": []
+        },
+        {
+          "__guid": "7ab1e000-0000-4000-8000-000000000010",
+          "__version": 2,
+          "Flags": 0,
+          "Name": "Leg",
+          "Position": "19,29,14",
+          "Rotation": "0,0,0,1",
+          "Scale": "0.06,0.06,0.56",
+          "Tags": "",
+          "Enabled": true,
+          "NetworkMode": 1,
+          "NetworkFlags": 0,
+          "NetworkOrphaned": 0,
+          "NetworkTransmit": true,
+          "OwnerTransfer": 1,
+          "Components": [
+            {
+              "__type": "Sandbox.ModelRenderer",
+              "__guid": "7ab1e000-0000-4000-8000-000000000011",
+              "__enabled": true,
+              "Model": "models/dev/box.vmdl",
+              "Tint": "0.42,0.3,0.19,1"
+            }
+          ],
+          "Children": []
+        },
+        {
+          "__guid": "7ab1e000-0000-4000-8000-000000000012",
+          "__version": 2,
+          "Flags": 0,
+          "Name": "Leg",
+          "Position": "19,-29,14",
+          "Rotation": "0,0,0,1",
+          "Scale": "0.06,0.06,0.56",
+          "Tags": "",
+          "Enabled": true,
+          "NetworkMode": 1,
+          "NetworkFlags": 0,
+          "NetworkOrphaned": 0,
+          "NetworkTransmit": true,
+          "OwnerTransfer": 1,
+          "Components": [
+            {
+              "__type": "Sandbox.ModelRenderer",
+              "__guid": "7ab1e000-0000-4000-8000-000000000013",
+              "__enabled": true,
+              "Model": "models/dev/box.vmdl",
+              "Tint": "0.42,0.3,0.19,1"
+            }
+          ],
+          "Children": []
+        },
+        {
+          "__guid": "7ab1e000-0000-4000-8000-000000000014",
+          "__version": 2,
+          "Flags": 0,
+          "Name": "Leg",
+          "Position": "-19,29,14",
+          "Rotation": "0,0,0,1",
+          "Scale": "0.06,0.06,0.56",
+          "Tags": "",
+          "Enabled": true,
+          "NetworkMode": 1,
+          "NetworkFlags": 0,
+          "NetworkOrphaned": 0,
+          "NetworkTransmit": true,
+          "OwnerTransfer": 1,
+          "Components": [
+            {
+              "__type": "Sandbox.ModelRenderer",
+              "__guid": "7ab1e000-0000-4000-8000-000000000015",
+              "__enabled": true,
+              "Model": "models/dev/box.vmdl",
+              "Tint": "0.42,0.3,0.19,1"
+            }
+          ],
+          "Children": []
+        },
+        {
+          "__guid": "7ab1e000-0000-4000-8000-000000000016",
+          "__version": 2,
+          "Flags": 0,
+          "Name": "Leg",
+          "Position": "-19,-29,14",
+          "Rotation": "0,0,0,1",
+          "Scale": "0.06,0.06,0.56",
+          "Tags": "",
+          "Enabled": true,
+          "NetworkMode": 1,
+          "NetworkFlags": 0,
+          "NetworkOrphaned": 0,
+          "NetworkTransmit": true,
+          "OwnerTransfer": 1,
+          "Components": [
+            {
+              "__type": "Sandbox.ModelRenderer",
+              "__guid": "7ab1e000-0000-4000-8000-000000000017",
+              "__enabled": true,
+              "Model": "models/dev/box.vmdl",
+              "Tint": "0.42,0.3,0.19,1"
+            }
+          ],
+          "Children": []
+        }
+      ]
+    },
+    {
+      "__guid": "3a9ca5e0-0000-4000-8000-000000000001",
+      "__version": 2,
+      "Flags": 0,
+      "Name": "Map case",
+      "Position": "420,250,32",
+      "Rotation": "0,0,0,1",
+      "Scale": "1,1,1",
+      "Tags": "container",
+      "Enabled": true,
+      "NetworkMode": 1,
+      "NetworkFlags": 0,
+      "NetworkOrphaned": 0,
+      "NetworkTransmit": true,
+      "OwnerTransfer": 1,
+      "Components": [
+        {
+          "__type": "Hexagon.Container",
+          "__guid": "3a9ca5e0-0000-4000-8000-000000000002",
+          "__enabled": true,
+          "Title": "Map case",
+          "Width": 3,
+          "Height": 1,
+          "LockPattern": "",
+          "Stock": [
+            {
+              "Item": "items/city_map.item",
+              "Count": 1,
+              "Pattern": ""
+            },
+            {
+              "Item": "items/grease_pencil.item",
+              "Count": 2,
+              "Pattern": ""
+            }
+          ]
+        },
+        {
+          "__type": "Sandbox.ModelRenderer",
+          "__guid": "3a9ca5e0-0000-4000-8000-000000000003",
+          "__enabled": true,
+          "Model": "models/citizen_props/crate01.vmdl",
+          "Tint": "0.3,0.34,0.27,1"
+        },
+        {
+          "__type": "Sandbox.BoxCollider",
+          "__guid": "3a9ca5e0-0000-4000-8000-000000000004",
+          "__enabled": true,
+          "Center": "0,0,20",
+          "Scale": "40,40,40",
+          "Static": true,
+          "IsTrigger": false
+        }
+      ],
+      "Children": []
     }
   ]
 }
