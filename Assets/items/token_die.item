@@ -1,0 +1,25 @@
+{
+  "Title": "Token die",
+  "Description": "A pair of steel dies and a hammer. Struck between them, a blank comes out a token, one at a time.",
+  "Width": 1,
+  "Height": 1,
+  "Tint": "0.3,0.3,0.32,1",
+  "Makes": [
+    {
+      "Title": "Strike a token",
+      "Inputs": [
+        {
+          "Item": "items/token_blank.item",
+          "Count": 1
+        }
+      ],
+      "Output": "items/token.item",
+      "Count": 1,
+      "Seconds": 3,
+      "Serial": false
+    }
+  ],
+  "__references": [],
+  "__version": 0,
+  "HoldType": "HoldItem"
+}

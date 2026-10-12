@@ -1,0 +1,13 @@
+{
+  "Title": "Loupe",
+  "Description": "A jeweller's magnifier. Under it, two things made alike look alike, and two that were not do not.",
+  "Width": 1,
+  "Height": 1,
+  "Tint": "0.35,0.3,0.25,1",
+  "Grants": [
+    "item.compare"
+  ],
+  "__references": [],
+  "__version": 0,
+  "HoldType": "HoldItem"
+}
