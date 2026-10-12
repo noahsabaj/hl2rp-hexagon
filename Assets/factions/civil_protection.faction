@@ -2,6 +2,40 @@
   "Title": "Civil Protection",
   "Description": "The city's police force.",
   "Tint": "0.3,0.5,0.8,1",
+  "Ranks": [
+    {
+      "Title": "Recruit",
+      "Insignia": "items/cp_armband_recruit.item",
+      "Enlists": false,
+      "Promotes": false,
+      "PromotesTo": "",
+      "Discharges": false
+    },
+    {
+      "Title": "Unit",
+      "Insignia": "items/cp_armband_unit.item",
+      "Enlists": false,
+      "Promotes": false,
+      "PromotesTo": "",
+      "Discharges": false
+    },
+    {
+      "Title": "Officer",
+      "Insignia": "items/cp_armband_officer.item",
+      "Enlists": true,
+      "Promotes": true,
+      "PromotesTo": "Unit",
+      "Discharges": false
+    },
+    {
+      "Title": "Divisional Leader",
+      "Insignia": "items/cp_armband_divisional_leader.item",
+      "Enlists": true,
+      "Promotes": true,
+      "PromotesTo": "",
+      "Discharges": true
+    }
+  ],
   "__references": [],
   "__version": 0
 }
