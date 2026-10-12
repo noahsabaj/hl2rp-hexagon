@@ -1,0 +1,12 @@
+{
+  "Title": "Civil Authority stamp",
+  "Description": "The city office's rubber stamp. What it marks is official, whoever holds it.",
+  "Width": 1,
+  "Height": 1,
+  "Tint": "0.35,0.3,0.28,1",
+  "StampMark": "Combine Civil Authority",
+  "StampInk": "0.2,0.25,0.6,1",
+  "__references": [],
+  "__version": 0,
+  "HoldType": "HoldItem"
+}
