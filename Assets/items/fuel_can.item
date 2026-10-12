@@ -1,0 +1,11 @@
+{
+  "Title": "Fuel can",
+  "Description": "A steel can of fuel, sealed. Poured into a truck's tank, it is used up.",
+  "Width": 2,
+  "Height": 2,
+  "Tint": "0.62,0.16,0.1,1",
+  "__references": [],
+  "__version": 0,
+  "Fuel": 20,
+  "HoldType": "HoldItem"
+}
