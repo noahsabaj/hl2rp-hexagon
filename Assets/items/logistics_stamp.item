@@ -1,0 +1,12 @@
+{
+  "Title": "Overwatch Logistics stamp",
+  "Description": "The railway office's stamp, which marks every manifest that comes into the city.",
+  "Width": 1,
+  "Height": 1,
+  "Tint": "0.3,0.3,0.32,1",
+  "StampMark": "Combine Overwatch Logistics",
+  "StampInk": "0.55,0.12,0.1,1",
+  "__references": [],
+  "__version": 0,
+  "HoldType": "HoldItem"
+}

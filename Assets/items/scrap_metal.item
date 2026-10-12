@@ -1,0 +1,11 @@
+{
+  "Title": "Scrap metal",
+  "Description": "Offcuts, fittings and bent sheet pulled from the yard. Cut down, it makes blanks.",
+  "Width": 1,
+  "Height": 1,
+  "Tint": "0.45,0.42,0.38,1",
+  "__references": [],
+  "__version": 0,
+  "MaxStack": 50,
+  "WorldModel": "models/citizen_props/wheel02.vmdl"
+}

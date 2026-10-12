@@ -1,0 +1,14 @@
+{
+  "Title": "Crowbar",
+  "Description": "A bar of forged steel. In hand, it pries scrap loose from the yard.",
+  "Width": 1,
+  "Height": 2,
+  "Tint": "0.6,0.15,0.12,1",
+  "Grants": [
+    "site.salvage"
+  ],
+  "__references": [],
+  "__version": 0,
+  "WorldModel": "models/citizen_props/crowbar01.vmdl",
+  "HoldType": "HoldItem"
+}
