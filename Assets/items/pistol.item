@@ -5,6 +5,7 @@
   "Height": 1,
   "Tint": "0.08,0.08,0.09,1",
   "Damage": 40,
+  "Lethal": true,
   "Range": 2000,
   "Cooldown": 0.5,
   "Ammo": "items/pistol_round.item",

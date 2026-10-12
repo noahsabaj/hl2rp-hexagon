@@ -8,6 +8,10 @@
   "UseTitle": "Apply",
   "UseEmote": "binds a wound",
   "Heals": 30,
+  "Treats": [
+    "arm",
+    "leg"
+  ],
   "__references": [],
   "__version": 0,
   "MaxStack": 4
